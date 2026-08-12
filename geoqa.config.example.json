@@ -1,0 +1,44 @@
+{
+  "$comment": "Copy to geoqa.config.json. Credentials never live here — they come from env.",
+
+  "site": {
+    "id": "digilist",
+    "origin": "https://digilist.no",
+    "homeMarket": "NO"
+  },
+
+  "markets": [
+    { "id": "oslo", "country": "NO", "city": "Oslo", "language": "nb-NO", "timezone": "Europe/Oslo", "currency": "NOK", "coordinates": [59.9139, 10.7522] },
+    { "id": "stockholm", "country": "SE", "city": "Stockholm", "language": "sv-SE", "timezone": "Europe/Stockholm", "currency": "SEK", "coordinates": [59.3293, 18.0686] },
+    { "id": "berlin", "country": "DE", "city": "Berlin", "language": "de-DE", "timezone": "Europe/Berlin", "currency": "EUR", "coordinates": [52.52, 13.405] }
+  ],
+
+  "network": {
+    "$comment": "provider: direct | http-proxy. `direct` egresses from wherever this machine is — honest, and the only option until a vendor is procured. http-proxy reads GEOQA_PROXY_<MARKET> from env, never from this file.",
+    "provider": "direct",
+    "verifyEndpoint": "https://ipinfo.io/json",
+    "cooldownMs": 3600000
+  },
+
+  "browser": {
+    "$comment": "Everything here is passed to agent-browser. `binary` overrides discovery.",
+    "headless": true,
+    "commandTimeoutMs": 30000,
+    "idleTimeoutMs": 60000
+  },
+
+  "evidence": {
+    "root": "evidence",
+    "retention": {
+      "pass": ["metadata", "screenshot", "vitals"],
+      "warning": ["metadata", "screenshot", "vitals", "console", "network"],
+      "fail": ["metadata", "screenshot", "vitals", "console", "network", "trace", "har"]
+    }
+  },
+
+  "run": {
+    "$comment": "Phase 0 is read-only. Nothing writes to Linear, Convex or any repo.",
+    "readOnly": true,
+    "concurrency": 1
+  }
+}

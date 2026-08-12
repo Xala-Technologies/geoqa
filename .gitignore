@@ -1,0 +1,17 @@
+node_modules/
+coverage/
+dist/
+*.tsbuildinfo
+
+# Evidence is run output, and may contain personal data captured from a page.
+# It is never committed — see src/evidence/redact.ts for what we strip before
+# it even reaches disk.
+evidence/
+experiments/*/evidence/
+experiments/*/results.jsonl
+
+# Local config carries proxy credentials.
+geoqa.config.json
+.env
+.env.*
+!.env.example
