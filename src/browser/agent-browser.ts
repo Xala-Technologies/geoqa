@@ -47,6 +47,16 @@ function isElementNotFound(
   return !outcome.ok && outcome.failure.kind === "reported" && ELEMENT_NOT_FOUND.test(outcome.failure.detail);
 }
 
+/**
+ * A first negative visibility reading, in either of the two forms it takes:
+ * a reported "Element not found", or a successful check returning false. An
+ * element that is present but mid-entrance-animation gives the second.
+ */
+function isNegativeVisibility(outcome: ExecOutcome<unknown>): boolean {
+  if (isElementNotFound(outcome)) return true;
+  return outcome.ok && toVisible(outcome.data) === false;
+}
+
 /** How long to settle before re-checking an element that appeared absent. */
 export const DEFAULT_ABSENCE_SETTLE_MS = 600;
 
@@ -179,7 +189,14 @@ export class AgentBrowserRuntime implements BrowserRuntime {
    */
   async isVisible(selector: string): Promise<BrowserResult<boolean>> {
     let out = await this.run(["is", "visible", selector]);
-    if (isElementNotFound(out)) {
+    // ANY negative gets one confirmation, whether it arrives as an error
+    // ("Element not found") or as a plain `visible: false`. Both mean the same
+    // thing on a page that is still arriving, and both were observed: the
+    // not-found form under load, and the false form on xala.no, whose h1 has an
+    // entrance fade and reads opacity 0 for the first second or so. That one
+    // failed 4 of 4 runs — deterministic, not flaky — because the journey is
+    // faster than the animation.
+    if (isNegativeVisibility(out)) {
       await this.run(["wait", String(this.absenceSettleMs)]);
       out = await this.run(["is", "visible", selector]);
     }

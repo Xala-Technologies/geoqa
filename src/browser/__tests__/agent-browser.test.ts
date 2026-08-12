@@ -242,6 +242,29 @@ describe("AgentBrowserRuntime", () => {
     ]);
   });
 
+  it("RETRIES a plain `visible: false` too — an entrance animation reads as invisible", async () => {
+    // xala.no's h1 fades in from opacity 0. The check ran during the fade and
+    // failed 4 of 4 runs — deterministic, not flaky. A negative arriving as
+    // `false` deserves the same confirmation as one arriving as an error.
+    let checks = 0;
+    const exec: ExecFn = (args) => {
+      if (!args.includes("visible")) return Promise.resolve({ ok: true, data: null, ...meta });
+      checks++;
+      return Promise.resolve({ ok: true, data: { visible: checks > 1 }, ...meta });
+    };
+    const out = await new AgentBrowserRuntime({ sessionId: "r" }, { exec, absenceSettleMs: 5 }).isVisible("h1");
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.data).toBe(true);
+    expect(checks).toBe(2);
+  });
+
+  it("keeps a `false` that SURVIVES the retry — a genuinely hidden element stays hidden", async () => {
+    const exec: ExecFn = () => Promise.resolve({ ok: true, data: { visible: false }, ...meta });
+    const out = await new AgentBrowserRuntime({ sessionId: "r" }, { exec, absenceSettleMs: 5 }).isVisible("h1");
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.data).toBe(false);
+  });
+
   it("does not retry when the element is found first time — the common path costs nothing", async () => {
     const calls: string[][] = [];
     const exec: ExecFn = (args) => {
