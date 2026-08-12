@@ -13,6 +13,7 @@
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import type { FindingCategory } from "../findings/types.js";
 import { formatIssues, type ParseResult } from "../geo/profile.js";
 
 /** Checks that read the page. */
@@ -74,6 +75,19 @@ export const AssertStepSchema = z.object({
   action: z.literal("assert"),
   label: z.string().optional(),
   severity: Severity.default("high"),
+  /**
+   * Overrides the category derived from the check kind. A `text-absent` check
+   * is `content` by default, but in the localization journey the same check is
+   * how a leaked foreign currency is caught — and filing that as a content bug
+   * sends it to the wrong person.
+   */
+  category: z
+    .enum([
+      "functional", "content", "localization", "performance", "network",
+      "navigation", "conversion", "accessibility", "javascript", "http",
+      "redirect", "instrumentation", "unknown",
+    ])
+    .optional(),
 });
 
 export type Step =
@@ -84,7 +98,13 @@ export type Step =
   | { action: "wait"; target: string; label?: string }
   | { action: "screenshot"; label: string; fullPage: boolean }
   | { action: "snapshot"; label: string }
-  | { action: "assert"; label?: string; severity: z.infer<typeof Severity>; spec: Check };
+  | {
+      action: "assert";
+      label?: string;
+      severity: z.infer<typeof Severity>;
+      category?: FindingCategory;
+      spec: Check;
+    };
 
 export const JourneySchema = z.object({
   id: z.string().min(1),
@@ -112,6 +132,7 @@ export function parseStep(raw: unknown, index: number): ParseResult<Step> {
     if (!body.success) return { ok: false, errors: prefix(index, formatIssues(body.error)) };
     const step: Step = { action: "assert", severity: head.data.severity, spec: body.data };
     if (head.data.label !== undefined) step.label = head.data.label;
+    if (head.data.category !== undefined) step.category = head.data.category;
     return { ok: true, value: step };
   }
 

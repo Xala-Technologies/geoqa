@@ -9,6 +9,6 @@ steps:
   - { action: assert, check: title-exists, severity: critical }
   - { action: assert, check: no-http-5xx, severity: critical }
   - { action: screenshot, label: as-seen, fullPage: true }
-  - { action: assert, check: text-contains, selector: html, value: "{expectLanguageMarker}", severity: high, label: page carries the market's language marker }
-  - { action: assert, check: text-absent, selector: body, value: "{forbiddenCurrency}", severity: high, label: no foreign currency leaked in }
+  - { action: assert, check: text-contains, selector: html, value: "{expectLanguageMarker}", severity: high, category: localization, label: page carries the market's language marker }
+  - { action: assert, check: text-absent, selector: body, value: "{forbiddenCurrency}", severity: high, category: localization, label: no foreign currency leaked in }
   - { action: assert, check: no-page-errors, severity: high }

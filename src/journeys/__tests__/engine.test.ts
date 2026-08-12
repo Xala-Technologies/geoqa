@@ -236,6 +236,7 @@ describe("runJourney", () => {
 describe("verdictFor", () => {
   const step = (outcome: StepResult["outcome"], severity = "high"): StepResult => ({
     index: 0, action: "assert", label: "l", outcome, severity,
+    category: null, check: null,
     detail: "", expected: null, observed: null, durationMs: 0,
   });
 

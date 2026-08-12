@@ -17,6 +17,7 @@
  * every failure in one pass, not to stop at the first.
  */
 import type { BrowserResult, BrowserRuntime } from "../browser/types.js";
+import type { FindingCategory } from "../findings/types.js";
 import { checkNeeds, evaluateCheck, EMPTY_READING, type CheckResult, type PageReading } from "./assertions.js";
 import type { Check, Journey, Step } from "./spec.js";
 
@@ -28,6 +29,10 @@ export interface StepResult {
   label: string;
   outcome: StepOutcome;
   severity: string;
+  /** Set only for asserts that declared one; otherwise derived downstream. */
+  category: FindingCategory | null;
+  /** The check kind, so a finding can be classified without the journey. */
+  check: string | null;
   detail: string;
   expected: string | null;
   observed: string | null;
@@ -136,6 +141,7 @@ export async function runJourney(
     if (halted) {
       steps.push({
         index, action: step.action, label, outcome: "skipped", severity: "info",
+        category: null, check: step.action === "assert" ? step.spec.check : null,
         detail: "skipped — an earlier state-changing step failed, so this would measure nothing",
         expected: null, observed: null, durationMs: 0,
       });
@@ -148,6 +154,7 @@ export async function runJourney(
       const outcome = outcomeOf(result);
       steps.push({
         index, action: step.action, label, outcome, severity: step.severity,
+        category: step.category ?? null, check: step.spec.check,
         detail: `${step.spec.check}: expected ${result.expected}, observed ${result.observed}`,
         expected: result.expected, observed: result.observed, durationMs: now() - stepStarted,
       });
@@ -161,6 +168,7 @@ export async function runJourney(
     if (out.ok) {
       steps.push({
         index, action: step.action, label, outcome: "passed", severity: "info",
+        category: null, check: null,
         detail: `${step.action} ok`, expected: null, observed: null, durationMs: now() - stepStarted,
       });
       log(`  ✓ ${label}`);
@@ -172,6 +180,7 @@ export async function runJourney(
     halted = fatal;
     steps.push({
       index, action: step.action, label, outcome: "errored", severity: fatal ? "critical" : "low",
+      category: "instrumentation", check: null,
       detail: `${step.action} failed: ${out.failure.kind} — ${out.failure.detail}`,
       expected: null, observed: null, durationMs: now() - stepStarted,
     });
