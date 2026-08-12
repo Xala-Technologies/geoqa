@@ -199,21 +199,57 @@ describe("AgentBrowserRuntime", () => {
     expect(a11yOut.data).toEqual([{ id: "landmark-one-main", impact: "moderate", help: "h", nodes: 1 }]);
   });
 
-  it("treats a MISSING element as not-visible, because that is the answer to the question", async () => {
+  const notFound = (): ExecOutcome<unknown> => ({
+    ok: false,
+    failure: { kind: "reported", detail: "Element not found: h1. Verify the selector…", exitCode: 0, signal: null },
+    ...meta,
+  });
+
+  it("treats a CONFIRMED missing element as not-visible, because that is the answer to the question", async () => {
     // agent-browser reports `Element not found` as success:false. Passing it
     // through made "the page has no CTA" indistinguishable from "the browser
-    // broke", so a real site defect was filed against us. Measured: EXP-006
-    // detection was 75% before this, 100% after.
-    const exec: ExecFn = () =>
-      Promise.resolve({
-        ok: false,
-        failure: { kind: "reported", detail: "Element not found: h1. Verify the selector…", exitCode: 0, signal: null },
-        ...meta,
-      });
-    const out = await new AgentBrowserRuntime({ sessionId: "r" }, { exec }).isVisible("h1");
+    // broke", so a real site defect was filed against us. EXP-006 detection was
+    // 75% before this, 100% after.
+    const exec: ExecFn = () => Promise.resolve(notFound());
+    const out = await new AgentBrowserRuntime({ sessionId: "r" }, { exec, absenceSettleMs: 1 }).isVisible("h1");
     expect(out.ok).toBe(true);
     if (!out.ok) throw new Error("expected ok");
     expect(out.data).toBe(false);
+  });
+
+  it("RETRIES once before calling an element absent — a first miss may just be a page that has not rendered", async () => {
+    // The defect this exists for: under concurrent load the same "Element not
+    // found" fires for a heading that is demonstrably present. Measured with
+    // ~55 concurrent browsers, a real h1 failed 3 of 4 runs and passed every
+    // time it ran alone. A single miss is not evidence of absence.
+    const calls: string[][] = [];
+    const exec: ExecFn = (args) => {
+      calls.push(args);
+      const isCheck = args.includes("visible");
+      // Miss first, then find it — exactly the not-ready-yet shape.
+      if (isCheck && calls.filter((c) => c.includes("visible")).length === 1) return Promise.resolve(notFound());
+      return Promise.resolve({ ok: true, data: { visible: true }, ...meta });
+    };
+    const out = await new AgentBrowserRuntime({ sessionId: "r" }, { exec, absenceSettleMs: 5 }).isVisible("h1");
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.data).toBe(true);
+    // Settled between the two looks rather than hammering immediately.
+    expect(calls.map((c) => c.slice(2, -1))).toEqual([
+      ["is", "visible", "h1"],
+      ["wait", "5"],
+      ["is", "visible", "h1"],
+    ]);
+  });
+
+  it("does not retry when the element is found first time — the common path costs nothing", async () => {
+    const calls: string[][] = [];
+    const exec: ExecFn = (args) => {
+      calls.push(args);
+      return Promise.resolve({ ok: true, data: { visible: true }, ...meta });
+    };
+    await new AgentBrowserRuntime({ sessionId: "r" }, { exec }).isVisible("h1");
+    expect(calls).toHaveLength(1);
   });
 
   it("does NOT swallow any other failure on isVisible — those really are our defect", async () => {

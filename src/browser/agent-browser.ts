@@ -37,6 +37,19 @@ import type {
 /** agent-browser's wording for a selector that matched nothing. */
 const ELEMENT_NOT_FOUND = /element not found/i;
 
+/**
+ * A reported "Element not found" — the ONE failure that might mean the page is
+ * simply not ready rather than that the element is absent.
+ */
+function isElementNotFound(
+  outcome: ExecOutcome<unknown>,
+): outcome is Extract<ExecOutcome<unknown>, { ok: false }> {
+  return !outcome.ok && outcome.failure.kind === "reported" && ELEMENT_NOT_FOUND.test(outcome.failure.detail);
+}
+
+/** How long to settle before re-checking an element that appeared absent. */
+export const DEFAULT_ABSENCE_SETTLE_MS = 600;
+
 /** Injectable transport, so the adapter is testable without a browser. */
 export type ExecFn = (args: string[], env: NodeJS.ProcessEnv) => Promise<ExecOutcome<unknown>>;
 
@@ -47,6 +60,11 @@ export interface RuntimeOptions {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   idleMs?: number;
+  /**
+   * Milliseconds to settle before confirming an element is absent. Lowered in
+   * tests so the confirm-absence retry costs nothing there.
+   */
+  absenceSettleMs?: number;
 }
 
 /**
@@ -65,6 +83,7 @@ export class AgentBrowserRuntime implements BrowserRuntime {
   private readonly config: BrowserSessionConfig;
   private readonly exec: ExecFn;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly absenceSettleMs: number;
 
   constructor(config: BrowserSessionConfig, options: RuntimeOptions = {}) {
     this.config = config;
@@ -73,6 +92,7 @@ export class AgentBrowserRuntime implements BrowserRuntime {
     // the browser's clock (measured in EXP-000 — `--args --lang` does not work,
     // `TZ` does), so a profile must be able to override an ambient value.
     this.env = { ...(options.env ?? process.env), ...(config.env ?? {}) };
+    this.absenceSettleMs = options.absenceSettleMs ?? DEFAULT_ABSENCE_SETTLE_MS;
     this.exec =
       options.exec ??
       ((args, env) =>
@@ -128,24 +148,42 @@ export class AgentBrowserRuntime implements BrowserRuntime {
   }
 
   /**
-   * A selector that matches nothing is NOT VISIBLE — it is not an inability to
-   * look.
+   * A selector that matches nothing is NOT VISIBLE — but absence has to be
+   * CONFIRMED, not assumed on the first miss.
    *
-   * agent-browser reports `success:false, error:"Element not found: …"` for a
-   * missing element, which the transport layer correctly classifies as a
-   * `reported` failure. Passing that straight through made "the page is missing
-   * its CTA" indistinguishable from "the browser broke", so a genuine defect
-   * was filed against US as an instrumentation failure instead of against the
-   * site. Measured: EXP-006 scored 75% detection, and `/missing-cta` was one of
-   * the two misses.
+   * Two lessons, in the order they were paid for.
+   *
+   * **First**: agent-browser reports `success:false, error:"Element not
+   * found: …"` for a missing element, which the transport layer correctly
+   * classifies as a `reported` failure. Passing that straight through made
+   * "the page is missing its CTA" indistinguishable from "the browser broke",
+   * so a genuine site defect was filed against US. EXP-006 scored 75%
+   * detection; converting the error to `false` took it to 100%.
+   *
+   * **Second, and the reason for the retry**: that conversion was too eager.
+   * The same "Element not found" also fires when the page simply has not
+   * rendered yet — and under load it fires often. Measured while five sweep
+   * agents drove ~55 concurrent browser processes: a blog post whose `h1` is
+   * demonstrably present and visible (63 consecutive polls, opacity 1, above
+   * the fold) failed this check in 3 of 4 runs, and passed every time it ran
+   * alone. The engine was reporting a false site defect under its own load.
+   *
+   * So a first miss is treated as "not ready", not as "not there": settle
+   * briefly and look again. Only a second miss is absence. The cost is one
+   * extra round trip on genuinely-absent elements — which are, by definition,
+   * the rare case worth being right about.
    *
    * ONLY this specific reported error is converted. A timeout, a crash, an
-   * unparseable envelope — anything that means we did not get to look — stays a
+   * unparseable envelope — anything meaning we never got to look — stays a
    * failure, because those genuinely are our defect.
    */
   async isVisible(selector: string): Promise<BrowserResult<boolean>> {
-    const out = await this.run(["is", "visible", selector]);
-    if (!out.ok && out.failure.kind === "reported" && ELEMENT_NOT_FOUND.test(out.failure.detail)) {
+    let out = await this.run(["is", "visible", selector]);
+    if (isElementNotFound(out)) {
+      await this.run(["wait", String(this.absenceSettleMs)]);
+      out = await this.run(["is", "visible", selector]);
+    }
+    if (isElementNotFound(out)) {
       const { ok: _ok, failure: _failure, ...meta } = out;
       return { ok: true, data: false, ...meta };
     }
