@@ -1,17 +1,25 @@
+# Paths below are ROOT-ANCHORED with a leading slash, deliberately.
+#
+# A bare `evidence/` matches at ANY depth, so it silently excluded
+# `src/evidence/` — the entire evidence module, manifest + redaction + store —
+# from the first push. Everything built and tested locally because the files
+# were on disk; a clean clone did not compile. Anchor anything that names a
+# run-output directory whose name could collide with a source directory.
+
 node_modules/
-coverage/
-dist/
 *.tsbuildinfo
 
-# Evidence is run output, and may contain personal data captured from a page.
-# It is never committed — see src/evidence/redact.ts for what we strip before
-# it even reaches disk.
-evidence/
-experiments/*/evidence/
-experiments/*/results.jsonl
+/coverage/
+/dist/
+
+# Run output. May contain personal data captured from a page — see
+# src/evidence/redact.ts for what is stripped before it reaches disk.
+/evidence/
+/experiments/*/evidence/
+/experiments/*/results.jsonl
 
 # Local config carries proxy credentials.
-geoqa.config.json
+/geoqa.config.json
 .env
 .env.*
 !.env.example
