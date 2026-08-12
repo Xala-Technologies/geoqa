@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes the older run irrelevant. Cancelling it
+# keeps the queue honest; `main` is exempt so a merged commit always gets a
+# recorded result rather than being cancelled by the next merge.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Generous because the Temporal tests download a dev server binary on first
+    # use and run real workflow executions against it (~20s locally, and two of
+    # them deliberately sit through a retry backoff).
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads the pinned version from package.json `packageManager`, so the
+      # runner cannot silently use a different pnpm than the lockfile was
+      # written with.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # `--frozen-lockfile` fails rather than silently resolving new versions,
+      # so a dependency cannot drift between a green local run and CI.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # NOT `agent-browser install`. Every test runs against an injected fake
+      # runtime, so the suite needs no Chrome — downloading 179MB per run to
+      # exercise nothing would be pure cost. The real browser is exercised by
+      # `geoqa experiment run`, which is deliberately a human/scheduled action
+      # against live sites, not a CI job.
+
+      - name: Typecheck
+        run: pnpm lint
+
+      # The gate that matters: 100% lines/statements/functions. Coverage proves
+      # lines RAN, not that anything was asserted — which is why the threshold
+      # is paired with the repo's rule that every fix is pinned by a test and
+      # the pin is mutation-checked. CI can enforce the first half only.
+      - name: Test with coverage
+        run: pnpm test:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+          if-no-files-found: warn
