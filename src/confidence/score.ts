@@ -32,9 +32,19 @@ export function networkConfidence(geo: GeoVerification): number {
   return Math.round(raw * cap * 100);
 }
 
-/** Browser environment only: language and clock weigh the same. */
+/**
+ * Browser environment: locale, clock and device.
+ *
+ * The viewport is weighted lowest of the three but is NOT free — a mobile
+ * profile that rendered at desktop width produced a run whose every other
+ * check passed, which is exactly the kind of silent wrongness a confidence
+ * score exists to surface.
+ */
 export function browserConfidence(geo: GeoVerification): number {
-  const raw = scoreAxes([geo.browser.language.verdict, geo.browser.timezone.verdict], [0.5, 0.5]);
+  const raw = scoreAxes(
+    [geo.browser.language.verdict, geo.browser.timezone.verdict, geo.browser.viewport.verdict],
+    [0.4, 0.35, 0.25],
+  );
   return Math.round(raw * 100);
 }
 
@@ -84,7 +94,14 @@ export function scoreRun(input: ScoreInput): ConfidenceReport {
 
   const notes: string[] = [];
   if (geo < 100) notes.push(`network identity ${geo}: ${input.geo.network.country.reasons.join("; ")}`);
-  if (browser < 100) notes.push(`browser environment ${browser}: ${input.geo.browser.language.reasons.join("; ")}`);
+  if (browser < 100) {
+    const why = [
+      ...input.geo.browser.language.reasons,
+      ...input.geo.browser.timezone.reasons,
+      ...input.geo.browser.viewport.reasons,
+    ];
+    notes.push(`browser environment ${browser}: ${why.join("; ")}`);
+  }
   if (input.journey.counts.errored > 0)
     notes.push(
       `${input.journey.counts.errored} step(s) could not be read — this is a GeoQA defect and caps what the run can claim`,

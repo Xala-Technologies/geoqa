@@ -15,7 +15,15 @@ import type { GeoNetworkProvider } from "../network/types.js";
 import { noteProviderOutcome } from "../network/provider.js";
 import type { GeoQaRunResult } from "../findings/types.js";
 import { buildRuntime, newRunId, writeInitScript, type RunSpec } from "./context.js";
-import { assembleResult, collectEvidence, executeJourney, loadInputs, StageError, verifyEnvironment } from "./stages.js";
+import {
+  applyDeviceProfile,
+  assembleResult,
+  collectEvidence,
+  executeJourney,
+  loadInputs,
+  StageError,
+  verifyEnvironment,
+} from "./stages.js";
 
 export interface ExecuteOptions {
   spec: RunSpec;
@@ -93,6 +101,10 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
   const runtime = buildRuntime(options.spec, profile);
 
   try {
+    // Before anything is observed: a profile that never applied its device
+    // measures a different layout than the one it claims to.
+    for (const warning of await applyDeviceProfile(runtime, profile)) log(`warning: ${warning}`);
+
     log(`geo: verifying both axes for ${profile.id}`);
     const geo = await verifyEnvironment(runtime, profile, options.spec.verifyEndpoint);
     log(`geo: confidence ${geo.confidence}${geo.trustworthy ? "" : " (not fully verified)"}`);

@@ -13,7 +13,9 @@ import {
 
 const axis = (verdict: AxisResult["verdict"], why = "because"): AxisResult => ({ verdict, reasons: [why] });
 
-const geo = (over: Partial<Record<"country" | "city" | "language" | "timezone", AxisResult>> = {}): GeoVerification => ({
+const geo = (
+  over: Partial<Record<"country" | "city" | "language" | "timezone" | "viewport", AxisResult>> = {},
+): GeoVerification => ({
   profileId: "oslo-mobile",
   network: {
     requested: { country: "NO", city: "Oslo" },
@@ -22,10 +24,14 @@ const geo = (over: Partial<Record<"country" | "city" | "language" | "timezone", 
     city: over.city ?? axis("match"),
   },
   browser: {
-    requested: { language: "nb-NO", timezone: "Europe/Oslo" },
-    observed: { language: "nb-NO", languages: [], timezone: "Europe/Oslo", userAgent: null, viewport: null, geolocation: null },
+    requested: { language: "nb-NO", timezone: "Europe/Oslo", viewport: { width: 390, height: 844 } },
+    observed: {
+      language: "nb-NO", languages: [], timezone: "Europe/Oslo", userAgent: null,
+      viewport: { width: 390, height: 844 }, geolocation: null,
+    },
     language: over.language ?? axis("match"),
     timezone: over.timezone ?? axis("match"),
+    viewport: over.viewport ?? axis("match"),
   },
   confidence: 100,
   trustworthy: true,
@@ -63,10 +69,13 @@ describe("networkConfidence", () => {
 });
 
 describe("browserConfidence", () => {
-  it("weights language and timezone equally", () => {
+  it("weights language above the clock above the device, and none of them at zero", () => {
     expect(browserConfidence(geo())).toBe(100);
-    expect(browserConfidence(geo({ language: axis("mismatch") }))).toBe(50);
-    expect(browserConfidence(geo({ timezone: axis("mismatch") }))).toBe(50);
+    expect(browserConfidence(geo({ language: axis("mismatch") }))).toBe(60);
+    expect(browserConfidence(geo({ timezone: axis("mismatch") }))).toBe(65);
+    // The bug this axis exists for: a mobile profile rendered at desktop width
+    // with everything else correct is NOT a fully confident observation.
+    expect(browserConfidence(geo({ viewport: axis("mismatch") }))).toBe(75);
   });
 });
 

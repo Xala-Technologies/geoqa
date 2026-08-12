@@ -154,7 +154,12 @@ describe("verifyGeo", () => {
     expect(v.browser.language.verdict).toBe("match");
     expect(v.browser.timezone.verdict).toBe("match");
     expect(v.network.requested).toEqual({ country: "NO", city: "Oslo" });
-    expect(v.browser.requested).toEqual({ language: "nb-NO", timezone: "Europe/Oslo" });
+    expect(v.browser.requested).toEqual({
+      language: "nb-NO",
+      timezone: "Europe/Oslo",
+      viewport: { width: 390, height: 844 },
+    });
+    expect(v.browser.viewport.verdict).toBe("match");
   });
 
   it("is NOT trustworthy when any axis is merely unverified", () => {
@@ -181,6 +186,32 @@ describe("verifyGeo", () => {
     expect(v.confidence).toBeLessThan(40);
   });
 
+  it("catches a MOBILE profile that actually rendered at desktop width", () => {
+    // The first live run did exactly this: oslo-mobile rendered at 1280px,
+    // every check passed, and the evidence package was 100% complete. Only the
+    // screenshot showed it. The axis exists so the run says so itself.
+    const v = verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, {
+      ...NORWEGIAN_BROWSER,
+      viewport: { width: 1280, height: 577 },
+    });
+    expect(v.browser.viewport.verdict).toBe("mismatch");
+    expect(v.browser.viewport.reasons[0]).toContain("browser rendered 1280px");
+    expect(v.trustworthy).toBe(false);
+  });
+
+  it("compares the viewport on width only, ignoring height", () => {
+    const v = verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, {
+      ...NORWEGIAN_BROWSER,
+      viewport: { width: 390, height: 700 },
+    });
+    expect(v.browser.viewport.verdict).toBe("match");
+  });
+
+  it("reports an unread viewport as unverified", () => {
+    const v = verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, { ...NORWEGIAN_BROWSER, viewport: null });
+    expect(v.browser.viewport.verdict).toBe("unverified");
+  });
+
   it("scores an entirely unread run low rather than passing it", () => {
     const v = verifyGeo(OSLO_PROFILE, UNKNOWN_NETWORK, UNKNOWN_BROWSER);
     expect(v.trustworthy).toBe(false);
@@ -191,7 +222,7 @@ describe("verifyGeo", () => {
 describe("verificationReasons", () => {
   it("collects every axis's reason for the run summary", () => {
     const reasons = verificationReasons(verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, NORWEGIAN_BROWSER));
-    expect(reasons).toHaveLength(4);
+    expect(reasons).toHaveLength(5);
     expect(reasons.join(" ")).toContain("Lysaker");
   });
 });

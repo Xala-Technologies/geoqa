@@ -11,6 +11,7 @@ import { buildManifest } from "../../evidence/manifest.js";
 import type { RunSpec } from "../context.js";
 import {
   StageError,
+  applyDeviceProfile,
   assembleResult,
   collectEvidence,
   executeJourney,
@@ -278,5 +279,51 @@ describe("assembleResult", () => {
     });
     expect(result.evidenceId).toBeNull();
     expect(result.confidence.evidence).toBe(0);
+  });
+});
+
+describe("applyDeviceProfile", () => {
+  it("sets the viewport from the profile's device", async () => {
+    const calls: [number, number][] = [];
+    const warnings = await applyDeviceProfile(
+      fakeRuntime({
+        setViewport: (w, h) => {
+          calls.push([w, h]);
+          return Promise.resolve(ok(null));
+        },
+      }),
+      profile(),
+    );
+    expect(calls).toEqual([[390, 844]]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("emulates a named device first when the profile asks for one", async () => {
+    const devices: string[] = [];
+    const p = profile();
+    await applyDeviceProfile(
+      fakeRuntime({
+        setDevice: (name) => {
+          devices.push(name);
+          return Promise.resolve(ok(null));
+        },
+      }),
+      { ...p, device: { ...p.device, emulate: "iPhone 15 Pro" } },
+    );
+    expect(devices).toEqual(["iPhone 15 Pro"]);
+  });
+
+  it("WARNS rather than throwing when the browser refuses — a wrong viewport is a finding, not a crash", async () => {
+    const p = profile();
+    const warnings = await applyDeviceProfile(
+      fakeRuntime({
+        setDevice: () => Promise.resolve(bad()),
+        setViewport: () => Promise.resolve(bad()),
+      }),
+      { ...p, device: { ...p.device, emulate: "iPhone 15 Pro" } },
+    );
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain('could not emulate device "iPhone 15 Pro"');
+    expect(warnings[1]).toContain("could not set viewport 390×844");
   });
 });

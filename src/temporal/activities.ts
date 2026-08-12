@@ -21,7 +21,14 @@ import type { GeoQaRunResult } from "../findings/types.js";
 import { selectProvider } from "../network/provider.js";
 import { buildRuntime, writeInitScript, type RunSpec } from "../run/context.js";
 import { prepareRun } from "../run/execute.js";
-import { assembleResult, collectEvidence, executeJourney, StageError, verifyEnvironment } from "../run/stages.js";
+import {
+  applyDeviceProfile,
+  assembleResult,
+  collectEvidence,
+  executeJourney,
+  StageError,
+  verifyEnvironment,
+} from "../run/stages.js";
 
 const profileOf = (spec: RunSpec) => {
   const loaded = loadGeoProfile(spec.profilePath);
@@ -49,7 +56,9 @@ export async function verifyGeoActivity(spec: RunSpec): Promise<GeoVerification>
   // it is idempotent and cheap, and its absence would silently change the
   // browser's launch identity.
   if (spec.initScriptPath) writeInitScript(spec, profile);
-  return verifyEnvironment(buildRuntime(spec, profile), profile, spec.verifyEndpoint);
+  const runtime = buildRuntime(spec, profile);
+  await applyDeviceProfile(runtime, profile);
+  return verifyEnvironment(runtime, profile, spec.verifyEndpoint);
 }
 
 export async function runJourneyActivity(spec: RunSpec): Promise<JourneyResult> {

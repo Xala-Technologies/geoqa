@@ -95,10 +95,17 @@ export interface GeoVerification {
     city: AxisResult;
   };
   browser: {
-    requested: { language: string; timezone: string };
+    requested: { language: string; timezone: string; viewport: { width: number; height: number } };
     observed: BrowserObservation;
     language: AxisResult;
     timezone: AxisResult;
+    /**
+     * The device axis. Present because a profile ASKING for 390×844 and a
+     * browser actually rendering at 390×844 are different claims — the first
+     * live run rendered a mobile profile at 1280px and every other check still
+     * passed.
+     */
+    viewport: AxisResult;
   };
   /** 0..100, capped by the weaker axis. See confidence/geo.ts. */
   confidence: number;

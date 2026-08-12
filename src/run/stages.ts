@@ -46,6 +46,32 @@ export function loadInputs(spec: RunSpec): { profile: GeoProfile; journey: Retur
 }
 
 /**
+ * Apply the profile's device before anything is observed or asserted.
+ *
+ * Missed on the first live run and caught only by opening the screenshot: an
+ * `oslo-mobile` run rendered at 1280px, because nothing ever set the viewport.
+ * Every check still passed, the evidence package was 100% complete, and the
+ * whole run was quietly measuring a desktop layout under a mobile profile's
+ * name. Nothing in the logs said so — the artifact did. Hence the rule this
+ * function exists to enforce, and hence `verifyEnvironment` reading the
+ * viewport back rather than assuming the request took.
+ *
+ * Ordering matters: this runs BEFORE geo verification, so the viewport the
+ * verification reports is the one the journey will actually use.
+ */
+export async function applyDeviceProfile(runtime: BrowserRuntime, profile: GeoProfile): Promise<string[]> {
+  const warnings: string[] = [];
+  if (profile.device.emulate) {
+    const out = await runtime.setDevice(profile.device.emulate);
+    if (!out.ok) warnings.push(`could not emulate device "${profile.device.emulate}": ${out.failure.detail}`);
+  }
+  const { width, height } = profile.device.viewport;
+  const out = await runtime.setViewport(width, height);
+  if (!out.ok) warnings.push(`could not set viewport ${width}×${height}: ${out.failure.detail}`);
+  return warnings;
+}
+
+/**
  * Verify both geographic axes.
  *
  * Runs BEFORE the journey, deliberately. Verifying afterwards would tell us the

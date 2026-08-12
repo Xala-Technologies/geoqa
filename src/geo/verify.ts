@@ -58,6 +58,23 @@ export function compareTimezone(requested: string, observed: string | null): Axi
     : mismatched(`requested ${requested}, browser reports ${observed}`);
 }
 
+/**
+ * The rendered viewport, compared on WIDTH only.
+ *
+ * Height varies with the browser's own chrome and with `--hide-scrollbars`,
+ * and no layout decision in a responsive site keys off it. Width is what
+ * selects a breakpoint, so width is what we can meaningfully verify.
+ */
+export function compareViewport(
+  requested: { width: number; height: number },
+  observed: { width: number; height: number } | null,
+): AxisResult {
+  if (observed === null) return unverified("viewport was never read");
+  return observed.width === requested.width
+    ? matched(`viewport width ${observed.width}px`)
+    : mismatched(`requested ${requested.width}px wide, browser rendered ${observed.width}px`);
+}
+
 const WEIGHT = { country: 0.45, city: 0.15, language: 0.2, timezone: 0.2 } as const;
 const SCORE: Record<AxisResult["verdict"], number> = { match: 1, unverified: 0.4, mismatch: 0 };
 
@@ -92,6 +109,7 @@ export function verifyGeo(
   const city = compareCity(profile.market.city, network.city);
   const language = compareLanguage(profile.market.language, browser.language);
   const timezone = compareTimezone(profile.market.timezone, browser.timezone);
+  const viewport = compareViewport(profile.device.viewport, browser.viewport);
   const axes = [country, city, language, timezone];
   return {
     profileId: profile.id,
@@ -102,13 +120,21 @@ export function verifyGeo(
       city,
     },
     browser: {
-      requested: { language: profile.market.language, timezone: profile.market.timezone },
+      requested: {
+        language: profile.market.language,
+        timezone: profile.market.timezone,
+        viewport: profile.device.viewport,
+      },
       observed: browser,
       language,
       timezone,
+      viewport,
     },
     confidence: geoConfidence(axes),
-    trustworthy: axes.every((a) => a.verdict === "match"),
+    // The viewport counts toward trustworthiness even though it is not in the
+    // weighted geo score: a desktop render under a mobile profile is not a
+    // trustworthy observation of that profile, whatever the geography said.
+    trustworthy: [...axes, viewport].every((a) => a.verdict === "match"),
   };
 }
 
@@ -119,5 +145,6 @@ export function verificationReasons(v: GeoVerification): string[] {
     ...v.network.city.reasons,
     ...v.browser.language.reasons,
     ...v.browser.timezone.reasons,
+    ...v.browser.viewport.reasons,
   ];
 }
