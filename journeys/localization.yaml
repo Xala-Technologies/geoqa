@@ -1,0 +1,14 @@
+id: localization
+title: Localization validation
+description: >
+  The market-specific journey, and the reason this project exists. Everything
+  here is a claim about what a visitor in ONE market should see. Run it against
+  a second market and the failures are the localization bugs.
+steps:
+  - { action: open, url: "{target}", label: open target }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: screenshot, label: as-seen, fullPage: true }
+  - { action: assert, check: text-contains, selector: html, value: "{expectLanguageMarker}", severity: high, label: page carries the market's language marker }
+  - { action: assert, check: text-absent, selector: body, value: "{forbiddenCurrency}", severity: high, label: no foreign currency leaked in }
+  - { action: assert, check: no-page-errors, severity: high }

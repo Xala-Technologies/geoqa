@@ -1,0 +1,15 @@
+id: browse
+title: Browse journey
+description: >
+  J02. Landing → navigation → a listing → its detail page. Proves the site is
+  navigable, not merely renderable.
+steps:
+  - { action: open, url: "{target}", label: open target }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: snapshot, label: landing-tree }
+  - { action: assert, check: selector-visible, selector: "nav, header nav, [role='navigation']", severity: high, label: has navigation }
+  - { action: screenshot, label: landing }
+  - { action: scroll, direction: down, px: 800 }
+  - { action: assert, check: selector-count-min, selector: "a", value: 5, severity: medium }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: no-page-errors, severity: high }

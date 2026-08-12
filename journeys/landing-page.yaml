@@ -1,0 +1,20 @@
+id: landing-page
+title: Landing page validation
+description: >
+  J01. The page a search visitor lands on renders, says what it should, and
+  offers somewhere to go next. Deliberately shallow — this is the check that
+  runs on every publish, so it must be fast and must not flake.
+steps:
+  - { action: open, url: "{target}", label: open target }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: selector-visible, selector: h1, severity: critical, label: has a primary heading }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: no-http-4xx, severity: medium }
+  - { action: screenshot, label: hero }
+  - { action: assert, check: selector-count-min, selector: "a[href^='/']", value: 3, severity: medium, label: has internal links }
+  - { action: scroll, direction: down, px: 1200 }
+  - { action: screenshot, label: mid-page, fullPage: true }
+  - { action: assert, check: no-page-errors, severity: high }
+  - { action: assert, check: no-console-errors, severity: medium }
+  - { action: assert, check: lcp-below, value: 2500, severity: medium }
+  - { action: assert, check: cls-below, value: 0.1, severity: low }

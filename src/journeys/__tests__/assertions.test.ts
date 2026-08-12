@@ -1,0 +1,182 @@
+import { describe, expect, it } from "vitest";
+import { EMPTY_READING, checkNeeds, describeCheck, evaluateCheck, type PageReading } from "../assertions.js";
+import type { Check } from "../spec.js";
+
+const reading = (over: Partial<PageReading>): PageReading => ({ ...EMPTY_READING, ...over });
+const verdict = (check: Check, over: Partial<PageReading>): string => evaluateCheck(check, reading(over)).verdict;
+
+describe("checkNeeds", () => {
+  it("names exactly one reading per check, and covers every check kind", () => {
+    const checks: Check[] = [
+      { check: "title-exists" },
+      { check: "title-contains", value: "x" },
+      { check: "url-matches", value: "x" },
+      { check: "selector-visible", selector: "h1" },
+      { check: "selector-absent", selector: "h1" },
+      { check: "selector-count-min", selector: "a", value: 1 },
+      { check: "text-contains", selector: "body", value: "x" },
+      { check: "text-absent", selector: "body", value: "x" },
+      { check: "no-console-errors" },
+      { check: "no-page-errors" },
+      { check: "no-http-5xx" },
+      { check: "no-http-4xx" },
+      { check: "lcp-below", value: 1 },
+      { check: "cls-below", value: 1 },
+      { check: "no-a11y-critical" },
+    ];
+    for (const c of checks) expect(checkNeeds(c)).toHaveLength(1);
+    expect(checkNeeds({ check: "no-http-4xx" })).toEqual(["requests"]);
+  });
+});
+
+describe("the unreadable verdict", () => {
+  it("is returned — never `passed` — for EVERY check when its input was not read", () => {
+    // The single most important property in this file. A check that reads
+    // nothing must not report good news.
+    const checks: Check[] = [
+      { check: "title-exists" },
+      { check: "title-contains", value: "x" },
+      { check: "url-matches", value: "x" },
+      { check: "selector-visible", selector: "h1" },
+      { check: "selector-absent", selector: "h1" },
+      { check: "selector-count-min", selector: "a", value: 1 },
+      { check: "text-contains", selector: "body", value: "x" },
+      { check: "text-absent", selector: "body", value: "x" },
+      { check: "no-console-errors" },
+      { check: "no-page-errors" },
+      { check: "no-http-5xx" },
+      { check: "no-http-4xx" },
+      { check: "lcp-below", value: 1 },
+      { check: "cls-below", value: 1 },
+      { check: "no-a11y-critical" },
+    ];
+    for (const c of checks) {
+      const result = evaluateCheck(c, EMPTY_READING);
+      expect(result.verdict, `${c.check} on an empty reading`).toBe("unreadable");
+      expect(result.observed).toContain("not read");
+    }
+  });
+});
+
+describe("title and url", () => {
+  it("title-exists rejects an empty or whitespace title", () => {
+    expect(verdict({ check: "title-exists" }, { title: "Digilist" })).toBe("passed");
+    expect(verdict({ check: "title-exists" }, { title: "   " })).toBe("failed");
+  });
+
+  it("title-contains is case-insensitive", () => {
+    expect(verdict({ check: "title-contains", value: "digilist" }, { title: "Digilist — Utleie" })).toBe("passed");
+    expect(verdict({ check: "title-contains", value: "airbnb" }, { title: "Digilist" })).toBe("failed");
+  });
+
+  it("url-matches applies a regular expression", () => {
+    expect(verdict({ check: "url-matches", value: "^https://digilist\\.no/" }, { url: "https://digilist.no/blogg" })).toBe("passed");
+    expect(verdict({ check: "url-matches", value: "^https://x/" }, { url: "https://digilist.no" })).toBe("failed");
+  });
+
+  it("treats an invalid regex as an AUTHORING fault, not a page defect", () => {
+    const result = evaluateCheck({ check: "url-matches", value: "([" }, reading({ url: "https://x" }));
+    expect(result.verdict).toBe("unreadable");
+    expect(result.observed).toContain("not a valid regular expression");
+  });
+});
+
+describe("selectors", () => {
+  it("selector-visible and selector-absent are opposites", () => {
+    expect(verdict({ check: "selector-visible", selector: "h1" }, { visible: true })).toBe("passed");
+    expect(verdict({ check: "selector-visible", selector: "h1" }, { visible: false })).toBe("failed");
+    expect(verdict({ check: "selector-absent", selector: ".err" }, { visible: false })).toBe("passed");
+    expect(verdict({ check: "selector-absent", selector: ".err" }, { visible: true })).toBe("failed");
+  });
+
+  it("selector-count-min compares inclusively", () => {
+    expect(verdict({ check: "selector-count-min", selector: "a", value: 3 }, { count: 3 })).toBe("passed");
+    expect(verdict({ check: "selector-count-min", selector: "a", value: 3 }, { count: 2 })).toBe("failed");
+  });
+
+  it("text-contains and text-absent are case-insensitive opposites", () => {
+    expect(verdict({ check: "text-contains", selector: "body", value: "NOK" }, { text: "Pris: 500 nok" })).toBe("passed");
+    expect(verdict({ check: "text-absent", selector: "body", value: "EUR" }, { text: "Pris: 500 nok" })).toBe("passed");
+    expect(verdict({ check: "text-absent", selector: "body", value: "nok" }, { text: "500 NOK" })).toBe("failed");
+    expect(verdict({ check: "text-contains", selector: "body", value: "SEK" }, { text: "500 NOK" })).toBe("failed");
+  });
+});
+
+describe("errors and network", () => {
+  it("no-console-errors ignores warnings and logs", () => {
+    expect(
+      verdict({ check: "no-console-errors" }, { console: [{ type: "warning", text: "deprecated" }] }),
+    ).toBe("passed");
+    const failed = evaluateCheck({ check: "no-console-errors" }, reading({ console: [{ type: "error", text: "boom" }] }));
+    expect(failed.verdict).toBe("failed");
+    expect(failed.observed).toContain("boom");
+  });
+
+  it("distinguishes an empty console (read, none found) from an unread one", () => {
+    expect(verdict({ check: "no-console-errors" }, { console: [] })).toBe("passed");
+    expect(verdict({ check: "no-console-errors" }, { console: null })).toBe("unreadable");
+  });
+
+  it("no-page-errors reports the exception text", () => {
+    expect(verdict({ check: "no-page-errors" }, { pageErrors: [] })).toBe("passed");
+    const failed = evaluateCheck({ check: "no-page-errors" }, reading({ pageErrors: [{ message: "boom", stack: null }] }));
+    expect(failed.verdict).toBe("failed");
+    expect(failed.observed).toContain("boom");
+  });
+
+  it("bands 4xx and 5xx separately and ignores requests with no status", () => {
+    const requests = [
+      { url: "https://x/a", method: "GET", status: 200, resourceType: null },
+      { url: "https://x/b", method: "GET", status: 404, resourceType: null },
+      { url: "https://x/c", method: "GET", status: 503, resourceType: null },
+      { url: "https://x/d", method: "GET", status: null, resourceType: null },
+    ];
+    const five = evaluateCheck({ check: "no-http-5xx" }, reading({ requests }));
+    expect(five.verdict).toBe("failed");
+    expect(five.observed).toContain("503");
+    expect(five.observed).not.toContain("404");
+    const four = evaluateCheck({ check: "no-http-4xx" }, reading({ requests }));
+    expect(four.observed).toContain("404");
+    expect(verdict({ check: "no-http-5xx" }, { requests: [] })).toBe("passed");
+    expect(verdict({ check: "no-http-4xx" }, { requests: [] })).toBe("passed");
+  });
+});
+
+describe("vitals and accessibility", () => {
+  const vitals = (over: Partial<NonNullable<PageReading["vitals"]>>) => ({
+    lcp: null, cls: null, ttfb: null, fcp: null, inp: null, ...over,
+  });
+
+  it("compares LCP and CLS against the budget", () => {
+    expect(verdict({ check: "lcp-below", value: 2500 }, { vitals: vitals({ lcp: 1800 }) })).toBe("passed");
+    expect(verdict({ check: "lcp-below", value: 2500 }, { vitals: vitals({ lcp: 5100 }) })).toBe("failed");
+    expect(verdict({ check: "cls-below", value: 0.1 }, { vitals: vitals({ cls: 0 }) })).toBe("passed");
+    expect(verdict({ check: "cls-below", value: 0.1 }, { vitals: vitals({ cls: 0.4 }) })).toBe("failed");
+  });
+
+  it("treats an unmeasured metric as unreadable even when the vitals object exists", () => {
+    // The trap: `vitals` came back, but `lcp` inside it is null. Reading that
+    // as 0 would score an unmeasured page as the fastest possible.
+    expect(verdict({ check: "lcp-below", value: 2500 }, { vitals: vitals({}) })).toBe("unreadable");
+    expect(verdict({ check: "cls-below", value: 0.1 }, { vitals: vitals({}) })).toBe("unreadable");
+  });
+
+  it("no-a11y-critical counts only critical impact", () => {
+    const a11y = [
+      { id: "landmark-one-main", impact: "moderate", help: "h", nodes: 1 },
+      { id: "color-contrast", impact: "critical", help: "h", nodes: 3 },
+    ];
+    const failed = evaluateCheck({ check: "no-a11y-critical" }, reading({ a11y }));
+    expect(failed.verdict).toBe("failed");
+    expect(failed.observed).toBe("color-contrast");
+    expect(verdict({ check: "no-a11y-critical" }, { a11y: [a11y[0]!] })).toBe("passed");
+  });
+});
+
+describe("describeCheck", () => {
+  it("renders expected and observed on one line", () => {
+    const check: Check = { check: "title-exists" };
+    const line = describeCheck(check, evaluateCheck(check, reading({ title: "T" })));
+    expect(line).toBe('title-exists: expected a non-empty <title>, observed "T"');
+  });
+});

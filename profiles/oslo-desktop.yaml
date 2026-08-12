@@ -1,0 +1,15 @@
+id: oslo-desktop
+label: Oslo, desktop
+market:
+  id: oslo
+  country: NO
+  city: Oslo
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.9139, 10.7522]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

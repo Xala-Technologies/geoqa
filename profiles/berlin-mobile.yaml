@@ -1,0 +1,17 @@
+# A market we do NOT serve. Its job is to prove the site behaves sensibly for
+# an out-of-market visitor — not to prove it works there.
+id: berlin-mobile
+label: Berlin, mobile
+market:
+  id: berlin
+  country: DE
+  city: Berlin
+  language: de-DE
+  timezone: Europe/Berlin
+  currency: EUR
+  coordinates: [52.52, 13.405]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+visitorType: anonymous

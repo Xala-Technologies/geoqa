@@ -1,0 +1,17 @@
+# Nearest neighbour market. Exists to catch the classic failure: Norwegian
+# content served to a Swedish visitor, or a currency that never switches.
+id: stockholm-mobile
+label: Stockholm, mobile
+market:
+  id: stockholm
+  country: SE
+  city: Stockholm
+  language: sv-SE
+  timezone: Europe/Stockholm
+  currency: SEK
+  coordinates: [59.3293, 18.0686]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+visitorType: anonymous

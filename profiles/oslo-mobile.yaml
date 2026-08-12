@@ -1,0 +1,16 @@
+# The home market, on the device most Norwegian visitors actually use.
+id: oslo-mobile
+label: Oslo, mobile
+market:
+  id: oslo
+  country: NO
+  city: Oslo
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.9139, 10.7522]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+visitorType: anonymous

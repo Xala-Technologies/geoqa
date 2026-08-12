@@ -1,0 +1,17 @@
+id: conversion-probe
+title: Conversion probe
+description: >
+  J04. Walks up to the conversion boundary and stops. It never submits a form,
+  never books, never pays — the point is to prove the path EXISTS and responds,
+  not to create real records in a live product.
+steps:
+  - { action: open, url: "{target}", label: open target }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: snapshot, label: interactive-tree }
+  - { action: assert, check: selector-visible, selector: "{ctaSelector}", severity: critical, label: primary CTA is present }
+  - { action: screenshot, label: before-cta }
+  - { action: click, selector: "{ctaSelector}", label: activate CTA }
+  - { action: wait, target: "1500" }
+  - { action: screenshot, label: after-cta, fullPage: true }
+  - { action: assert, check: no-http-5xx, severity: critical, label: CTA did not 500 }
+  - { action: assert, check: no-page-errors, severity: high }
