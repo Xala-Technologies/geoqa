@@ -1,0 +1,20 @@
+{
+  "id": "EXP-003-session-isolation",
+  "hypothesis": "Concurrent sessions for different markets share no cookies, storage or history.",
+  "metrics": [
+    {
+      "key": "***",
+      "description": "Session pairs with no cookie bleed",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min"
+    },
+    {
+      "key": "***",
+      "description": "Session pairs with no localStorage bleed",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min"
+    }
+  ]
+}

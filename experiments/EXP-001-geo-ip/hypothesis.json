@@ -1,0 +1,34 @@
+{
+  "id": "EXP-001-geo-ip",
+  "hypothesis": "A requested market yields an egress IP in that market's country and city.",
+  "metrics": [
+    {
+      "key": "***",
+      "description": "Sessions that produced any egress reading",
+      "target": 97,
+      "unit": "percent",
+      "direction": "min"
+    },
+    {
+      "key": "***",
+      "description": "Sessions whose egress country matched the request",
+      "target": 98,
+      "unit": "percent",
+      "direction": "min"
+    },
+    {
+      "key": "***",
+      "description": "Sessions whose egress city matched the request",
+      "target": 90,
+      "unit": "percent",
+      "direction": "min"
+    },
+    {
+      "key": "***",
+      "description": "Mean time to first byte from the identity endpoint",
+      "target": 3000,
+      "unit": "ms",
+      "direction": "max"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "command": "geoqa experiment run EXP-002 --samples 3 --geo oslo-mobile",
+  "samples": 3,
+  "profile": "oslo-mobile",
+  "target": "https://ipinfo.io/json",
+  "networkProvider": "direct",
+  "agentBrowser": "0.34.0",
+  "chrome": "151.0.7922.138 (mac-arm64)",
+  "host": "macOS arm64, egress AS2116 GLOBALCONNECT (Lysaker, NO)",
+  "startedAt": "2026-08-12T12:06:47.172Z",
+  "finishedAt": "2026-08-12T12:08:10.363Z"
+}

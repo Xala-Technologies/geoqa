@@ -1,0 +1,12 @@
+{
+  "command": "geoqa experiment run EXP-006 --samples 8 --geo oslo-mobile",
+  "samples": 8,
+  "profile": "oslo-mobile",
+  "target": "local fixture server (ephemeral port)",
+  "networkProvider": "direct",
+  "agentBrowser": "0.34.0",
+  "chrome": "151.0.7922.138 (mac-arm64)",
+  "host": "macOS arm64, egress AS2116 GLOBALCONNECT (Lysaker, NO)",
+  "startedAt": "2026-08-12T12:04:41.827Z",
+  "finishedAt": "2026-08-12T12:06:21.091Z"
+}

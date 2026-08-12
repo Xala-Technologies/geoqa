@@ -1,0 +1,33 @@
+{
+  "id": "EXP-006-evidence-quality",
+  "hypothesis": "A deliberately broken page produces a finding whose evidence explains what broke, where, and how to reproduce it.",
+  "samples": 8,
+  "succeeded": 8,
+  "failed": 0,
+  "startedAt": "2026-08-12T12:04:41.827Z",
+  "finishedAt": "2026-08-12T12:06:21.091Z",
+  "metrics": [
+    {
+      "key": "***",
+      "description": "Injected defects that produced a finding",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 100%"
+    },
+    {
+      "key": "***",
+      "description": "Mean manifest completeness across failing runs",
+      "target": 95,
+      "unit": "percent",
+      "direction": "min",
+      "value": 95.5,
+      "verdict": "pass",
+      "reason": "95.5% vs ≥ 95%"
+    }
+  ],
+  "verdict": "pass",
+  "notes": []
+}

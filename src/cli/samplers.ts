@@ -10,7 +10,8 @@ import { observeBrowser, observeNetwork, DEFAULT_VERIFY_ENDPOINT } from "../geo/
 import { toSessionConfig } from "../geo/profile.js";
 import { compareCity, compareCountry, compareLanguage, compareTimezone } from "../geo/verify.js";
 import { evaluateMetric, meanOf, rate, type ExperimentSample, type MetricResult, type MetricSpec } from "../experiments/harness.js";
-import { EXP_000, EXP_001, EXP_003, EXP_004, EXP_005 } from "../experiments/definitions.js";
+import { EXP_000, EXP_001, EXP_002, EXP_003, EXP_004, EXP_005, EXP_006 } from "../experiments/definitions.js";
+import { DEFECTS, startFixtureServer } from "../fixtures/server.js";
 import { browserVerify, journeyRun, loadProfileOrThrow, type CommandDeps, type ExperimentOptions } from "./commands.js";
 
 const metric = (specs: MetricSpec[], key: string): MetricSpec => {
@@ -60,6 +61,7 @@ export function summariseBrowserPrimitives(samples: ExperimentSample[]): { metri
 
 export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions, index: number): Promise<Record<string, unknown>> {
   const profile = loadProfileOrThrow(deps, options.profileId);
+  const routed = (options.providerName ?? "direct") !== "direct";
   const runtime = deps.makeRuntime(
     toSessionConfig(profile, { sessionId: `exp001-${deps.now()}-${index}`, baseEnv: deps.env }),
   );
@@ -68,6 +70,7 @@ export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions
     const country = compareCountry(profile.market.country, network.country);
     const city = compareCity(profile.market.city, network.city);
     return {
+      routed,
       connected: network.ip !== null,
       ip: network.ip,
       observedCountry: network.country,
@@ -84,29 +87,118 @@ export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions
   }
 }
 
+/**
+ * The honesty rule this whole experiment turns on.
+ *
+ * With no proxy vendor, every session leaves from this machine. Running the
+ * Oslo profile from a Norwegian office then reports `country-match 100% ✓` —
+ * a green tick for a capability that does not exist. The country matched
+ * because of where the laptop is, not because anything routed anywhere, and
+ * the identical run against the Berlin profile would report 0% for the same
+ * reason. Neither number measures the system under test.
+ *
+ * So a direct-egress run reports country and city as UNMEASURED regardless of
+ * what was observed. The observations are still written to results.jsonl —
+ * they are a real baseline — but they are not allowed to answer the
+ * hypothesis. Connection success and latency are still genuinely measured,
+ * because those are true of the path we actually used.
+ */
 export function summariseEgress(samples: ExperimentSample[]): { metrics: MetricResult[]; notes: string[] } {
   const connected = (s: ExperimentSample): boolean => s.data.connected === true;
   const connectedSamples = samples.filter(connected);
   const ips = new Set(connectedSamples.map((s) => String(s.data.ip)));
+  const routed = samples.length > 0 && samples.every((s) => s.data.routed === true);
+
+  const geoValue = (key: "countryMatched" | "cityMatched"): number | null => {
+    if (!routed) return null;
+    return connectedSamples.length === 0 ? null : rate(samples, truthy(key), connected);
+  };
+  const geoReason = routed ? "no session produced an egress reading" : NO_VENDOR_NOTE;
+
+  const notes = [
+    `${ips.size} distinct egress IP(s) across ${connectedSamples.length} connected sample(s): ${[...ips].join(", ")}`,
+  ];
+  if (!routed) {
+    const observedCountries = new Set(connectedSamples.map((s) => String(s.data.observedCountry)));
+    const observedCities = new Set(connectedSamples.map((s) => String(s.data.observedCity)));
+    notes.push(NO_VENDOR_NOTE);
+    notes.push(
+      `Baseline only — observed country ${[...observedCountries].join("/")}, city ${[...observedCities].join("/")}. Recorded, but it answers "where is this machine", not "can we reach a requested market".`,
+    );
+  }
 
   return {
     metrics: [
       evaluateMetric(metric(EXP_001.metrics, "connection-success"), rate(samples, connected), "no samples ran"),
-      evaluateMetric(
-        metric(EXP_001.metrics, "country-match"),
-        connectedSamples.length === 0 ? null : rate(samples, truthy("countryMatched"), connected),
-        "no session produced an egress reading",
-      ),
-      evaluateMetric(
-        metric(EXP_001.metrics, "city-match"),
-        connectedSamples.length === 0 ? null : rate(samples, truthy("cityMatched"), connected),
-        "no session produced an egress reading",
-      ),
+      evaluateMetric(metric(EXP_001.metrics, "country-match"), geoValue("countryMatched"), geoReason),
+      evaluateMetric(metric(EXP_001.metrics, "city-match"), geoValue("cityMatched"), geoReason),
       evaluateMetric(metric(EXP_001.metrics, "latency"), meanOf(samples, (s) => num(s, "latencyMs")), "no latency was measured"),
     ],
-    notes: [
-      `${ips.size} distinct egress IP(s) across ${connectedSamples.length} connected sample(s): ${[...ips].join(", ")}`,
+    notes,
+  };
+}
+
+// ── EXP-002: session stability ───────────────────────────────────────────
+
+/** How long a sample holds one session open, and how often it re-reads. */
+export const STABILITY_READS = 5;
+export const STABILITY_INTERVAL_MS = 6_000;
+
+export const SHORT_WINDOW_NOTE =
+  `Each sample held ONE session for ${(STABILITY_READS - 1) * (STABILITY_INTERVAL_MS / 1000)}s across ${STABILITY_READS} reads. The PRD asks for a 10-minute window; that is NOT what this measured. A short window can prove instability but cannot prove stability over a long journey.`;
+
+/**
+ * One sample = one session, read repeatedly.
+ *
+ * The question is whether a single journey keeps ONE network identity, so the
+ * session must stay open across reads — closing and reopening would measure
+ * something else entirely (whether two sessions get the same IP), which is a
+ * different and much weaker claim.
+ */
+export async function sampleStability(deps: CommandDeps, options: ExperimentOptions, index: number): Promise<Record<string, unknown>> {
+  const profile = loadProfileOrThrow(deps, options.profileId);
+  const runtime = deps.makeRuntime(
+    toSessionConfig(profile, { sessionId: `exp002-${deps.now()}-${index}`, baseEnv: deps.env }),
+  );
+  const seen: (string | null)[] = [];
+  try {
+    for (let read = 0; read < STABILITY_READS; read++) {
+      if (read > 0) await new Promise((r) => setTimeout(r, STABILITY_INTERVAL_MS));
+      const network = await observeNetwork(runtime, DEFAULT_VERIFY_ENDPOINT);
+      seen.push(network.ip);
+    }
+  } finally {
+    await runtime.close();
+  }
+  const first = seen[0] ?? null;
+  const readable = seen.filter((ip): ip is string => ip !== null);
+  return {
+    reads: seen.length,
+    readable: readable.length,
+    observed: seen,
+    distinct: [...new Set(readable)].length,
+    // Only meaningful when the FIRST read succeeded; otherwise there is no
+    // baseline to be stable against.
+    stable: first !== null && readable.length === seen.length && readable.every((ip) => ip === first),
+    measurable: first !== null,
+  };
+}
+
+export function summariseStability(samples: ExperimentSample[]): { metrics: MetricResult[]; notes: string[] } {
+  const measurable = (s: ExperimentSample): boolean => s.data.measurable === true;
+  const measurableSamples = samples.filter(measurable);
+  const notes = [SHORT_WINDOW_NOTE];
+  const drifted = samples.filter((s) => typeof s.data.distinct === "number" && s.data.distinct > 1);
+  if (drifted.length > 0) notes.push(`${drifted.length} sample(s) saw the IP change mid-session`);
+  return {
+    metrics: [
+      evaluateMetric(
+        metric(EXP_002.metrics, "ip-stability"),
+        measurableSamples.length === 0 ? null : rate(samples, truthy("stable"), measurable),
+        "no session produced a first reading to compare against",
+      ),
     ],
+    notes,
   };
 }
 
@@ -234,6 +326,69 @@ export function summariseJourney(samples: ExperimentSample[]): { metrics: Metric
   };
 }
 
+// ── EXP-006: evidence quality ────────────────────────────────────────────
+
+/**
+ * One sample = one deliberately broken page, run end to end.
+ *
+ * The control (`/healthy`) is part of the sample set on purpose. An engine that
+ * reports a finding for every page would score 100% on detection while being
+ * completely useless, and only a page with nothing wrong exposes that.
+ */
+export async function sampleEvidenceQuality(deps: CommandDeps, options: ExperimentOptions, index: number): Promise<Record<string, unknown>> {
+  const defect = DEFECTS[index % DEFECTS.length] as (typeof DEFECTS)[number];
+  const server = await startFixtureServer();
+  try {
+    const result = await journeyRun(deps, {
+      url: `${server.origin}${defect.path}`,
+      profileId: options.profileId,
+      journeyId: "landing-page",
+    });
+    const siteFindings = result.findings.filter((f) => f.category !== "instrumentation");
+    const categories = [...new Set(siteFindings.map((f) => f.category))];
+    const isControl = defect.expects === "unknown";
+    return {
+      defect: defect.path,
+      description: defect.description,
+      isControl,
+      verdict: result.verdict,
+      findings: siteFindings.length,
+      categories,
+      expectedCategory: defect.expects,
+      // The control must produce NOTHING; every other fixture must produce a
+      // finding in the category it was built to trigger.
+      detected: isControl ? siteFindings.length === 0 : categories.includes(defect.expects),
+      evidenceCompleteness: result.confidence.evidence,
+      instrumentationFindings: result.findings.length - siteFindings.length,
+      evidenceId: result.evidenceId,
+    };
+  } finally {
+    await server.close();
+  }
+}
+
+export function summariseEvidenceQuality(samples: ExperimentSample[]): { metrics: MetricResult[]; notes: string[] } {
+  const missed = samples
+    .filter((s) => s.data.detected !== true)
+    .map((s) => `${String(s.data.defect)} (expected ${String(s.data.expectedCategory)}, got ${JSON.stringify(s.data.categories)})`);
+  const instrumentation = samples.reduce((n, s) => n + (num(s, "instrumentationFindings") ?? 0), 0);
+
+  const notes: string[] = [];
+  if (missed.length > 0) notes.push(`undetected: ${missed.join(" | ")}`);
+  if (instrumentation > 0) notes.push(`${instrumentation} instrumentation finding(s) — OUR defects, excluded from detection`);
+  return {
+    metrics: [
+      evaluateMetric(metric(EXP_006.metrics, "defect-detection"), rate(samples, truthy("detected")), "no fixtures ran"),
+      evaluateMetric(
+        metric(EXP_006.metrics, "evidence-completeness"),
+        meanOf(samples, (s) => num(s, "evidenceCompleteness")),
+        "no evidence was captured",
+      ),
+    ],
+    notes,
+  };
+}
+
 // ── registry ─────────────────────────────────────────────────────────────
 
 export interface SamplerPair {
@@ -244,7 +399,9 @@ export interface SamplerPair {
 export const SAMPLERS: Record<string, SamplerPair> = {
   [EXP_000.id]: { sample: sampleBrowserPrimitives, summarise: summariseBrowserPrimitives },
   [EXP_001.id]: { sample: sampleEgress, summarise: summariseEgress },
+  [EXP_002.id]: { sample: sampleStability, summarise: summariseStability },
   [EXP_003.id]: { sample: sampleIsolation, summarise: summariseIsolation },
   [EXP_004.id]: { sample: sampleProfileConsistency, summarise: summariseProfileConsistency },
   [EXP_005.id]: { sample: sampleJourney, summarise: summariseJourney },
+  [EXP_006.id]: { sample: sampleEvidenceQuality, summarise: summariseEvidenceQuality },
 };

@@ -1,0 +1,12 @@
+{
+  "command": "geoqa experiment run EXP-004 --samples 5 --geo berlin-mobile",
+  "samples": 5,
+  "profile": "berlin-mobile",
+  "target": "https://example.com",
+  "networkProvider": "direct",
+  "agentBrowser": "0.34.0",
+  "chrome": "151.0.7922.138 (mac-arm64)",
+  "host": "macOS arm64, egress AS2116 GLOBALCONNECT (Lysaker, NO)",
+  "startedAt": "2026-08-12T11:59:26.309Z",
+  "finishedAt": "2026-08-12T11:59:38.993Z"
+}

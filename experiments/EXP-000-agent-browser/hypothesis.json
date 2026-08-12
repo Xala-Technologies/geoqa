@@ -1,0 +1,20 @@
+{
+  "id": "EXP-000-agent-browser",
+  "hypothesis": "agent-browser 0.34.0 provides every primitive the engine needs: JSON output, isolated sessions, launch-flag identity, screenshots, console, network, vitals, a11y.",
+  "metrics": [
+    {
+      "key": "***",
+      "description": "Share of required primitives that answered",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min"
+    },
+    {
+      "key": "***",
+      "description": "Share of sessions that launched a browser",
+      "target": 98,
+      "unit": "percent",
+      "direction": "min"
+    }
+  ]
+}

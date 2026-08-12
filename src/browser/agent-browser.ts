@@ -34,6 +34,9 @@ import type {
   Vitals,
 } from "./types.js";
 
+/** agent-browser's wording for a selector that matched nothing. */
+const ELEMENT_NOT_FOUND = /element not found/i;
+
 /** Injectable transport, so the adapter is testable without a browser. */
 export type ExecFn = (args: string[], env: NodeJS.ProcessEnv) => Promise<ExecOutcome<unknown>>;
 
@@ -124,8 +127,29 @@ export class AgentBrowserRuntime implements BrowserRuntime {
     return mapOk(await this.run(["get", "count", selector]), toCount);
   }
 
+  /**
+   * A selector that matches nothing is NOT VISIBLE — it is not an inability to
+   * look.
+   *
+   * agent-browser reports `success:false, error:"Element not found: …"` for a
+   * missing element, which the transport layer correctly classifies as a
+   * `reported` failure. Passing that straight through made "the page is missing
+   * its CTA" indistinguishable from "the browser broke", so a genuine defect
+   * was filed against US as an instrumentation failure instead of against the
+   * site. Measured: EXP-006 scored 75% detection, and `/missing-cta` was one of
+   * the two misses.
+   *
+   * ONLY this specific reported error is converted. A timeout, a crash, an
+   * unparseable envelope — anything that means we did not get to look — stays a
+   * failure, because those genuinely are our defect.
+   */
   async isVisible(selector: string): Promise<BrowserResult<boolean>> {
-    return mapOk(await this.run(["is", "visible", selector]), toVisible);
+    const out = await this.run(["is", "visible", selector]);
+    if (!out.ok && out.failure.kind === "reported" && ELEMENT_NOT_FOUND.test(out.failure.detail)) {
+      const { ok: _ok, failure: _failure, ...meta } = out;
+      return { ok: true, data: false, ...meta };
+    }
+    return mapOk(out, toVisible);
   }
 
   async snapshot(options: SnapshotOptions = {}): Promise<BrowserResult<string>> {

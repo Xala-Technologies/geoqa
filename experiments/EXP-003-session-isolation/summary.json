@@ -1,0 +1,33 @@
+{
+  "id": "EXP-003-session-isolation",
+  "hypothesis": "Concurrent sessions for different markets share no cookies, storage or history.",
+  "samples": 5,
+  "succeeded": 5,
+  "failed": 0,
+  "startedAt": "2026-08-12T11:59:00.151Z",
+  "finishedAt": "2026-08-12T11:59:22.922Z",
+  "metrics": [
+    {
+      "key": "***",
+      "description": "Session pairs with no cookie bleed",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 100%"
+    },
+    {
+      "key": "***",
+      "description": "Session pairs with no localStorage bleed",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 100%"
+    }
+  ],
+  "verdict": "pass",
+  "notes": []
+}

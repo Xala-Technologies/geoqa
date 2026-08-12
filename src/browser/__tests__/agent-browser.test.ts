@@ -199,6 +199,34 @@ describe("AgentBrowserRuntime", () => {
     expect(a11yOut.data).toEqual([{ id: "landmark-one-main", impact: "moderate", help: "h", nodes: 1 }]);
   });
 
+  it("treats a MISSING element as not-visible, because that is the answer to the question", async () => {
+    // agent-browser reports `Element not found` as success:false. Passing it
+    // through made "the page has no CTA" indistinguishable from "the browser
+    // broke", so a real site defect was filed against us. Measured: EXP-006
+    // detection was 75% before this, 100% after.
+    const exec: ExecFn = () =>
+      Promise.resolve({
+        ok: false,
+        failure: { kind: "reported", detail: "Element not found: h1. Verify the selector…", exitCode: 0, signal: null },
+        ...meta,
+      });
+    const out = await new AgentBrowserRuntime({ sessionId: "r" }, { exec }).isVisible("h1");
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.data).toBe(false);
+  });
+
+  it("does NOT swallow any other failure on isVisible — those really are our defect", async () => {
+    for (const failure of [
+      { kind: "timeout" as const, detail: "Element not found", exitCode: null, signal: null },
+      { kind: "reported" as const, detail: "daemon is gone", exitCode: 0, signal: null },
+    ]) {
+      const exec: ExecFn = () => Promise.resolve({ ok: false, failure, ...meta });
+      const out = await new AgentBrowserRuntime({ sessionId: "r" }, { exec }).isVisible("h1");
+      expect(out.ok, failure.kind).toBe(false);
+    }
+  });
+
   it("propagates a transport failure instead of returning empty data", async () => {
     const exec: ExecFn = () => Promise.resolve(fail());
     const rt = new AgentBrowserRuntime({ sessionId: "r" }, { exec });

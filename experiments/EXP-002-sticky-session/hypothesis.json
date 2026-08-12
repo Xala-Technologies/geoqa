@@ -1,0 +1,13 @@
+{
+  "id": "EXP-002-sticky-session",
+  "hypothesis": "A single journey keeps one coherent network identity for its whole duration.",
+  "metrics": [
+    {
+      "key": "***",
+      "description": "Samples whose IP matched the session's first reading",
+      "target": 95,
+      "unit": "percent",
+      "direction": "min"
+    }
+  ]
+}

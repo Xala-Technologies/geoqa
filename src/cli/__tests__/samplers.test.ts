@@ -10,6 +10,12 @@ import { defaultDeps, type CommandDeps } from "../commands.js";
 import {
   NO_VENDOR_NOTE,
   SAMPLERS,
+  SHORT_WINDOW_NOTE,
+  STABILITY_READS,
+  sampleEvidenceQuality,
+  sampleStability,
+  summariseEvidenceQuality,
+  summariseStability,
   sampleBrowserPrimitives,
   sampleEgress,
   sampleIsolation,
@@ -87,6 +93,7 @@ describe("EXP-001 egress", () => {
   it("reads the egress identity and compares it to the market", async () => {
     const data = await sampleEgress(deps(), options, 0);
     expect(data).toMatchObject({
+      routed: false,
       connected: true,
       observedCountry: "NO",
       observedCity: "Lysaker",
@@ -95,6 +102,11 @@ describe("EXP-001 egress", () => {
       countryMatched: true,
       cityMatched: false,
     });
+  });
+
+  it("marks a run as routed when a real provider was named", async () => {
+    const data = await sampleEgress(deps(), { ...options, providerName: "http-proxy" }, 0);
+    expect(data.routed).toBe(true);
   });
 
   it("reports not-connected when the browser could not read", async () => {
@@ -106,31 +118,46 @@ describe("EXP-001 egress", () => {
     expect(data.connected).toBe(false);
   });
 
-  it("computes match rates over CONNECTED samples only", () => {
+  it("computes match rates over CONNECTED samples only, when actually routed", () => {
     const { metrics } = summariseEgress([
-      sample({ connected: true, countryMatched: true, cityMatched: false, ip: "1.1.1.1", latencyMs: 100 }),
-      sample({ connected: true, countryMatched: false, cityMatched: false, ip: "2.2.2.2", latencyMs: 300 }),
-      sample({ connected: false }),
+      sample({ routed: true, connected: true, countryMatched: true, cityMatched: false, ip: "1.1.1.1", latencyMs: 100 }),
+      sample({ routed: true, connected: true, countryMatched: false, cityMatched: false, ip: "2.2.2.2", latencyMs: 300 }),
+      sample({ routed: true, connected: false }),
     ]);
     expect(metrics.find((m) => m.key === "connection-success")?.value).toBeCloseTo(66.67, 1);
     expect(metrics.find((m) => m.key === "country-match")?.value).toBe(50);
     expect(metrics.find((m) => m.key === "latency")?.value).toBe(200);
   });
 
-  it("reports UNMEASURED — never 100% — when no session produced a reading", () => {
-    // The Phase 0 case that matters: without a vendor, zero contradicting
-    // samples must not read as a perfect score.
-    const { metrics } = summariseEgress([sample({ connected: false })]);
+  it("reports UNMEASURED — never 100% — when no routed session produced a reading", () => {
+    const { metrics } = summariseEgress([sample({ routed: true, connected: false })]);
     const country = metrics.find((m) => m.key === "country-match");
     expect(country?.verdict).toBe("unmeasured");
     expect(country?.value).toBeNull();
     expect(country?.reason).toContain("no session produced an egress reading");
   });
 
+  it("refuses to score geography at all on DIRECT egress, however good the observation looks", () => {
+    // The trap this rule exists for: running the Oslo profile from a Norwegian
+    // office observes country NO and would report a green 100% for a routing
+    // capability that does not exist. The same run against Berlin would report
+    // 0% for the same reason. Neither measures the system under test.
+    const { metrics, notes } = summariseEgress([
+      sample({ routed: false, connected: true, countryMatched: true, cityMatched: true, ip: "213.52.15.251", observedCountry: "NO", observedCity: "Lysaker", latencyMs: 200 }),
+    ]);
+    expect(metrics.find((m) => m.key === "country-match")?.verdict).toBe("unmeasured");
+    expect(metrics.find((m) => m.key === "city-match")?.verdict).toBe("unmeasured");
+    // What we CAN honestly measure on the path we used is still measured.
+    expect(metrics.find((m) => m.key === "connection-success")?.verdict).toBe("pass");
+    expect(metrics.find((m) => m.key === "latency")?.verdict).toBe("pass");
+    expect(notes.join(" ")).toContain("Baseline only");
+    expect(notes.join(" ")).toContain("where is this machine");
+  });
+
   it("counts the distinct egress IPs it saw", () => {
     const { notes } = summariseEgress([
-      sample({ connected: true, ip: "1.1.1.1" }),
-      sample({ connected: true, ip: "1.1.1.1" }),
+      sample({ routed: true, connected: true, ip: "1.1.1.1" }),
+      sample({ routed: true, connected: true, ip: "1.1.1.1" }),
     ]);
     expect(notes[0]).toContain("1 distinct egress IP(s)");
   });
@@ -252,9 +279,108 @@ describe("EXP-005 journey stability", () => {
   });
 });
 
+describe("EXP-002 session stability", () => {
+  it("holds ONE session open across reads rather than reopening", async () => {
+    const sessions = new Set<string>();
+    const data = await sampleStability(
+      deps({
+        makeRuntime: (config) => {
+          sessions.add(config.sessionId);
+          return fakeRuntime();
+        },
+      }),
+      { ...options, id: "EXP-002" },
+      0,
+    );
+    // Reopening would measure "do two sessions get the same IP", a different
+    // and much weaker claim.
+    expect(sessions.size).toBe(1);
+    expect(data.reads).toBe(STABILITY_READS);
+    expect(data.stable).toBe(true);
+    expect(data.distinct).toBe(1);
+  }, 60_000);
+
+  it("is not measurable when the first read failed", () => {
+    const { metrics } = summariseStability([sample({ measurable: false, stable: false })]);
+    expect(metrics[0]?.verdict).toBe("unmeasured");
+  });
+
+  it("always states that the short window is NOT the PRD's ten minutes", () => {
+    const { notes } = summariseStability([sample({ measurable: true, stable: true, distinct: 1 })]);
+    expect(notes[0]).toBe(SHORT_WINDOW_NOTE);
+    expect(notes[0]).toContain("cannot prove stability over a long journey");
+  });
+
+  it("names how many samples saw the IP drift mid-session", () => {
+    const { notes, metrics } = summariseStability([
+      sample({ measurable: true, stable: true, distinct: 1 }),
+      sample({ measurable: true, stable: false, distinct: 2 }),
+    ]);
+    expect(metrics[0]?.value).toBe(50);
+    expect(notes.join(" ")).toContain("1 sample(s) saw the IP change");
+  });
+});
+
+describe("EXP-006 evidence quality", () => {
+  it("counts the CONTROL as detected only when it produced NO site findings", () => {
+    const { metrics } = summariseEvidenceQuality([
+      sample({ defect: "/healthy", isControl: true, detected: true, evidenceCompleteness: 100, instrumentationFindings: 0 }),
+      sample({ defect: "/status-404", isControl: false, detected: true, evidenceCompleteness: 100, instrumentationFindings: 0 }),
+    ]);
+    expect(metrics.find((m) => m.key === "defect-detection")?.value).toBe(100);
+  });
+
+  it("names each undetected defect with what it expected and what it got", () => {
+    const { notes } = summariseEvidenceQuality([
+      sample({ defect: "/missing-cta", detected: false, expectedCategory: "functional", categories: ["http"], evidenceCompleteness: 100, instrumentationFindings: 1 }),
+    ]);
+    expect(notes[0]).toContain("/missing-cta");
+    expect(notes[0]).toContain("expected functional");
+    expect(notes.join(" ")).toContain("OUR defects, excluded from detection");
+  });
+
+  it("averages evidence completeness across the fixtures", () => {
+    const { metrics } = summariseEvidenceQuality([
+      sample({ detected: true, evidenceCompleteness: 100, instrumentationFindings: 0 }),
+      sample({ detected: true, evidenceCompleteness: 80, instrumentationFindings: 0 }),
+    ]);
+    expect(metrics.find((m) => m.key === "evidence-completeness")?.value).toBe(90);
+  });
+
+  it("runs a fixture end to end and attributes the finding to it", async () => {
+    const runOnce = vi.fn(async () =>
+      ({
+        runId: "r",
+        verdict: "FAIL",
+        findings: [{ category: "http" }, { category: "instrumentation" }],
+        confidence: { evidence: 100 },
+        evidenceId: "ev_1",
+      }) as unknown as GeoQaRunResult,
+    );
+    const data = await sampleEvidenceQuality(deps({ runOnce }), { ...options, id: "EXP-006" }, 1);
+    expect(data).toMatchObject({
+      defect: "/status-404",
+      isControl: false,
+      detected: true,
+      findings: 1,
+      instrumentationFindings: 1,
+      expectedCategory: "http",
+    });
+  }, 60_000);
+
+  it("marks the control as UNDETECTED when it produced a site finding", async () => {
+    const runOnce = vi.fn(async () =>
+      ({ runId: "r", verdict: "FAIL", findings: [{ category: "http" }], confidence: { evidence: 100 }, evidenceId: null }) as unknown as GeoQaRunResult,
+    );
+    const data = await sampleEvidenceQuality(deps({ runOnce }), { ...options, id: "EXP-006" }, 0);
+    expect(data.isControl).toBe(true);
+    expect(data.detected).toBe(false);
+  }, 60_000);
+});
+
 describe("the sampler registry", () => {
   it("registers a pair for every experiment that has one", () => {
-    expect(Object.keys(SAMPLERS)).toHaveLength(5);
+    expect(Object.keys(SAMPLERS)).toHaveLength(7);
     for (const [id, pair] of Object.entries(SAMPLERS)) {
       expect(typeof pair.sample, id).toBe("function");
       expect(typeof pair.summarise, id).toBe("function");

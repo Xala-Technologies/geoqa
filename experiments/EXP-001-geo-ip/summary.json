@@ -1,0 +1,57 @@
+{
+  "id": "EXP-001-geo-ip",
+  "hypothesis": "A requested market yields an egress IP in that market's country and city.",
+  "samples": 20,
+  "succeeded": 20,
+  "failed": 0,
+  "startedAt": "2026-08-12T11:58:04.178Z",
+  "finishedAt": "2026-08-12T11:58:54.300Z",
+  "metrics": [
+    {
+      "key": "***",
+      "description": "Sessions that produced any egress reading",
+      "target": 97,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 97%"
+    },
+    {
+      "key": "***",
+      "description": "Sessions whose egress country matched the request",
+      "target": 98,
+      "unit": "percent",
+      "direction": "min",
+      "value": null,
+      "verdict": "unmeasured",
+      "reason": "No geo-proxy vendor is configured, so every session egressed from this machine. The target is declared but cannot be evaluated — this is `unmeasured`, not a pass."
+    },
+    {
+      "key": "***",
+      "description": "Sessions whose egress city matched the request",
+      "target": 90,
+      "unit": "percent",
+      "direction": "min",
+      "value": null,
+      "verdict": "unmeasured",
+      "reason": "No geo-proxy vendor is configured, so every session egressed from this machine. The target is declared but cannot be evaluated — this is `unmeasured`, not a pass."
+    },
+    {
+      "key": "***",
+      "description": "Mean time to first byte from the identity endpoint",
+      "target": 3000,
+      "unit": "ms",
+      "direction": "max",
+      "value": 2303.2,
+      "verdict": "pass",
+      "reason": "2303ms vs ≤ 3000ms"
+    }
+  ],
+  "verdict": "unmeasured",
+  "notes": [
+    "1 distinct egress IP(s) across 20 connected sample(s): 213.52.15.251",
+    "No geo-proxy vendor is configured, so every session egressed from this machine. The target is declared but cannot be evaluated — this is `unmeasured`, not a pass.",
+    "Baseline only — observed country NO, city Lysaker. Recorded, but it answers \"where is this machine\", not \"can we reach a requested market\"."
+  ]
+}

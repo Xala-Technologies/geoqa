@@ -1,0 +1,20 @@
+{
+  "id": "EXP-005-basic-journey",
+  "hypothesis": "A deterministic journey against a real page completes and produces the same verdict every time.",
+  "metrics": [
+    {
+      "key": "***",
+      "description": "Runs that completed without an instrumentation error",
+      "target": 95,
+      "unit": "percent",
+      "direction": "min"
+    },
+    {
+      "key": "***",
+      "description": "Runs agreeing with the most common verdict",
+      "target": 95,
+      "unit": "percent",
+      "direction": "min"
+    }
+  ]
+}

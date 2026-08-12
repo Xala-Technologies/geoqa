@@ -1,0 +1,43 @@
+{
+  "id": "EXP-004-profile-consistency",
+  "hypothesis": "A geo profile produces an internally consistent browser environment: locale, clock and viewport all agree with the market.",
+  "samples": 5,
+  "succeeded": 5,
+  "failed": 0,
+  "startedAt": "2026-08-12T11:59:26.309Z",
+  "finishedAt": "2026-08-12T11:59:38.993Z",
+  "metrics": [
+    {
+      "key": "***",
+      "description": "Sessions where navigator.language matched the profile",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 100%"
+    },
+    {
+      "key": "***",
+      "description": "Sessions where the Intl timezone matched the profile",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 100%"
+    },
+    {
+      "key": "***",
+      "description": "Sessions where the viewport matched the device",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 100%"
+    }
+  ],
+  "verdict": "pass",
+  "notes": []
+}
