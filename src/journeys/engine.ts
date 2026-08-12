@@ -56,7 +56,18 @@ export interface EngineOptions {
   screenshotDir: string;
   now?: () => number;
   log?: (line: string) => void;
+  /**
+   * Milliseconds to settle before re-reading a metric that came back null.
+   * Lowered in tests so the confirm-the-negative retry costs nothing there.
+   */
+  metricSettleMs?: number;
 }
+
+/** Which Vitals field each vitals-based check depends on. */
+const VITAL_FOR_CHECK: Record<string, keyof import("../browser/types.js").Vitals> = {
+  "lcp-below": "lcp",
+  "cls-below": "cls",
+};
 
 const labelFor = (step: Step, index: number): string => {
   if ("label" in step && step.label) return step.label;
@@ -75,9 +86,32 @@ export async function gatherReading(
   runtime: BrowserRuntime,
   check: Check,
   selector: string | null,
+  settleMs = 600,
 ): Promise<PageReading> {
   const reading: PageReading = { ...EMPTY_READING };
   const take = <T,>(out: BrowserResult<T>): T | null => (out.ok ? out.data : null);
+
+  /**
+   * Read Core Web Vitals, and re-read once if the metric this check needs came
+   * back null.
+   *
+   * Same doctrine as `isVisible`'s confirm-absence retry, and found the same
+   * way: on the digilist.no homepage, `lcp-below` reported "LCP was not
+   * measured" on 3 of 3 runs while the evidence package written seconds later
+   * in the SAME run recorded `lcp: 104`. LCP is emitted asynchronously and is
+   * simply not there yet on an early read. Reporting that as unmeasured makes
+   * the engine look blind on a page that is, in fact, fast.
+   *
+   * A null that survives a settle is a real null — a page can genuinely never
+   * produce an LCP entry — so the second reading is still allowed to be null.
+   */
+  const readVitals = async (): Promise<PageReading["vitals"]> => {
+    const first = take(await runtime.vitals());
+    const needed = VITAL_FOR_CHECK[check.check];
+    if (!needed || (first && first[needed] !== null)) return first;
+    await runtime.waitFor(String(settleMs));
+    return take(await runtime.vitals()) ?? first;
+  };
 
   for (const need of checkNeeds(check)) {
     switch (need) {
@@ -106,7 +140,7 @@ export async function gatherReading(
         reading.requests = take(await runtime.networkRequests());
         break;
       case "vitals":
-        reading.vitals = take(await runtime.vitals());
+        reading.vitals = await readVitals();
         break;
       case "a11y":
         reading.a11y = take(await runtime.a11y());
@@ -149,7 +183,7 @@ export async function runJourney(
     }
 
     if (step.action === "assert") {
-      const reading = await gatherReading(runtime, step.spec, selectorOf(step.spec));
+      const reading = await gatherReading(runtime, step.spec, selectorOf(step.spec), options.metricSettleMs ?? 600);
       const result = evaluateCheck(step.spec, reading);
       const outcome = outcomeOf(result);
       steps.push({

@@ -80,6 +80,73 @@ describe("gatherReading", () => {
     expect((await gatherReading(r, { check: "no-console-errors" }, null)).console).toBeNull();
   });
 
+  it("RE-READS vitals once when the metric this check needs came back null", async () => {
+    // Found live: the homepage reported "LCP was not measured" on 3 of 3 runs
+    // while the evidence written seconds later in the same run recorded
+    // lcp: 104. LCP is emitted asynchronously; an early read simply misses it.
+    let call = 0;
+    const waits: string[] = [];
+    const r = runtime({
+      vitals: () => {
+        call++;
+        return Promise.resolve(ok({ lcp: call === 1 ? null : 104, cls: 0.01, ttfb: 20, fcp: 80, inp: null }));
+      },
+      waitFor: (t) => {
+        waits.push(t);
+        return Promise.resolve(ok(null));
+      },
+    });
+    const out = await gatherReading(r, { check: "lcp-below", value: 2500 }, null, 5);
+    expect(call).toBe(2);
+    expect(waits).toEqual(["5"]);
+    expect(out.vitals?.lcp).toBe(104);
+  });
+
+  it("does NOT re-read when the needed metric arrived first time", async () => {
+    let call = 0;
+    const r = runtime({
+      vitals: () => {
+        call++;
+        return Promise.resolve(ok({ lcp: 900, cls: null, ttfb: 20, fcp: 80, inp: null }));
+      },
+    });
+    await gatherReading(r, { check: "lcp-below", value: 2500 }, null, 5);
+    expect(call).toBe(1);
+  });
+
+  it("keeps a null that SURVIVES the re-read — a page can genuinely never emit one", async () => {
+    const r = runtime({ vitals: () => Promise.resolve(ok({ lcp: null, cls: null, ttfb: null, fcp: null, inp: null })) });
+    const out = await gatherReading(r, { check: "lcp-below", value: 2500 }, null, 5);
+    expect(out.vitals?.lcp).toBeNull();
+  });
+
+  it("falls back to the first reading when the re-read fails outright", async () => {
+    let call = 0;
+    const r = runtime({
+      vitals: () => {
+        call++;
+        return call === 1
+          ? Promise.resolve(ok({ lcp: null, cls: 0.5, ttfb: 20, fcp: 80, inp: null }))
+          : Promise.resolve(bad());
+      },
+    });
+    const out = await gatherReading(r, { check: "lcp-below", value: 2500 }, null, 5);
+    expect(out.vitals?.cls).toBe(0.5);
+  });
+
+  it("does not re-read for a check that does not depend on vitals", async () => {
+    let call = 0;
+    const r = runtime({
+      vitals: () => {
+        call++;
+        return Promise.resolve(ok({ lcp: null, cls: null, ttfb: null, fcp: null, inp: null }));
+      },
+      a11y: () => Promise.resolve(ok([])),
+    });
+    await gatherReading(r, { check: "no-a11y-critical" }, null, 5);
+    expect(call).toBe(0);
+  });
+
   it("leaves selector readings null when the check carries no selector", async () => {
     const r = runtime();
     const out = await gatherReading(r, { check: "text-contains", selector: "body", value: "x" }, null);
