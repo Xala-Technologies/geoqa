@@ -1,0 +1,29 @@
+id: sweep
+title: Site-wide sweep
+description: >
+  J07. Every page in the sitemap, checked for the things that are cheap to detect
+  and expensive to miss: a missing title or heading, a 4xx/5xx, an uncaught
+  exception, a console error, somewhere to go next, and the two Core Web Vitals
+  that a visitor actually feels.
+
+  Deliberately NO screenshots and NO snapshot. A site-wide pass over 430 pages
+  would write about a gigabyte of images that nobody opens, and the artifacts that
+  matter for a sweep are the numbers. When a page fails here, re-run it with the
+  `landing-page` or `reader` journey to get the frames.
+
+  Also no pauses. Human pacing exists to make a measurement representative of one
+  visitor's experience; a sweep is asking a different question — does every page
+  work at all — and 430 pages of realistic dwell time is hours of wall clock for
+  no extra signal. Use `reader` for the pages that matter.
+writes: false
+steps:
+  - { action: open, url: "{target}", label: open page }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: selector-visible, selector: h1, severity: critical, label: has a primary heading }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: no-http-4xx, severity: medium }
+  - { action: assert, check: selector-count-min, selector: "a[href^='/']", value: 3, severity: medium, label: has internal links }
+  - { action: assert, check: no-page-errors, severity: high }
+  - { action: assert, check: no-console-errors, severity: medium }
+  - { action: assert, check: lcp-below, value: 2500, severity: medium }
+  - { action: assert, check: cls-below, value: 0.1, severity: low }

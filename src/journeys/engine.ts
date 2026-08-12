@@ -19,7 +19,8 @@
 import type { BrowserResult, BrowserRuntime } from "../browser/types.js";
 import type { FindingCategory } from "../findings/types.js";
 import { checkNeeds, evaluateCheck, EMPTY_READING, type CheckResult, type PageReading } from "./assertions.js";
-import type { Check, Journey, Step } from "./spec.js";
+import { pauseMs, seedFrom, seededRandom, takesStep } from "./random.js";
+import type { Check, Journey, Step, StepAction } from "./spec.js";
 
 export type StepOutcome = "passed" | "failed" | "errored" | "skipped";
 
@@ -49,6 +50,12 @@ export interface JourneyResult {
   /** Labels of screenshots the journey asked for, in order. */
   screenshots: string[];
   durationMs: number;
+  /** The journey declared that it changes state on the target. */
+  writes: boolean;
+  /** The seed every pacing and probability decision came from. */
+  seed: number;
+  /** True when any step typed into, selected or checked a form control. */
+  touchedForm: boolean;
 }
 
 export interface EngineOptions {
@@ -61,6 +68,14 @@ export interface EngineOptions {
    * Lowered in tests so the confirm-the-negative retry costs nothing there.
    */
   metricSettleMs?: number;
+  /**
+   * Seeds every pause length and probability draw.
+   *
+   * Recorded on the result and in `run.json`, so a run whose variation mattered
+   * can be replayed exactly: pass the same seed and the same choices are made in
+   * the same order.
+   */
+  seed?: number;
 }
 
 /** Which Vitals field each vitals-based check depends on. */
@@ -163,10 +178,13 @@ export async function runJourney(
 ): Promise<JourneyResult> {
   const now = options.now ?? Date.now;
   const log = options.log ?? ((): void => {});
+  const seed = options.seed ?? seedFrom(journey.id);
+  const random = seededRandom(seed);
   const started = now();
   const steps: StepResult[] = [];
   const screenshots: string[] = [];
   let halted = false;
+  let touchedForm = false;
 
   for (const [index, step] of journey.steps.entries()) {
     const label = labelFor(step, index);
@@ -177,6 +195,24 @@ export async function runJourney(
         index, action: step.action, label, outcome: "skipped", severity: "info",
         category: null, check: step.action === "assert" ? step.spec.check : null,
         detail: "skipped — an earlier state-changing step failed, so this would measure nothing",
+        expected: null, observed: null, durationMs: 0,
+      });
+      continue;
+    }
+
+    /**
+     * An optional step that did not happen this run is SKIPPED, never dropped.
+     *
+     * The distinction is the same one the whole engine turns on: a check that did
+     * not run must stay distinguishable from one that passed. Silently shortening
+     * the step list would make "we did not look at the gallery" and "the gallery
+     * was fine" the same row, and would move every later step's index.
+     */
+    if (!takesStep(random, step.probability)) {
+      steps.push({
+        index, action: step.action, label, outcome: "skipped", severity: "info",
+        category: null, check: step.action === "assert" ? step.spec.check : null,
+        detail: `not taken this run — probability ${step.probability}`,
         expected: null, observed: null, durationMs: 0,
       });
       continue;
@@ -196,14 +232,16 @@ export async function runJourney(
       continue;
     }
 
-    const out = await act(runtime, step, options.screenshotDir);
+    const out = await act(runtime, step, options.screenshotDir, random);
     if (step.action === "screenshot") screenshots.push(step.label);
+    if (step.action === "fill" || step.action === "select" || step.action === "check") touchedForm = true;
 
     if (out.ok) {
       steps.push({
         index, action: step.action, label, outcome: "passed", severity: "info",
         category: null, check: null,
-        detail: `${step.action} ok`, expected: null, observed: null, durationMs: now() - stepStarted,
+        // `describeAction` exists so a `fill` can never render its own value.
+        detail: describeAction(step), expected: null, observed: null, durationMs: now() - stepStarted,
       });
       log(`  ✓ ${label}`);
       continue;
@@ -221,14 +259,150 @@ export async function runJourney(
     log(`  ! ${label} — ${out.failure.kind}`);
   }
 
-  const counts = {
+  return {
+    journeyId: journey.id,
+    verdict: verdictFor(steps),
+    steps,
+    counts: countOutcomes(steps),
+    screenshots,
+    durationMs: now() - started,
+    writes: journey.writes,
+    seed,
+    touchedForm,
+  };
+}
+
+/**
+ * What a non-assert step did, for the step record.
+ *
+ * `fill` is the reason this is a function rather than a template literal at the
+ * call site: its value must never be rendered. A login journey's password would
+ * otherwise appear in `run.json`, in the terminal, and in every finding that
+ * carried the step's detail.
+ */
+export function describeAction(step: Exclude<Step, { action: "assert" }>): string {
+  switch (step.action) {
+    case "fill":
+      return `fill ${step.selector} ok (value not recorded)`;
+    case "select":
+      return `select ${step.selector} ok (${step.values.length} value(s), not recorded)`;
+    case "press":
+      return `press ${step.key} ok`;
+    case "check":
+      return `check ${step.selector} ok`;
+    default:
+      return `${step.action} ok`;
+  }
+}
+
+export function countOutcomes(steps: StepResult[]): JourneyResult["counts"] {
+  return {
     passed: steps.filter((s) => s.outcome === "passed").length,
     failed: steps.filter((s) => s.outcome === "failed").length,
     errored: steps.filter((s) => s.outcome === "errored").length,
     skipped: steps.filter((s) => s.outcome === "skipped").length,
   };
+}
 
-  return { journeyId: journey.id, verdict: verdictFor(steps), steps, counts, screenshots, durationMs: now() - started };
+/**
+ * Append a step the journey spec did not contain, and re-derive everything that
+ * depends on the step list.
+ *
+ * This is how a whole-run check — one whose answer only exists after the last
+ * step, like "did the egress hold?" — gets the same consequences as any other
+ * failed check, without a parallel verdict system growing beside `verdictFor`.
+ * Recomputing rather than patching is the point: counts, verdict, retention
+ * tier, findings and confidence all follow from `steps`, so appending to it is
+ * the only edit needed.
+ */
+export function withExtraStep(result: JourneyResult, step: StepResult): JourneyResult {
+  const steps = [...result.steps, step];
+  return { ...result, steps, counts: countOutcomes(steps), verdict: verdictFor(steps) };
+}
+
+/** Worst first. The order the merge across repeated attempts is ranked by. */
+const OUTCOME_RANK: Record<StepOutcome, number> = { errored: 3, failed: 2, passed: 1, skipped: 0 };
+
+export interface MergedAttempts {
+  /** One result standing for the whole set: the worst reading of every step. */
+  result: JourneyResult;
+  /** Per step label, in how many attempts that step failed or errored. */
+  occurrences: Record<string, number>;
+}
+
+/**
+ * Collapse N attempts at the same journey into one result plus per-step
+ * occurrence counts.
+ *
+ * **The merged step list takes the WORST outcome seen at each index, never the
+ * last one.** This is the load-bearing decision here, and it is what lets
+ * `--repeat` exist without breaking the never-retry rule. A step that failed on
+ * attempt 1 and passed on attempt 3 is a real intermittent site defect; a merge
+ * that simply used the last attempt would produce NO finding for it, silently
+ * hiding the exact thing running the journey three times exists to surface. That
+ * is the same damage a silent retry does, arrived at from the other end.
+ *
+ * `occurrences` keeps the report honest in the other direction: the finding is
+ * filed, but 1-of-3 pulls its confidence toward "we saw it once and could not
+ * repeat it", while 3-of-3 earns status `reproduced`. Detail, expected and
+ * observed all come from the attempt that produced the worst outcome, so the
+ * finding quotes a reading that actually happened rather than a blend of two.
+ *
+ * The parameter is a NON-EMPTY tuple rather than an array, for the same reason
+ * `ActableStep` narrows instead of carrying a default arm: a "there were no
+ * attempts" branch is unreachable from any caller, so it could never be covered
+ * — narrowing the type makes the caller prove there was at least one attempt.
+ */
+export function mergeAttempts(results: [JourneyResult, ...JourneyResult[]]): MergedAttempts {
+  const [first] = results;
+  const last = results[results.length - 1] ?? first;
+
+  const steps = first.steps.map((step, index) => {
+    let worst = step;
+    for (const attempt of results) {
+      const candidate = attempt.steps[index];
+      if (candidate && OUTCOME_RANK[candidate.outcome] > OUTCOME_RANK[worst.outcome]) worst = candidate;
+    }
+    return worst;
+  });
+
+  /**
+   * Counted per ATTEMPT, not per failing step, because a journey may carry two
+   * steps with the same label and `findingsFromSteps` looks occurrences up by
+   * label. Counting each failing step would let one attempt contribute 2, push
+   * occurrences past attempts, and make `occurrences === attempts` —
+   * i.e. status `reproduced` — unreachable for exactly the checks that repeat.
+   */
+  const occurrences: Record<string, number> = {};
+  for (const attempt of results) {
+    const failing = new Set<string>();
+    for (const step of attempt.steps) {
+      if (step.outcome === "failed" || step.outcome === "errored") failing.add(step.label);
+    }
+    for (const label of failing) occurrences[label] = (occurrences[label] ?? 0) + 1;
+  }
+
+  return {
+    result: {
+      journeyId: first.journeyId,
+      verdict: verdictFor(steps),
+      steps,
+      counts: countOutcomes(steps),
+      // Every attempt wrote its frames to the same path, so what is on disk is
+      // the last attempt's. Naming any other attempt's screenshots here would
+      // describe files that were overwritten.
+      screenshots: last.screenshots,
+      // The SUM: the wall clock a repeated run actually cost, which is the
+      // number a human deciding whether to repeat again needs.
+      durationMs: results.reduce((total, attempt) => total + attempt.durationMs, 0),
+      writes: results.some((attempt) => attempt.writes),
+      // The base seed. Attempt k ran at `seed + k`, so this one value replays
+      // the whole set — recording an attempt's derived seed would replay one.
+      seed: first.seed,
+      touchedForm: results.some((attempt) => attempt.touchedForm),
+    },
+    occurrences,
+  };
 }
 
 /**
@@ -239,9 +413,14 @@ export async function runJourney(
  * makes the switch genuinely exhaustive, and adding a new action becomes a
  * compile error here rather than a silent no-op at runtime.
  */
-type ActableStep = Exclude<Step, { action: "assert" }>;
+type ActableStep = Exclude<StepAction, { action: "assert" }> & { probability: number };
 
-function act(runtime: BrowserRuntime, step: ActableStep, screenshotDir: string): Promise<BrowserResult<unknown>> {
+function act(
+  runtime: BrowserRuntime,
+  step: ActableStep,
+  screenshotDir: string,
+  random: () => number,
+): Promise<BrowserResult<unknown>> {
   switch (step.action) {
     case "open":
       return runtime.open(step.url);
@@ -249,6 +428,18 @@ function act(runtime: BrowserRuntime, step: ActableStep, screenshotDir: string):
       return runtime.reload();
     case "click":
       return runtime.click(step.selector);
+    case "fill":
+      return runtime.fill(step.selector, step.value);
+    case "press":
+      return runtime.press(step.key);
+    case "select":
+      return runtime.select(step.selector, step.values);
+    case "check":
+      return runtime.check(step.selector);
+    case "pause":
+      // A human-length gap, drawn from the seeded generator and expressed
+      // through `waitFor` so no engine needs a second timing primitive.
+      return runtime.waitFor(String(pauseMs(random, step.minMs, step.maxMs)));
     case "scroll":
       return step.px === undefined ? runtime.scroll(step.direction) : runtime.scroll(step.direction, step.px);
     case "wait":

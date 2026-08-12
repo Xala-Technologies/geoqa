@@ -1,44 +1,32 @@
 {
-  "$comment": "Copy to geoqa.config.json. Credentials never live here — they come from env.",
-
-  "site": {
-    "id": "digilist",
-    "origin": "https://digilist.no",
-    "homeMarket": "NO"
-  },
-
-  "markets": [
-    { "id": "oslo", "country": "NO", "city": "Oslo", "language": "nb-NO", "timezone": "Europe/Oslo", "currency": "NOK", "coordinates": [59.9139, 10.7522] },
-    { "id": "stockholm", "country": "SE", "city": "Stockholm", "language": "sv-SE", "timezone": "Europe/Stockholm", "currency": "SEK", "coordinates": [59.3293, 18.0686] },
-    { "id": "berlin", "country": "DE", "city": "Berlin", "language": "de-DE", "timezone": "Europe/Berlin", "currency": "EUR", "coordinates": [52.52, 13.405] }
+  "$comment": [
+    "Copy to geoqa.config.json (gitignored, local to your checkout). Every key below is READ — by src/config/load.ts — and an unknown key is REJECTED rather than ignored, so a typo cannot look like a setting that took. Omit the file entirely and every value here is the default.",
+    "Credentials never live here. Proxy credentials come from GEOQA_PROXY_<MARKET> env vars only (R-26), and any credential-shaped key in this file is refused by name with a message saying so.",
+    "DELIBERATELY NOT CONFIGURABLE, so they are absent rather than inert: `site` and `markets` — a geo profile embeds its own market and is self-contained by design (R-4), so an evidence package can answer 'what identity was this run?' from one artifact months later without also needing the config as it stood that day. `run.readOnly` — read-only is structural, not a setting: nothing in the codebase writes to Linear, Convex or any repo, and a `false` here would be a promise no code keeps. `run.concurrency` — execution is sequential, and one journey is one network session on purpose (a rotating exit takes LCP from one visitor and CLS from another). `browser.headless` — visibility is a per-invocation debugging choice (`--headed`), not a project fact.",
+    "Every value below is a project-level default. A CLI flag always wins over it: --provider, --evidence-root."
   ],
 
   "network": {
-    "$comment": "provider: direct | http-proxy. `direct` egresses from wherever this machine is — honest, and the only option until a vendor is procured. http-proxy reads GEOQA_PROXY_<MARKET> from env, never from this file.",
+    "$comment": "provider: direct | http-proxy. `direct` egresses from wherever this machine is — honest, and the only option until a vendor is procured; a direct run always carries a warning that its geographic claims are unproven. http-proxy reads GEOQA_PROXY_<MARKET> from the environment, never from this file.",
     "provider": "direct",
     "verifyEndpoint": "https://ipinfo.io/json",
     "cooldownMs": 3600000
   },
 
   "browser": {
-    "$comment": "Everything here is passed to agent-browser. `binary` overrides discovery.",
-    "headless": true,
-    "commandTimeoutMs": 30000,
+    "$comment": "Wall-clock caps on one agent-browser command — the default engine; --engine playwright uses Playwright's own per-call timeouts and there is no idle equivalent to cap. There is no flag for these because they describe the host, not the run. The values shown are RAISED for a slow machine, not the defaults — omit a key and the engine's own default applies (browser/exec.ts), which is the only place those numbers live. 0 is refused: it disables the cap, and a run with no cap does not fail, it hangs.",
+    "commandTimeoutMs": 180000,
     "idleTimeoutMs": 60000
   },
 
   "evidence": {
+    "$comment": "root is resolved relative to the repo root, exactly as --evidence-root is. A retention tier you name REPLACES the default list for that tier, so a tier can be widened or narrowed; tiers you omit keep their defaults (evidence/manifest.ts RETENTION). Tiers are asymmetric on purpose: a passing run keeps almost nothing because a trace per green run costs gigabytes to prove what nobody will read, and an ERROR run maps to `investigation` — that is the case where we know least and need most.",
     "root": "evidence",
     "retention": {
       "pass": ["metadata", "screenshot", "vitals"],
       "warning": ["metadata", "screenshot", "vitals", "console", "network"],
-      "fail": ["metadata", "screenshot", "vitals", "console", "network", "trace", "har"]
+      "fail": ["metadata", "screenshot", "vitals", "console", "network", "har", "trace", "snapshot"],
+      "investigation": ["metadata", "screenshot", "vitals", "console", "network", "har", "trace", "snapshot", "a11y"]
     }
-  },
-
-  "run": {
-    "$comment": "Phase 0 is read-only. Nothing writes to Linear, Convex or any repo.",
-    "readOnly": true,
-    "concurrency": 1
   }
 }

@@ -5,13 +5,24 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GeoQaRunResult } from "../../findings/types.js";
 import type { ExperimentSample } from "../../experiments/harness.js";
+import { EXP_007 } from "../../experiments/definitions.js";
 import { bad, fakeRuntime, ok } from "../../run/__tests__/fake-runtime.js";
-import { defaultDeps, type CommandDeps } from "../commands.js";
+import { defaultDeps, profileList, type CommandDeps } from "../commands.js";
 import {
+  DEFAULT_CONCURRENCY,
+  DEFAULT_STABILITY_READS,
+  DEFAULT_STABILITY_WINDOW_MS,
+  NO_MEMORY_PROBE_NOTE,
   NO_VENDOR_NOTE,
+  PRD_STABILITY_WINDOW_MS,
   SAMPLERS,
-  SHORT_WINDOW_NOTE,
-  STABILITY_READS,
+  concurrencyProfiles,
+  concurrencyShapeNote,
+  resolveConcurrency,
+  resolveStabilityWindow,
+  sampleConcurrency,
+  stabilityWindowNote,
+  summariseConcurrency,
   sampleEvidenceQuality,
   sampleStability,
   summariseEvidenceQuality,
@@ -104,9 +115,47 @@ describe("EXP-001 egress", () => {
     });
   });
 
-  it("marks a run as routed when a real provider was named", async () => {
-    const data = await sampleEgress(deps(), { ...options, providerName: "http-proxy" }, 0);
+  // ── The regression that made this experiment able to lie ────────────────
+  //
+  // `routed` used to be derived from the --provider FLAG while the browser was
+  // built with no proxy at all. So naming a vendor flipped the honesty guard
+  // off and let a direct-egress reading answer the hypothesis: run from a
+  // Norwegian office against the Oslo profile, that reported
+  // `country-match 100% pass` for a capability never exercised.
+
+  it("routes the browser through the provider's session, not just the flag", async () => {
+    const configs: { proxy?: string }[] = [];
+    const data = await sampleEgress(
+      deps({
+        env: { GEOQA_PROXY_OSLO: "http://user:pw@gw.vendor.net:7777" },
+        makeRuntime: (config) => {
+          configs.push(config);
+          return fakeRuntime();
+        },
+      }),
+      { ...options, providerName: "http-proxy" },
+      0,
+    );
     expect(data.routed).toBe(true);
+    // The proof is on the browser, not in the sample's own claim.
+    expect(configs[0]?.proxy).toBe("http://user:pw@gw.vendor.net:7777");
+    // …and the credential never reaches the recorded sample.
+    expect(data.proxy).toBe("http://***:***@gw.vendor.net:7777/");
+    expect(data.provider).toBe("http-proxy");
+  });
+
+  it("fails the sample rather than reporting a routed run it could not route", async () => {
+    // http-proxy with nothing in the environment cannot open a session. The
+    // old code reported `routed: true` and measured the office's own egress.
+    await expect(sampleEgress(deps(), { ...options, providerName: "http-proxy" }, 0)).rejects.toThrow(
+      /could not open a network session/,
+    );
+  });
+
+  it("reports direct egress as unrouted even though a session opened fine", async () => {
+    const data = await sampleEgress(deps(), { ...options, providerName: "direct" }, 0);
+    expect(data.routed).toBe(false);
+    expect(data.proxy).toBeNull();
   });
 
   it("reports not-connected when the browser could not read", async () => {
@@ -280,6 +329,10 @@ describe("EXP-005 journey stability", () => {
 });
 
 describe("EXP-002 session stability", () => {
+  // A tiny window keeps the unit suite fast. The window is a parameter now
+  // precisely so nobody has to choose between a slow test and an unrun one.
+  const fast = { ...options, id: "EXP-002", stabilityWindowMs: 8 };
+
   it("holds ONE session open across reads rather than reopening", async () => {
     const sessions = new Set<string>();
     const data = await sampleStability(
@@ -289,33 +342,82 @@ describe("EXP-002 session stability", () => {
           return fakeRuntime();
         },
       }),
-      { ...options, id: "EXP-002" },
+      fast,
       0,
     );
     // Reopening would measure "do two sessions get the same IP", a different
     // and much weaker claim.
     expect(sessions.size).toBe(1);
-    expect(data.reads).toBe(STABILITY_READS);
+    expect(data.reads).toBe(DEFAULT_STABILITY_READS);
     expect(data.stable).toBe(true);
     expect(data.distinct).toBe(1);
-  }, 60_000);
+  });
+
+  it("records the window it used ON the sample, so a result line can be interpreted later", async () => {
+    const data = await sampleStability(deps(), { ...options, stabilityWindowMs: 12, stabilityReads: 4 }, 0);
+    expect(data).toMatchObject({ windowMs: 12, intervalMs: 4, reads: 4 });
+  });
+
+  it("defaults to the SHORT window rather than to a ten-minute run nobody would finish", () => {
+    const window = resolveStabilityWindow(options);
+    expect(window.windowMs).toBe(DEFAULT_STABILITY_WINDOW_MS);
+    expect(window.windowMs).toBeLessThan(PRD_STABILITY_WINDOW_MS);
+    // Raising the window stretches the spacing instead of multiplying the
+    // probes: 10 minutes at the old 6s spacing was 101 hits on the identity
+    // endpoint and measured rate limiting instead of stickiness.
+    const long = resolveStabilityWindow({ ...options, stabilityWindowMs: PRD_STABILITY_WINDOW_MS });
+    expect(long.reads).toBe(DEFAULT_STABILITY_READS);
+    expect(long.intervalMs).toBe(150_000);
+  });
+
+  it("REFUSES a window that cannot answer the question rather than measuring something else", () => {
+    // One reading cannot disagree with itself, and a zero-length window would
+    // report perfect stability having waited for nothing.
+    expect(() => resolveStabilityWindow({ ...options, stabilityReads: 1 })).toThrow(/at least 2 reads/);
+    expect(() => resolveStabilityWindow({ ...options, stabilityWindowMs: 0 })).toThrow(/positive number of ms/);
+    expect(() => resolveStabilityWindow({ ...options, stabilityWindowMs: Number.NaN })).toThrow(/positive number of ms/);
+    expect(() => resolveStabilityWindow({ ...options, stabilityReads: 2.5 })).toThrow(/at least 2 reads/);
+  });
 
   it("is not measurable when the first read failed", () => {
-    const { metrics } = summariseStability([sample({ measurable: false, stable: false })]);
+    const { metrics } = summariseStability([sample({ measurable: false, stable: false })], options);
     expect(metrics[0]?.verdict).toBe("unmeasured");
   });
 
-  it("always states that the short window is NOT the PRD's ten minutes", () => {
-    const { notes } = summariseStability([sample({ measurable: true, stable: true, distinct: 1 })]);
-    expect(notes[0]).toBe(SHORT_WINDOW_NOTE);
+  it("states the window ACTUALLY used, and that a short one is NOT the PRD's ten minutes", () => {
+    const { notes } = summariseStability([sample({ measurable: true, stable: true, distinct: 1 })], options);
+    expect(notes[0]).toContain("held ONE session for 24s across 5 reads (one every 6s)");
+    expect(notes[0]).toContain("The PRD asks for a 10min window; that is NOT what this measured");
     expect(notes[0]).toContain("cannot prove stability over a long journey");
   });
 
+  // The note used to be a constant ending in "24s". After someone raised the
+  // window that sentence would have been the most quotable lie in the summary.
+  it("states the LONGER window when the window was raised, instead of a stale sentence", () => {
+    const { notes } = summariseStability([sample({ measurable: true, stable: true, distinct: 1 })], {
+      ...options,
+      stabilityWindowMs: PRD_STABILITY_WINDOW_MS,
+    });
+    expect(notes[0]).toContain("held ONE session for 10min across 5 reads (one every 2.5min)");
+    expect(notes[0]).toContain("covers the 10min window the PRD asks for");
+    expect(notes[0]).not.toContain("24s");
+    // Even a covered window does not claim more than it saw.
+    expect(notes[0]).toContain("rotation that healed between two of them is still invisible");
+  });
+
+  it("keeps the note honest about spacing at both ends of the window range", () => {
+    expect(stabilityWindowNote({ windowMs: 24_000, reads: 5, intervalMs: 6_000 })).toContain("one every 6s");
+    expect(stabilityWindowNote({ windowMs: 900_000, reads: 3, intervalMs: 450_000 })).toContain("one every 7.5min");
+  });
+
   it("names how many samples saw the IP drift mid-session", () => {
-    const { notes, metrics } = summariseStability([
-      sample({ measurable: true, stable: true, distinct: 1 }),
-      sample({ measurable: true, stable: false, distinct: 2 }),
-    ]);
+    const { notes, metrics } = summariseStability(
+      [
+        sample({ measurable: true, stable: true, distinct: 1 }),
+        sample({ measurable: true, stable: false, distinct: 2 }),
+      ],
+      options,
+    );
     expect(metrics[0]?.value).toBe(50);
     expect(notes.join(" ")).toContain("1 sample(s) saw the IP change");
   });
@@ -378,13 +480,265 @@ describe("EXP-006 evidence quality", () => {
   }, 60_000);
 });
 
+describe("EXP-007 concurrency", () => {
+  const concurrencyOptions = { ...options, id: "EXP-007" };
+
+  /** A healthy run result. `geo` carries the two facts this experiment reads. */
+  const runResult = (over: Record<string, unknown> = {}): GeoQaRunResult =>
+    ({
+      runId: "r",
+      verdict: "PASS",
+      findings: [],
+      durationMs: 1_000,
+      geo: { network: { egressHeld: { verdict: "match" }, observed: { ip: "213.52.15.251" } } },
+      confidence: { overall: 90, evidence: 100 },
+      evidenceId: "ev_1",
+      ...over,
+    }) as unknown as GeoQaRunResult;
+
+  /** Answers per profile, so one session in the batch can behave differently. */
+  const runsBy = (
+    answer: (profileId: string, call: number) => GeoQaRunResult,
+  ): { runOnce: CommandDeps["runOnce"]; calls: string[] } => {
+    const calls: string[] = [];
+    const runOnce = ((opts: { spec: { profilePath: string } }) => {
+      const profileId = path.basename(opts.spec.profilePath, ".yaml");
+      calls.push(profileId);
+      return Promise.resolve(answer(profileId, calls.length));
+    }) as unknown as CommandDeps["runOnce"];
+    return { runOnce, calls };
+  };
+
+  it("runs a batch of N at once on DISTINCT profiles, after a solo control", async () => {
+    const { runOnce, calls } = runsBy(() => runResult());
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+
+    expect(data.concurrency).toBe(DEFAULT_CONCURRENCY);
+    // One control plus the batch — the control is what "did concurrency change
+    // anything" is measured against, so it is not optional.
+    expect(calls).toHaveLength(DEFAULT_CONCURRENCY + 1);
+    expect(calls[0]).toBe("oslo-mobile");
+    const profiles = data.profiles as string[];
+    expect(new Set(profiles).size).toBe(DEFAULT_CONCURRENCY);
+    expect(profiles[0]).toBe("oslo-mobile");
+    expect(data).toMatchObject({ completionRate: 100, verdictAgreementRate: 100, egressHeldRate: 100, wallClockFactor: 1 });
+  });
+
+  it("records a session that threw instead of losing its peers' readings with it", async () => {
+    // Promise.all would reject on the first failure and the batch — the whole
+    // observation — would vanish, when the dead session is the interesting one.
+    const { runOnce } = runsBy((_profileId, call) => {
+      // Keyed on call ORDER, not a profile name: which profiles land in the batch
+      // changes every time profiles/ grows, and this test is about the batch
+      // surviving one dead session, not about which market died.
+      if (call === 3) throw new Error("chrome died");
+      return runResult();
+    });
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+
+    const sessions = data.sessions as { profileId: string; ok: boolean; error: string | null }[];
+    expect(sessions).toHaveLength(DEFAULT_CONCURRENCY);
+    expect(sessions.filter((s) => !s.ok)).toHaveLength(1);
+    expect(data.completionRate).toBeCloseTo(66.67, 1);
+    expect(String((data.errors as string[])[0])).toContain("chrome died");
+
+    const { notes } = summariseConcurrency([sample(data)], concurrencyOptions);
+    expect(notes.join(" ")).toContain("1 session(s) never returned a run");
+  });
+
+  it("reports a batch where EVERY session died as 0% completed, with no baseline comparison to make", async () => {
+    const { runOnce } = runsBy((_profileId, call) => {
+      if (call === 1) return runResult();
+      throw "the machine gave up";
+    });
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+    // 0% is a measurement — they ran and they failed. The wall-clock factor is
+    // null because there is nothing left to divide, and null must not read as
+    // "no slowdown".
+    expect(data.completionRate).toBe(0);
+    expect(data.wallClockFactor).toBeNull();
+    expect(data.meanSessionMs).toBeNull();
+    expect(String((data.errors as string[])[0])).toContain("the machine gave up");
+
+    const { metrics } = summariseConcurrency([sample(data)], concurrencyOptions);
+    expect(metrics.find((m) => m.key === "concurrent-completion")).toMatchObject({ verdict: "fail", value: 0 });
+    expect(metrics.find((m) => m.key === "wall-clock-factor")?.verdict).toBe("unmeasured");
+  });
+
+  it("carries the requested provider into every concurrent session", async () => {
+    // Dropping it would run the batch on direct egress while the summary named
+    // a vendor — the EXP-001 regression, one experiment along.
+    const { runOnce, calls } = runsBy(() => runResult());
+    const data = await sampleConcurrency(
+      deps({ runOnce, env: { GEOQA_PROXY_OSLO: "http://user:pw@gw.vendor.net:7777" } }),
+      { ...concurrencyOptions, providerName: "http-proxy" },
+    );
+    // A market with no proxy configured cannot open a session, so those
+    // sessions are recorded as failed rather than quietly run direct.
+    expect(calls).toContain("oslo-mobile");
+    const sessions = data.sessions as { profileId: string; ok: boolean; error: string | null }[];
+    expect(sessions.filter((s) => s.profileId.startsWith("stockholm")).every((s) => !s.ok)).toBe(true);
+    expect(String(sessions.find((s) => !s.ok)?.error)).toMatch(/not configured|could not open/);
+  });
+
+  it("counts an ERRORED or instrumentation-flagged session as NOT completed", async () => {
+    // Invariant 3: a broken tool is not a site verdict, and it is certainly not
+    // a completed session.
+    const { runOnce } = runsBy((_profileId, call) =>
+      call === 3 ? runResult({ verdict: "ERROR", findings: [{ category: "instrumentation" }] }) : runResult(),
+    );
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+    expect(data.completionRate).toBeCloseTo(66.67, 1);
+  });
+
+  it("reports UNMEASURED — not agreement, and not a slowdown — when the control never produced a verdict", async () => {
+    const { runOnce } = runsBy((_profileId, call) => {
+      if (call === 1) throw new Error("control died");
+      return runResult();
+    });
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+    expect(data.soloOk).toBe(false);
+    expect(data.verdictAgreementRate).toBeNull();
+    expect(data.wallClockFactor).toBeNull();
+    // The batch still happened, and what it measured is still measured.
+    expect(data.completionRate).toBe(100);
+
+    const { metrics } = summariseConcurrency([sample(data)], concurrencyOptions);
+    expect(metrics.find((m) => m.key === "verdict-agreement")).toMatchObject({ verdict: "unmeasured", value: null });
+    expect(metrics.find((m) => m.key === "wall-clock-factor")?.reason).toContain("no batch had a solo baseline");
+    expect(metrics.find((m) => m.key === "concurrent-completion")?.verdict).toBe("pass");
+  });
+
+  it("counts a DISAGREEING verdict rather than only a broken one", async () => {
+    const { runOnce } = runsBy((_profileId, call) => (call === 3 ? runResult({ verdict: "FAIL" }) : runResult()));
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+    expect(data.verdictAgreementRate).toBeCloseTo(66.67, 1);
+    const { metrics } = summariseConcurrency([sample(data)], concurrencyOptions);
+    expect(metrics.find((m) => m.key === "verdict-agreement")?.verdict).toBe("fail");
+  });
+
+  it("keeps an UNREADABLE closing egress probe out of the denominator instead of counting it either way", async () => {
+    const { runOnce } = runsBy((_profileId, call) =>
+      runResult({
+        geo: {
+          network: {
+            egressHeld: { verdict: call === 3 ? "unverified" : "match" },
+            observed: { ip: "213.52.15.251" },
+          },
+        },
+      }),
+    );
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+    // Two readable probes, both held: 100%, not 66.7%. An unread probe is not
+    // a rotation.
+    expect(data.egressHeldRate).toBe(100);
+  });
+
+  it("reports the egress metric UNMEASURED when no closing probe could be read at all", async () => {
+    const { runOnce } = runsBy(() =>
+      runResult({ geo: { network: { egressHeld: { verdict: "unverified" }, observed: { ip: null } } } }),
+    );
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+    expect(data.egressHeldRate).toBeNull();
+    expect(data.distinctEgressIps).toBe(0);
+
+    const { metrics } = summariseConcurrency([sample(data)], concurrencyOptions);
+    const held = metrics.find((m) => m.key === "egress-identity-held");
+    expect(held).toMatchObject({ verdict: "unmeasured", value: null });
+    expect(held?.reason).toContain("an unread probe is not a held identity");
+  });
+
+  it("scores wall clock as a MULTIPLE of the solo run, not an absolute budget", async () => {
+    // An absolute ms target would mostly measure the site under test. What this
+    // experiment is asking is whether N at once made each one slower.
+    const { runOnce } = runsBy((_profileId, call) => runResult({ durationMs: call === 1 ? 1_000 : 3_000 }));
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+    expect(data.wallClockFactor).toBe(3);
+    const { metrics } = summariseConcurrency([sample(data)], concurrencyOptions);
+    expect(metrics.find((m) => m.key === "wall-clock-factor")).toMatchObject({ verdict: "fail", value: 3 });
+  });
+
+  it("treats a zero-length control as no baseline rather than dividing by it", async () => {
+    const { runOnce } = runsBy((_profileId, call) => runResult({ durationMs: call === 1 ? 0 : 2_000 }));
+    const data = await sampleConcurrency(deps({ runOnce }), concurrencyOptions);
+    expect(data.wallClockFactor).toBeNull();
+  });
+
+  it("NEVER lets peak memory look like a pass, and says why it could not be read", () => {
+    const { metrics } = summariseConcurrency([sample({ completionRate: 100 })], concurrencyOptions);
+    const memory = metrics.find((m) => m.key === "peak-memory-per-session");
+    expect(memory).toMatchObject({ verdict: "unmeasured", value: null });
+    expect(memory?.reason).toBe(NO_MEMORY_PROBE_NOTE);
+    expect(NO_MEMORY_PROBE_NOTE).toContain("unmeasured");
+    expect(NO_MEMORY_PROBE_NOTE).toContain("not a pass");
+  });
+
+  it("reports every metric UNMEASURED when no batch ran", () => {
+    const { metrics } = summariseConcurrency([], concurrencyOptions);
+    expect(metrics.every((m) => m.verdict === "unmeasured")).toBe(true);
+    expect(metrics.find((m) => m.key === "concurrent-completion")?.reason).toBe("no batch reported a session");
+  });
+
+  it("records ONE shared egress IP as unexercised, never as a failure", () => {
+    const { notes, metrics } = summariseConcurrency(
+      [sample({ concurrency: 3, distinctEgressIps: 1, completionRate: 100, egressHeldRate: 100 })],
+      concurrencyOptions,
+    );
+    expect(notes.join(" ")).toContain("not that it failed");
+    // Sharing the machine's own IP is what direct egress means; scoring it
+    // would file a missing proxy vendor as a concurrency defect.
+    expect(metrics.find((m) => m.key === "egress-identity-held")?.verdict).toBe("pass");
+  });
+
+  it("says which SHAPE of concurrency it measured, so it is not read as N contexts in one browser", () => {
+    const note = concurrencyShapeNote(4);
+    expect(note).toContain("4 FULL RUNS");
+    expect(note).toContain("does NOT measure N contexts inside one browser");
+    expect(summariseConcurrency([], concurrencyOptions).notes[0]).toBe(concurrencyShapeNote(DEFAULT_CONCURRENCY));
+  });
+
+  it("REFUSES a batch of one, which is the sequential path it exists to compare against", () => {
+    expect(() => resolveConcurrency({ ...concurrencyOptions, concurrency: 1 })).toThrow(/at least 2/);
+    expect(() => resolveConcurrency({ ...concurrencyOptions, concurrency: 2.5 })).toThrow(/at least 2/);
+    expect(resolveConcurrency({ ...concurrencyOptions, concurrency: 5 })).toBe(5);
+  });
+
+  it("REFUSES more sessions than there are profiles rather than handing two sessions one browser", () => {
+    // `run_<ms>_<profileId>` is the run id, and agent-browser's daemon is keyed
+    // by session name — a wrapped profile would silently be the SAME browser,
+    // and the batch would measure one browser twice while reporting two.
+    const shipped = profileList(deps()).profiles.length;
+    expect(() => concurrencyProfiles(deps(), "oslo-mobile", shipped + 1)).toThrow(
+      new RegExp(`exceeds the ${shipped} distinct profiles`),
+    );
+  });
+
+  it("wraps around the profile list, and starts at the beginning for an unknown request", () => {
+    const all = profileList(deps()).profiles.map((p: { id: string }) => p.id).sort();
+    const last = all[all.length - 1] as string;
+    const wrapped = concurrencyProfiles(deps(), last, 3);
+    // Starts where asked, then wraps to the front, and never hands two sessions
+    // the same profile — two sessions on one profile would share a browser.
+    expect(wrapped[0]).toBe(last);
+    expect(wrapped.slice(1)).toEqual(all.slice(0, 2));
+    expect(new Set(wrapped).size).toBe(3);
+    expect(concurrencyProfiles(deps(), "not-a-profile", 2)).toEqual(all.slice(0, 2));
+  });
+});
+
 describe("the sampler registry", () => {
   it("registers a pair for every experiment that has one", () => {
-    expect(Object.keys(SAMPLERS)).toHaveLength(7);
+    expect(Object.keys(SAMPLERS)).toHaveLength(8);
     for (const [id, pair] of Object.entries(SAMPLERS)) {
       expect(typeof pair.sample, id).toBe("function");
       expect(typeof pair.summarise, id).toBe("function");
     }
+  });
+
+  // A-3b: `temporal/workflows.ts` justified sequential execution by citing
+  // EXP-007, which for a while had no spec, no sampler and no directory.
+  it("has a pair for EXP-007, the concurrency experiment the matrix workflow cites", () => {
+    expect(SAMPLERS[EXP_007.id]).toBeDefined();
   });
 
   it("states plainly why the geographic targets cannot be evaluated yet", () => {

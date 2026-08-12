@@ -1,0 +1,17 @@
+# Trondheim at desktop width, so a regional banner or shipping estimate placed by
+# viewport rather than by market has somewhere to show itself.
+id: trondheim-desktop
+label: Trondheim, desktop
+market:
+  id: trondheim
+  country: NO
+  city: Trondheim
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [63.4305, 10.3951]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

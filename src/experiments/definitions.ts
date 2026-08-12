@@ -75,6 +75,42 @@ export const EXP_006: ExperimentSpec = {
   ],
 };
 
+/**
+ * Concurrency, finally measurable.
+ *
+ * `temporal/workflows.ts` justifies its sequential matrix by citing this
+ * experiment, and for a while that citation pointed at nothing — the reason the
+ * gap list called it out. It is worth writing NOW because the blocker moved:
+ * under agent-browser one profile meant one Chrome process, so "N at once" was
+ * mostly a question about RAM. The Playwright engine gives each CONTEXT its own
+ * proxy, so N markets at once is newly possible at all, and the question turns
+ * into whether a concurrent session still measures the same thing a solo one
+ * did.
+ *
+ * `peak-memory-per-session` cannot be evaluated by anything that exists today —
+ * the browser is out of process on both engines and nothing samples the process
+ * tree — and it is declared anyway. OOM is the specific fear that keeps
+ * concurrency at 1; leaving the target out would turn "we have never measured
+ * the thing we are afraid of" back into an unstated assumption.
+ */
+export const EXP_007: ExperimentSpec = {
+  id: "EXP-007-concurrency",
+  hypothesis:
+    "N journeys can run at the same time and each one still measures what it measured alone: no instrumentation errors, the same verdict as a solo run, an egress identity that holds for the whole run, and a per-session cost that stays sub-linear.",
+  metrics: [
+    { key: "concurrent-completion", description: "Concurrent sessions that completed without an instrumentation error", target: 95, unit: "percent", direction: "min" },
+    // 95 and not 100: the same journey run alone is only stable to 95%
+    // (EXP-005), so demanding perfect agreement here would file ordinary
+    // journey flakiness as a concurrency defect.
+    { key: "verdict-agreement", description: "Concurrent sessions whose verdict matched the same journey run solo", target: 95, unit: "percent", direction: "min" },
+    // 100, because a swapped exit mid-run does not degrade a measurement, it
+    // invalidates it: LCP from one visitor, CLS from another (invariant 16).
+    { key: "egress-identity-held", description: "Concurrent sessions whose egress identity was verified to hold for the whole run", target: 100, unit: "percent", direction: "min" },
+    { key: "wall-clock-factor", description: "Mean wall clock per concurrent session, as a multiple of the same journey run solo", target: 2, unit: "count", direction: "max" },
+    { key: "peak-memory-per-session", description: "Peak resident MB across the browser process tree, per concurrent session", target: 500, unit: "count", direction: "max" },
+  ],
+};
+
 export const EXPERIMENTS: Record<string, ExperimentSpec> = {
   [EXP_000.id]: EXP_000,
   [EXP_001.id]: EXP_001,
@@ -83,6 +119,7 @@ export const EXPERIMENTS: Record<string, ExperimentSpec> = {
   [EXP_004.id]: EXP_004,
   [EXP_005.id]: EXP_005,
   [EXP_006.id]: EXP_006,
+  [EXP_007.id]: EXP_007,
 };
 
 /** Accepts the full id or the bare number, so `geoqa experiment run 001` works. */

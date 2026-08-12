@@ -315,3 +315,34 @@ describe("AgentBrowserRuntime", () => {
     expect(out.ok).toBe(false);
   });
 });
+
+describe("input", () => {
+  it("fills, presses, selects and checks through the CLI", async () => {
+    const { rt, calls } = make();
+    await rt.fill("#email", "qa@example.test");
+    await rt.press("Enter");
+    await rt.select("#topic", ["support", "billing"]);
+    await rt.check("#consent");
+    expect(calls[0]).toEqual(["--session", "run1", "fill", "#email", "qa@example.test", "--json"]);
+    expect(calls[1]).toEqual(["--session", "run1", "press", "Enter", "--json"]);
+    expect(calls[2]).toEqual(["--session", "run1", "select", "#topic", "support", "billing", "--json"]);
+    expect(calls[3]).toEqual(["--session", "run1", "check", "#consent", "--json"]);
+  });
+
+  it("MASKS the filled value in the outcome's command string", async () => {
+    // `command` is kept so a failing call is reproducible by hand. For this one
+    // command that would write a password into every evidence package that
+    // recorded the outcome, so the reproducibility is deliberately given up.
+    const { rt } = make();
+    const out = await rt.fill("#password", "hunter2-the-real-one");
+    expect(out.command).toBe("fill #password <redacted>");
+    expect(JSON.stringify(out)).not.toContain("hunter2-the-real-one");
+  });
+
+  it("still reports a failed fill as a failure", async () => {
+    const rt = new AgentBrowserRuntime({ sessionId: "r" }, { exec: () => Promise.resolve(fail()) });
+    const out = await rt.fill("#email", "x");
+    expect(out.ok).toBe(false);
+    expect(out.command).toBe("fill #email <redacted>");
+  });
+});

@@ -127,6 +127,41 @@ export async function observeNetwork(
   return parseNetworkObservation(body.data, latencyMs);
 }
 
+/**
+ * The expression that re-reads the egress IP from INSIDE the current page.
+ *
+ * `observeNetwork` navigates, which is exactly what a closing egress check must
+ * not do: the evidence collector reads vitals, console, network and the a11y
+ * tree AFTER the journey, and navigating to an identity endpoint first would
+ * make every one of those describe ipinfo.io instead of the site under test. A
+ * page-context `fetch` leaves over the same browser connection — so it is a
+ * genuine reading of the same egress — while leaving the page untouched.
+ *
+ * A strict `connect-src` CSP can block it. That yields `null`, which
+ * `compareEgressHeld` reports as `unverified` — the honest outcome, and strictly
+ * better than a corrupted evidence package.
+ */
+export function egressIpExpression(endpoint: string): string {
+  return `(async () => {
+  try {
+    const response = await fetch(${JSON.stringify(endpoint)}, { cache: "no-store" });
+    const body = await response.json();
+    return JSON.stringify({ ip: typeof body.ip === "string" ? body.ip : null });
+  } catch {
+    return JSON.stringify({ ip: null });
+  }
+})()`;
+}
+
+/** Re-read just the egress IP, without navigating away from the page. */
+export async function observeEgressIp(runtime: BrowserRuntime, endpoint: string): Promise<string | null> {
+  const out = await runtime.evaluate<unknown>(egressIpExpression(endpoint));
+  if (!out.ok) return null;
+  const value = typeof out.data === "string" ? safeParse(out.data) : out.data;
+  const record = asRecord(value);
+  return record ? asString(record.ip) : null;
+}
+
 /** Read the browser's own beliefs about locale, clock, device and position. */
 export async function observeBrowser(runtime: BrowserRuntime): Promise<BrowserObservation> {
   const out = await runtime.evaluate<unknown>(BROWSER_ENV_EXPRESSION);

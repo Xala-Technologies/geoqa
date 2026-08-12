@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  GEOQA_SCHEMA_VERSION,
   RETENTION,
   REQUIRED_QUESTIONS,
   buildManifest,
@@ -109,6 +110,37 @@ describe("buildManifest", () => {
       artifacts: [art("screenshot", 100, "low")],
     });
     expect(manifest.privacyNote).toBeNull();
+  });
+
+  it("STAMPS the schema version on every manifest, so a consumer can refuse a shape it does not know", () => {
+    // An evidence package is opened by whatever tool a human points at it months
+    // later. Without a version its only way to notice the shape changed is to
+    // crash on a field that moved.
+    const manifest = buildManifest({ ...base, verdict: "PASS", artifacts: [] });
+    expect(manifest.schemaVersion).toBe(GEOQA_SCHEMA_VERSION);
+  });
+
+  it("PINS the manifest's top-level keys, so adding or removing one is deliberate", () => {
+    // Key sets, not values: the values change on every unrelated behaviour change
+    // (a new tier, a different completeness), and a test that failed on all of
+    // those would be deleted within a week. The KEYS are the part a consumer
+    // wrote code against, so they are the part worth freezing — a removal or a
+    // rename must break here and be re-stated on purpose.
+    const manifest = buildManifest({ ...base, verdict: "FAIL", artifacts: [art("metadata")] });
+    expect(Object.keys(manifest).sort()).toEqual(
+      [
+        "artifacts",
+        "completeness",
+        "createdAt",
+        "evidenceId",
+        "missing",
+        "privacyNote",
+        "runId",
+        "schemaVersion",
+        "tier",
+        "verdict",
+      ].sort(),
+    );
   });
 });
 

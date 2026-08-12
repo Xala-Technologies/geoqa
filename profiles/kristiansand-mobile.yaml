@@ -1,0 +1,16 @@
+# Southern coast, Agder. Distinct regional exchange from both Oslo and Stavanger.
+id: kristiansand-mobile
+label: Kristiansand, mobile
+market:
+  id: kristiansand
+  country: NO
+  city: Kristiansand
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [58.1467, 7.9956]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+visitorType: anonymous

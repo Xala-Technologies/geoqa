@@ -93,6 +93,16 @@ export interface GeoVerification {
     observed: NetworkObservation;
     country: AxisResult;
     city: AxisResult;
+    /**
+     * Did the egress IP we opened with survive the whole run?
+     *
+     * A rotating proxy that changes exit mid-journey does not just look
+     * inauthentic — it makes the measurement incoherent, because LCP came from
+     * one visitor and CLS from another. This axis is `unverified` until the
+     * journey has finished, since it is a claim about a window of time rather
+     * than about a moment.
+     */
+    egressHeld: AxisResult;
   };
   browser: {
     requested: { language: string; timezone: string; viewport: { width: number; height: number } };

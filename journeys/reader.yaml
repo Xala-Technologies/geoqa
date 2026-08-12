@@ -1,0 +1,44 @@
+id: reader
+title: Content visitor, reading at human speed
+description: >
+  J05. What most real traffic actually does: land on a page, read it, scroll,
+  maybe follow something, leave. Nothing here changes state.
+
+  The pauses are the point. A runner that clicks every 500ms measures a load
+  pattern no visitor produces, and it also never gives a page time to finish
+  settling — which is how a lazily-loaded image becomes a phantom layout shift.
+  Every pause is drawn from a seeded generator, so the pacing is realistic and
+  the run is still exactly repeatable from its recorded seed.
+
+  The `probability` steps are the other half. A set of runs where some sessions
+  read the related links and some do not is representative; eleven identical
+  robots are not.
+writes: false
+steps:
+  - { action: open, url: "{target}", label: land on the page }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: selector-visible, selector: h1, severity: critical, label: has a primary heading }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: screenshot, label: above-the-fold }
+
+  # Read the top of the page before touching anything.
+  - { action: pause, minMs: 1800, maxMs: 4200, label: read the opening }
+  - { action: scroll, direction: down, px: 900 }
+  - { action: pause, minMs: 2400, maxMs: 6000, label: read on }
+  - { action: scroll, direction: down, px: 1200 }
+  - { action: pause, minMs: 1200, maxMs: 3500, label: keep reading }
+
+  # Two thirds of readers look at what else is on offer.
+  - { action: scroll, direction: down, px: 1500, probability: 0.66, label: scroll to related content }
+  - { action: pause, minMs: 900, maxMs: 2600, probability: 0.66, label: skim the related links }
+
+  # A minority go back up to re-read something.
+  - { action: scroll, direction: up, px: 1200, probability: 0.3, label: scroll back up }
+  - { action: pause, minMs: 800, maxMs: 2000, probability: 0.3, label: re-read a passage }
+
+  - { action: screenshot, label: after-reading, fullPage: true }
+  - { action: assert, check: selector-count-min, selector: "a[href^='/']", value: 3, severity: medium, label: has somewhere to go next }
+  - { action: assert, check: no-page-errors, severity: high }
+  - { action: assert, check: no-console-errors, severity: medium }
+  - { action: assert, check: lcp-below, value: 2500, severity: medium }
+  - { action: assert, check: cls-below, value: 0.1, severity: low }

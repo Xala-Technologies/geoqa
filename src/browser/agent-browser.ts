@@ -6,7 +6,15 @@
  * launching Chrome — and the mappers, which are where the real risk lives, are
  * tested separately against payloads captured from the real CLI.
  */
-import { commandArgs, screenshotCommand, scrollCommand, snapshotCommand } from "./args.js";
+import {
+  commandArgs,
+  fillCommand,
+  fillCommandLabel,
+  screenshotCommand,
+  scrollCommand,
+  selectCommand,
+  snapshotCommand,
+} from "./args.js";
 import { execAgentBrowser, type ExecOutcome } from "./exec.js";
 import {
   toA11yViolations,
@@ -213,6 +221,33 @@ export class AgentBrowserRuntime implements BrowserRuntime {
 
   click(selector: string): Promise<BrowserResult<unknown>> {
     return this.run(["click", selector]);
+  }
+
+  /**
+   * Fill a field, and make sure the value cannot survive into a log.
+   *
+   * `execAgentBrowser` records the argv in `ExecMeta.command` so a failing call
+   * is reproducible by hand — which for this one command would put a password in
+   * every evidence package that recorded the outcome. The command string is
+   * therefore replaced with a masked form before the result is returned. The cost
+   * is that this single call is not copy-pasteable; a leaked credential with a
+   * long half-life is the worse trade.
+   */
+  async fill(selector: string, value: string): Promise<BrowserResult<unknown>> {
+    const out = await this.run(fillCommand(selector, value));
+    return { ...out, command: fillCommandLabel(selector) };
+  }
+
+  press(key: string): Promise<BrowserResult<unknown>> {
+    return this.run(["press", key]);
+  }
+
+  select(selector: string, values: string[]): Promise<BrowserResult<unknown>> {
+    return this.run(selectCommand(selector, values));
+  }
+
+  check(selector: string): Promise<BrowserResult<unknown>> {
+    return this.run(["check", selector]);
   }
 
   scroll(direction: "up" | "down" | "left" | "right", px?: number): Promise<BrowserResult<unknown>> {

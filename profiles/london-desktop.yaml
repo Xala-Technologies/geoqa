@@ -1,0 +1,19 @@
+# London on desktop. GBP is the outlier of this matrix, and the only market whose
+# timezone leaves Europe/*+01: a price formatter that special-cases the Nordics
+# and calls the rest EUR, or an opening-hours table built on a fixed offset, is
+# wrong here first.
+id: london-desktop
+label: London, desktop
+market:
+  id: london
+  country: GB
+  city: London
+  language: en-GB
+  timezone: Europe/London
+  currency: GBP
+  coordinates: [51.5072, -0.1276]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

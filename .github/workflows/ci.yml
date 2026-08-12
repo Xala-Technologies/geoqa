@@ -47,6 +47,15 @@ jobs:
       - name: Typecheck
         run: pnpm lint
 
+      # Its own step, deliberately, and before the tests: a layering violation
+      # is a different kind of news from a failing assertion. Buried inside a
+      # test run it reads as "something broke"; on its own it reads as "this
+      # import crossed a boundary the design rests on", with the reason printed
+      # next to it. Nothing here compiles or executes the tree, so it also fails
+      # in seconds rather than after the Temporal suite has downloaded a server.
+      - name: Boundaries
+        run: pnpm boundaries
+
       # The gate that matters: 100% lines/statements/functions. Coverage proves
       # lines RAN, not that anything was asserted — which is why the threshold
       # is paired with the repo's rule that every fix is pinned by a test and

@@ -1,0 +1,16 @@
+# Agder coast. Confirmed exact match on Telenor.
+id: arendal-desktop
+label: Arendal, desktop
+market:
+  id: arendal
+  country: NO
+  city: Arendal
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [58.4616, 8.7724]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

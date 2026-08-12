@@ -10,6 +10,24 @@
 import type { JourneyVerdict } from "../journeys/engine.js";
 import type { ScreenshotRisk } from "./redact.js";
 
+/**
+ * The version of the consumed JSON shapes: this manifest AND `GeoQaRunResult`.
+ *
+ * One constant for both, because both are read by other programs — `--json` is
+ * the integration contract, and an evidence package is opened by whatever tool a
+ * human points at it months later. A consumer that finds a version it does not
+ * know can refuse; without one its only way to detect a breaking change is to
+ * crash on a field that moved, which is the failure this closes.
+ *
+ * BUMP IT when an existing field is removed or renamed, changes type, or changes
+ * meaning — anything that makes a consumer written against the old shape wrong.
+ * Do NOT bump for a purely additive field: a reader that ignores unknown keys is
+ * still correct, and a version that changes on every addition trains consumers to
+ * ignore it. The key-set tests are what make an addition or removal deliberate;
+ * this number is what tells a consumer which of the two happened.
+ */
+export const GEOQA_SCHEMA_VERSION = 1;
+
 export type ArtifactKind =
   | "metadata"
   | "screenshot"
@@ -21,6 +39,15 @@ export type ArtifactKind =
   | "vitals"
   | "a11y";
 
+/**
+ * One kind, possibly several container formats.
+ *
+ * A `trace` from agent-browser is a Chrome trace in JSON; a `trace` from
+ * Playwright is a ZIP. The kind stays the same for both because retention and
+ * completeness ask *did this run keep a trace*, not what it was packaged in — so
+ * `path` (its real extension) and `mime` are the authority on the format, and a
+ * reader must use them rather than assuming one per kind.
+ */
 export interface Artifact {
   kind: ArtifactKind;
   label: string;
@@ -33,6 +60,8 @@ export interface Artifact {
 }
 
 export interface EvidenceManifest {
+  /** `GEOQA_SCHEMA_VERSION` at the time of writing. */
+  schemaVersion: number;
   evidenceId: string;
   runId: string;
   createdAt: string;
@@ -121,6 +150,7 @@ export function buildManifest(input: BuildManifestInput): EvidenceManifest {
   const tier = tierFor(input.verdict);
   const flagged = input.artifacts.filter((a) => a.risk === "review");
   return {
+    schemaVersion: GEOQA_SCHEMA_VERSION,
     evidenceId: input.evidenceId,
     runId: input.runId,
     createdAt: input.createdAt,

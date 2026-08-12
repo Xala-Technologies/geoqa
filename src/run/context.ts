@@ -13,16 +13,28 @@
  * reconstruct those flags exactly. Get one wrong and the daemon silently gives
  * you a DIFFERENT browser rather than an error.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AgentBrowserRuntime } from "../browser/agent-browser.js";
+import { createPlaywrightRuntime, type PlaywrightContextOptions } from "../browser/engines.js";
 import type { BrowserRuntime } from "../browser/types.js";
 import { localeInitScript, toSessionConfig } from "../geo/profile.js";
 import type { GeoProfile } from "../geo/types.js";
 
+/**
+ * Which browser engine serves a run.
+ *
+ * A string on the spec rather than an injected object, because a Temporal
+ * Activity has to be able to rebuild the runtime from serialisable arguments
+ * alone. It is part of the run's identity for the same reason the proxy URL is:
+ * two runs of the same journey on different engines are not the same run.
+ */
+export type RunEngine = "agent-browser" | "playwright";
+
 /** Everything a stage needs, JSON-serialisable so Temporal can pass it around. */
 export interface RunSpec {
   runId: string;
+  engine: RunEngine;
   /** The page under test. */
   target: string;
   profilePath: string;
@@ -35,6 +47,15 @@ export interface RunSpec {
   initScriptPath: string | null;
   /** Journey variable substitutions. */
   vars: Record<string, string>;
+  /**
+   * Seeds the journey's pauses and probability draws.
+   *
+   * On the spec, not generated in the engine, for the same reason the engine
+   * choice is: a Temporal Activity rebuilds everything from serialisable
+   * arguments, and a seed regenerated per Activity would make a run's pacing
+   * differ between its own stages.
+   */
+  seed: number;
   headed: boolean;
   verifyEndpoint: string;
 }
@@ -64,6 +85,7 @@ export function writeInitScript(spec: Pick<RunSpec, "evidenceRoot" | "runId">, p
  * run reaches the same browser and two concurrent runs cannot collide.
  */
 export function buildRuntime(spec: RunSpec, profile: GeoProfile): BrowserRuntime {
+  if (spec.engine === "playwright") return buildPlaywrightRuntime(spec, profile);
   const config = toSessionConfig(profile, {
     sessionId: spec.runId,
     proxyUrl: spec.proxyUrl,
@@ -73,6 +95,132 @@ export function buildRuntime(spec: RunSpec, profile: GeoProfile): BrowserRuntime
     baseEnv: process.env,
   });
   return new AgentBrowserRuntime(config);
+}
+
+/**
+ * Where a profile's saved session lives, under the evidence root.
+ *
+ * NOT inside a run directory, for two reasons. A session that expires with one
+ * run cannot make the next visitor a returning one, which is the entire point.
+ * And the file holds live cookies — it is a credential, not evidence, and an
+ * evidence package is the one thing in this system that gets copied to a human.
+ */
+export const VISITOR_STATE_DIR = "visitors";
+
+export interface VisitorState {
+  /** This profile's session file, or `null` when the engine cannot use one. */
+  path: string | null;
+  /** True ONLY when a saved session was found and will be loaded. */
+  restored: boolean;
+  /**
+   * Non-null when the profile claims `returning` and this run is not one.
+   *
+   * The whole point of B-7: a `returning` profile whose session could not be
+   * restored has tested a FIRST-TIME visitor, and `run.json` will still record
+   * `visitorType: returning` from the profile. Something has to say which of the
+   * two actually happened, or the two are indistinguishable in the evidence —
+   * which is the same class of lie as an unmeasured metric reported as fine.
+   */
+  unmet: string | null;
+}
+
+/**
+ * Decide what a run's visitor actually is, as opposed to what it claims.
+ *
+ * Injected `exists` rather than a hard `existsSync` so the judgement — not the
+ * filesystem — is what the tests pin.
+ */
+export function resolveVisitorState(
+  spec: Pick<RunSpec, "engine" | "evidenceRoot">,
+  profile: GeoProfile,
+  exists: (file: string) => boolean = existsSync,
+): VisitorState {
+  if (profile.visitorType === "anonymous") {
+    // An anonymous visitor arrives with nothing AND keeps nothing. Saving a
+    // session here would make the NEXT run of this profile a returning visitor
+    // nobody asked for — the same substitution as the reverse, and just as
+    // invisible in the evidence.
+    return { path: null, restored: false, unmet: null };
+  }
+  if (spec.engine !== "playwright") {
+    return {
+      path: null,
+      restored: false,
+      unmet: `profile "${profile.id}" declares visitorType "returning", but the agent-browser engine cannot restore a session: it isolates cookies and storage per --session and the session name is the run id, so every run arrives as a first-time visitor. Use --engine playwright.`,
+    };
+  }
+  const file = path.join(spec.evidenceRoot, VISITOR_STATE_DIR, `${profile.id}.json`);
+  if (exists(file)) return { path: file, restored: true, unmet: null };
+  return {
+    path: file,
+    restored: false,
+    // Still saved on close: the first run of a returning profile has to be the
+    // one that seeds the session, or no run ever gets to be a returning visitor.
+    unmet: `profile "${profile.id}" declares visitorType "returning" but no saved session exists at ${file} — this run tested a FIRST-TIME visitor. Its session is saved when the browser closes, so the next run of this profile is a real returning one.`,
+  };
+}
+
+/**
+ * A profile, as Playwright context options.
+ *
+ * Pure and separate from `buildPlaywrightRuntime` so the mapping is testable
+ * without a browser — this is where a wrong axis would silently produce a run
+ * that claims Oslo and renders Frankfurt, so it is the part that needs pinning.
+ *
+ * The context carries what agent-browser needed launch flags, a `TZ` env var and
+ * an injected script to approximate: locale, timezone, coordinates and viewport
+ * are all context options, and the geolocation permission is GRANTED rather than
+ * stubbed. `spec.initScriptPath` is therefore unused on this engine — it stays
+ * written to the evidence directory because it records what the run asked for.
+ *
+ * Two more context-creation facts land here because there is nowhere later to put
+ * them: the HAR path and the visitor's saved session. Both are decided before the
+ * browser exists and neither can be changed once it does.
+ */
+export function playwrightContextOptions(
+  spec: RunSpec,
+  profile: GeoProfile,
+  exists: (file: string) => boolean = existsSync,
+): PlaywrightContextOptions {
+  const [latitude, longitude] = profile.market.coordinates;
+  const visitor = resolveVisitorState(spec, profile, exists);
+  return {
+    proxyUrl: spec.proxyUrl,
+    proxyBypass: spec.proxyBypass,
+    locale: profile.market.language,
+    timezoneId: profile.market.timezone,
+    coordinates: { latitude, longitude },
+    viewport: profile.device.viewport,
+    userAgent: profile.device.userAgent ?? null,
+    deviceName: profile.device.emulate ?? null,
+    headed: spec.headed,
+    identity: spec.runId,
+    // Armed for EVERY run, because the retention tier is not known until the
+    // journey has finished — the same record-always/keep-on-failure shape as the
+    // trace, and for the same reason: a HAR cannot be started retroactively for
+    // the run that turned out to need one. The difference is that Playwright
+    // writes it when the context CLOSES, which happens after `collectEvidence`
+    // has already described the directory, so the manifest still reports `har`
+    // as missing (B-3). The run directory exists by now: `writeInitScript` made
+    // it during `prepareRun`.
+    harPath: path.join(runEvidenceDir(spec), "network.har"),
+    // Restore only what is really there — Playwright throws on a missing
+    // `storageState` path, and a returning visitor that cannot be restored must
+    // become a reported warning, not a launch failure.
+    restoreStatePath: visitor.restored ? visitor.path : null,
+    saveStatePath: visitor.path,
+  };
+}
+
+/**
+ * A Playwright runtime for this run's profile.
+ *
+ * `playwrightOpener` returns a function without calling it, so constructing a
+ * runtime launches nothing — the browser starts on first use, which is what lets
+ * this stay synchronous and what keeps the test suite browser-free.
+ */
+export function buildPlaywrightRuntime(spec: RunSpec, profile: GeoProfile): BrowserRuntime {
+  return createPlaywrightRuntime(spec.runId, playwrightContextOptions(spec, profile));
 }
 
 /** `run_<epoch>_<profile>` — sortable, and says which profile it was. */

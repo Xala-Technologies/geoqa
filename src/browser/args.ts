@@ -56,3 +56,24 @@ export function screenshotCommand(path: string, options: ScreenshotOptions = {})
 export function scrollCommand(direction: string, px?: number): string[] {
   return px === undefined ? ["scroll", direction] : ["scroll", direction, String(px)];
 }
+
+/**
+ * `fill`, not `type`: it clears the field first, so a journey does not depend on
+ * what a previous step or a browser autofill left in it.
+ *
+ * The value lands in argv, which means it reaches `ExecMeta.command` — the
+ * string kept so a failing call is reproducible by hand. That is exactly where a
+ * password would leak, so the adapter masks it there; see `fillCommandLabel`.
+ */
+export function fillCommand(selector: string, value: string): string[] {
+  return ["fill", selector, value];
+}
+
+/** What a filled field is called in a log or a step detail: never its value. */
+export function fillCommandLabel(selector: string): string {
+  return `fill ${selector} <redacted>`;
+}
+
+export function selectCommand(selector: string, values: string[]): string[] {
+  return ["select", selector, ...values];
+}

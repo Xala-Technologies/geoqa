@@ -75,6 +75,39 @@ export function compareViewport(
     : mismatched(`requested ${requested.width}px wide, browser rendered ${observed.width}px`);
 }
 
+/**
+ * Did one run hold one egress identity?
+ *
+ * Asymmetric on purpose, the same way `compareCity` is: a rotation can be
+ * PROVEN (two readings, two different IPs), but stability can only be proven
+ * for the moments we actually read. A missing reading at either end is
+ * `unverified` — never a pass, because "the IP probably held" is precisely the
+ * assumption a sticky-session vendor is being paid to make true and therefore
+ * the one worth measuring rather than trusting.
+ */
+export function compareEgressHeld(openingIp: string | null, closingIp: string | null): AxisResult {
+  if (openingIp === null) return unverified("no opening egress reading to compare against");
+  if (closingIp === null) return unverified("closing egress was never read");
+  return closingIp === openingIp
+    ? matched(`egress held ${openingIp} for the whole run`)
+    : mismatched(`egress rotated mid-run: opened on ${openingIp}, closed on ${closingIp}`);
+}
+
+/**
+ * Fold a post-journey egress-stability reading into a verification.
+ *
+ * `trustworthy` can only ever go DOWN here. A run cannot earn trust it did not
+ * have by holding its IP, but it can certainly lose it by rotating — every
+ * measurement in a rotated run describes a mixture of visitors.
+ */
+export function withEgressHeld(verification: GeoVerification, egressHeld: AxisResult): GeoVerification {
+  return {
+    ...verification,
+    network: { ...verification.network, egressHeld },
+    trustworthy: verification.trustworthy && egressHeld.verdict === "match",
+  };
+}
+
 const WEIGHT = { country: 0.45, city: 0.15, language: 0.2, timezone: 0.2 } as const;
 const SCORE: Record<AxisResult["verdict"], number> = { match: 1, unverified: 0.4, mismatch: 0 };
 
@@ -118,6 +151,11 @@ export function verifyGeo(
       observed: network,
       country,
       city,
+      // Deliberately not knowable yet, and deliberately NOT part of
+      // `geoConfidence` below: that score answers "are we where we asked to
+      // be?", which is a question about one moment. Stability is a different
+      // claim over a different span, and `withEgressHeld` folds it in later.
+      egressHeld: unverified("egress stability is only known once the journey has finished"),
     },
     browser: {
       requested: {
@@ -143,6 +181,7 @@ export function verificationReasons(v: GeoVerification): string[] {
   return [
     ...v.network.country.reasons,
     ...v.network.city.reasons,
+    ...v.network.egressHeld.reasons,
     ...v.browser.language.reasons,
     ...v.browser.timezone.reasons,
     ...v.browser.viewport.reasons,

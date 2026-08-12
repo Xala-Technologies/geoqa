@@ -1,0 +1,18 @@
+# Stockholm on the wide layout, where a half-translated page gives itself away:
+# untranslated navigation sitting next to Swedish body copy, which a 390px column
+# pushes out of one screen and out of one screenshot.
+id: stockholm-desktop
+label: Stockholm, desktop
+market:
+  id: stockholm
+  country: SE
+  city: Stockholm
+  language: sv-SE
+  timezone: Europe/Stockholm
+  currency: SEK
+  coordinates: [59.3293, 18.0686]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

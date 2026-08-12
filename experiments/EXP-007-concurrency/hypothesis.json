@@ -1,0 +1,42 @@
+{
+  "id": "EXP-007-concurrency",
+  "hypothesis": "N journeys can run at the same time and each one still measures what it measured alone: no instrumentation errors, the same verdict as a solo run, an egress identity that holds for the whole run, and a per-session cost that stays sub-linear.",
+  "declaredBeforeRun": true,
+  "metrics": [
+    {
+      "key": "concurrent-completion",
+      "description": "Concurrent sessions that completed without an instrumentation error",
+      "target": 95,
+      "unit": "percent",
+      "direction": "min"
+    },
+    {
+      "key": "verdict-agreement",
+      "description": "Concurrent sessions whose verdict matched the same journey run solo",
+      "target": 95,
+      "unit": "percent",
+      "direction": "min"
+    },
+    {
+      "key": "egress-identity-held",
+      "description": "Concurrent sessions whose egress identity was verified to hold for the whole run",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min"
+    },
+    {
+      "key": "wall-clock-factor",
+      "description": "Mean wall clock per concurrent session, as a multiple of the same journey run solo",
+      "target": 2,
+      "unit": "count",
+      "direction": "max"
+    },
+    {
+      "key": "peak-memory-per-session",
+      "description": "Peak resident MB across the browser process tree, per concurrent session",
+      "target": 500,
+      "unit": "count",
+      "direction": "max"
+    }
+  ]
+}

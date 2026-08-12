@@ -4,11 +4,13 @@ import type { BrowserObservation, GeoProfile, NetworkObservation } from "../type
 import {
   compareCity,
   compareCountry,
+  compareEgressHeld,
   compareLanguage,
   compareTimezone,
   geoConfidence,
   verificationReasons,
   verifyGeo,
+  withEgressHeld,
 } from "../verify.js";
 
 const OSLO_PROFILE: GeoProfile = {
@@ -222,7 +224,50 @@ describe("verifyGeo", () => {
 describe("verificationReasons", () => {
   it("collects every axis's reason for the run summary", () => {
     const reasons = verificationReasons(verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, NORWEGIAN_BROWSER));
-    expect(reasons).toHaveLength(5);
+    expect(reasons).toHaveLength(6);
     expect(reasons.join(" ")).toContain("Lysaker");
+    // The stability axis is present from the start, and says it is not yet known.
+    expect(reasons.join(" ")).toContain("only known once the journey has finished");
+  });
+});
+
+describe("compareEgressHeld", () => {
+  it("confirms one identity held across the run", () => {
+    const axis = compareEgressHeld("213.52.15.251", "213.52.15.251");
+    expect(axis.verdict).toBe("match");
+    expect(axis.reasons[0]).toContain("held 213.52.15.251");
+  });
+
+  it("proves a mid-run rotation and names both exits", () => {
+    const axis = compareEgressHeld("213.52.15.251", "45.13.98.7");
+    expect(axis.verdict).toBe("mismatch");
+    expect(axis.reasons[0]).toContain("213.52.15.251");
+    expect(axis.reasons[0]).toContain("45.13.98.7");
+  });
+
+  it("is unverified — not a pass — when either end was never read", () => {
+    expect(compareEgressHeld(null, "1.1.1.1").verdict).toBe("unverified");
+    expect(compareEgressHeld("1.1.1.1", null).verdict).toBe("unverified");
+  });
+});
+
+describe("withEgressHeld", () => {
+  it("records the axis and keeps a fully verified run trustworthy", () => {
+    const before = verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, NORWEGIAN_BROWSER);
+    const after = withEgressHeld({ ...before, trustworthy: true }, compareEgressHeld("1.1.1.1", "1.1.1.1"));
+    expect(after.network.egressHeld.verdict).toBe("match");
+    expect(after.trustworthy).toBe(true);
+  });
+
+  it("takes trustworthiness away from a run whose egress rotated", () => {
+    const before = verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, NORWEGIAN_BROWSER);
+    const after = withEgressHeld({ ...before, trustworthy: true }, compareEgressHeld("1.1.1.1", "2.2.2.2"));
+    expect(after.trustworthy).toBe(false);
+  });
+
+  it("cannot hand back trust the run never had", () => {
+    const before = verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, NORWEGIAN_BROWSER);
+    const after = withEgressHeld({ ...before, trustworthy: false }, compareEgressHeld("1.1.1.1", "1.1.1.1"));
+    expect(after.trustworthy).toBe(false);
   });
 });

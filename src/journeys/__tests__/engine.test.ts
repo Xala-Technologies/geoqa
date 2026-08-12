@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserResult, BrowserRuntime } from "../../browser/types.js";
-import { gatherReading, runJourney, verdictFor, type StepResult } from "../engine.js";
-import type { Check, Journey, Step } from "../spec.js";
+import { findingsFromSteps } from "../../findings/classify.js";
+import {
+  countOutcomes,
+  gatherReading,
+  mergeAttempts,
+  runJourney,
+  verdictFor,
+  withExtraStep,
+  type JourneyResult,
+  type StepResult,
+} from "../engine.js";
+import type { Check, Journey, Step, StepAction } from "../spec.js";
 
 const meta = { stdout: "", stderr: "", durationMs: 1, command: "c" };
 const ok = <T,>(data: T): BrowserResult<T> => ({ ok: true, data, ...meta });
@@ -32,6 +42,10 @@ function runtime(over: Partial<BrowserRuntime> = {}): BrowserRuntime {
     snapshot: () => Promise.resolve(ok("- heading")),
     screenshot: () => Promise.resolve(ok(null)),
     click: () => Promise.resolve(ok(null)),
+    fill: () => Promise.resolve(ok(null)),
+    press: () => Promise.resolve(ok(null)),
+    select: () => Promise.resolve(ok(null)),
+    check: () => Promise.resolve(ok(null)),
     scroll: () => Promise.resolve(ok(null)),
     waitFor: () => Promise.resolve(ok(null)),
     evaluate: <T,>() => Promise.resolve(ok(null as T)),
@@ -44,8 +58,16 @@ function runtime(over: Partial<BrowserRuntime> = {}): BrowserRuntime {
   } as BrowserRuntime;
 }
 
-const journey = (steps: Step[]): Journey => ({ id: "j", title: "J", description: "", steps });
-const assertStep = (spec: Check, severity: Step extends { severity: infer S } ? S : never = "high" as never): Step => ({
+/** Every step defaults to probability 1, so existing tests stay deterministic. */
+const journey = (steps: StepAction[], over: Partial<Journey> = {}): Journey => ({
+  id: "j",
+  title: "J",
+  description: "",
+  writes: false,
+  steps: steps.map((s) => ({ ...s, probability: 1 })),
+  ...over,
+});
+const assertStep = (spec: Check, severity: "critical" | "high" | "medium" | "low" | "info" = "high"): StepAction => ({
   action: "assert",
   severity,
   spec,
@@ -328,5 +350,440 @@ describe("verdictFor", () => {
 
   it("ignores skipped steps", () => {
     expect(verdictFor([step("passed"), step("skipped")])).toBe("PASS");
+  });
+});
+
+const step = (outcome: StepResult["outcome"], severity = "high"): StepResult => ({
+  index: 0, action: "assert", label: "l", outcome, severity,
+  category: null, check: null,
+  detail: "", expected: null, observed: null, durationMs: 0,
+});
+
+describe("countOutcomes", () => {
+  it("counts each outcome separately", () => {
+    const counts = countOutcomes([
+      step("passed"),
+      step("passed"),
+      step("failed", "high"),
+      step("errored"),
+      step("skipped"),
+    ]);
+    expect(counts).toEqual({ passed: 2, failed: 1, errored: 1, skipped: 1 });
+  });
+});
+
+describe("withExtraStep", () => {
+  const base = {
+    journeyId: "j",
+    verdict: "PASS" as const,
+    steps: [step("passed"), step("passed")],
+    counts: { passed: 2, failed: 0, errored: 0, skipped: 0 },
+    screenshots: ["hero"],
+    durationMs: 10,
+    writes: false,
+    seed: 7,
+    touchedForm: false,
+  };
+
+  it("appends a whole-run check and re-derives the verdict from it", () => {
+    // The point of recomputing rather than patching: a check whose answer only
+    // exists after the last step gets the same consequences as any other, with
+    // no second verdict system growing beside verdictFor.
+    const out = withExtraStep(base, step("errored"));
+    expect(out.steps).toHaveLength(3);
+    expect(out.counts).toEqual({ passed: 2, failed: 0, errored: 1, skipped: 0 });
+    expect(out.verdict).toBe("ERROR");
+  });
+
+  it("leaves a passing run passing, and keeps everything else intact", () => {
+    const out = withExtraStep(base, step("passed"));
+    expect(out.verdict).toBe("PASS");
+    expect(out.counts.passed).toBe(3);
+    expect(out.screenshots).toEqual(["hero"]);
+    expect(out.journeyId).toBe("j");
+    expect(out.durationMs).toBe(10);
+  });
+
+  it("does not mutate the result it was given", () => {
+    withExtraStep(base, step("errored"));
+    expect(base.steps).toHaveLength(2);
+    expect(base.verdict).toBe("PASS");
+  });
+});
+
+describe("input steps", () => {
+  it("drives fill, press, select and check through the runtime", async () => {
+    const calls: string[] = [];
+    const r = runtime({
+      fill: (sel, value) => {
+        calls.push(`fill:${sel}:${value}`);
+        return Promise.resolve(ok(null));
+      },
+      press: (key) => {
+        calls.push(`press:${key}`);
+        return Promise.resolve(ok(null));
+      },
+      select: (sel, values) => {
+        calls.push(`select:${sel}:${values.join("|")}`);
+        return Promise.resolve(ok(null));
+      },
+      check: (sel) => {
+        calls.push(`check:${sel}`);
+        return Promise.resolve(ok(null));
+      },
+    });
+    const result = await runJourney(
+      r,
+      journey([
+        { action: "fill", selector: "#email", value: "qa@example.test" },
+        { action: "press", key: "Enter" },
+        { action: "select", selector: "#topic", values: ["support"] },
+        { action: "check", selector: "#consent" },
+      ]),
+      opts,
+    );
+    expect(result.verdict).toBe("PASS");
+    expect(calls).toEqual([
+      "fill:#email:qa@example.test",
+      "press:Enter",
+      "select:#topic:support",
+      "check:#consent",
+    ]);
+  });
+
+  it("NEVER records what was typed — the rule that makes login journeys safe", async () => {
+    const result = await runJourney(
+      runtime(),
+      journey([{ action: "fill", selector: "#password", value: "hunter2-the-real-one" }]),
+      opts,
+    );
+    const serialised = JSON.stringify(result);
+    expect(serialised).not.toContain("hunter2-the-real-one");
+    expect(result.steps[0]?.detail).toBe("fill #password ok (value not recorded)");
+  });
+
+  it("does not record selected option values either", async () => {
+    const result = await runJourney(
+      runtime(),
+      journey([{ action: "select", selector: "#plan", values: ["secret-tier"] }]),
+      opts,
+    );
+    expect(JSON.stringify(result)).not.toContain("secret-tier");
+    expect(result.steps[0]?.detail).toContain("1 value(s), not recorded");
+  });
+
+  it("reports which controls a run touched, so screenshots can be flagged", async () => {
+    const touched = await runJourney(runtime(), journey([{ action: "fill", selector: "#a", value: "x" }]), opts);
+    expect(touched.touchedForm).toBe(true);
+    const readOnly = await runJourney(runtime(), journey([{ action: "reload" }]), opts);
+    expect(readOnly.touchedForm).toBe(false);
+  });
+
+  it("treats a failed fill as fatal — the rest of a form would measure nothing", async () => {
+    const result = await runJourney(
+      runtime({ fill: () => Promise.resolve(bad()) }),
+      journey([
+        { action: "fill", selector: "#email", value: "x" },
+        { action: "click", selector: "#send" },
+      ]),
+      opts,
+    );
+    expect(result.verdict).toBe("ERROR");
+    expect(result.steps[0]?.outcome).toBe("errored");
+    expect(result.steps[1]?.outcome).toBe("skipped");
+  });
+
+  it("carries the journey's writes declaration onto the result", async () => {
+    const result = await runJourney(runtime(), journey([{ action: "reload" }], { writes: true }), opts);
+    expect(result.writes).toBe(true);
+  });
+});
+
+describe("human pacing", () => {
+  it("pauses for a seeded length inside the declared range", async () => {
+    const waits: string[] = [];
+    const r = runtime({
+      waitFor: (t) => {
+        waits.push(t);
+        return Promise.resolve(ok(null));
+      },
+    });
+    await runJourney(r, journey([{ action: "pause", minMs: 1_200, maxMs: 3_500 }]), { ...opts, seed: 42 });
+    expect(waits).toHaveLength(1);
+    const ms = Number(waits[0]);
+    expect(ms).toBeGreaterThanOrEqual(1_200);
+    expect(ms).toBeLessThanOrEqual(3_500);
+  });
+
+  it("is REPRODUCIBLE for a given seed, and different without one", async () => {
+    const pauses = async (seed?: number): Promise<string[]> => {
+      const waits: string[] = [];
+      const r = runtime({
+        waitFor: (t) => {
+          waits.push(t);
+          return Promise.resolve(ok(null));
+        },
+      });
+      await runJourney(
+        r,
+        journey([
+          { action: "pause", minMs: 500, maxMs: 5_000 },
+          { action: "pause", minMs: 500, maxMs: 5_000 },
+        ]),
+        seed === undefined ? opts : { ...opts, seed },
+      );
+      return waits;
+    };
+    expect(await pauses(7)).toEqual(await pauses(7));
+    expect(await pauses(7)).not.toEqual(await pauses(8));
+  });
+
+  it("records the seed it used, so a run can be replayed from its evidence", async () => {
+    const result = await runJourney(runtime(), journey([{ action: "reload" }]), { ...opts, seed: 4242 });
+    expect(result.seed).toBe(4242);
+  });
+
+  it("derives a seed from the journey id when none is given", async () => {
+    const result = await runJourney(runtime(), journey([{ action: "reload" }]), opts);
+    expect(typeof result.seed).toBe("number");
+    expect(result.seed).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("optional steps", () => {
+  /** A journey whose steps carry explicit probabilities. */
+  const chancy = (steps: Step[]): Journey => ({
+    id: "j",
+    title: "J",
+    description: "",
+    writes: false,
+    steps,
+  });
+
+  it("SKIPS a step that did not happen rather than dropping it", async () => {
+    // Dropping it would make "we never looked at the gallery" and "the gallery
+    // was fine" the same row, and would shift every later step's index.
+    const result = await runJourney(
+      runtime(),
+      chancy([
+        { action: "reload", probability: 1 },
+        { action: "screenshot", label: "gallery", fullPage: false, probability: 0 },
+        { action: "reload", probability: 1 },
+      ]),
+      opts,
+    );
+    expect(result.steps).toHaveLength(3);
+    expect(result.steps[1]).toMatchObject({ outcome: "skipped", index: 1 });
+    expect(result.steps[1]?.detail).toContain("probability 0");
+    // A skipped screenshot never claims to have produced a file.
+    expect(result.screenshots).toEqual([]);
+    expect(result.verdict).toBe("PASS");
+  });
+
+  it("does not let a skipped optional assert fail the run", async () => {
+    const result = await runJourney(
+      runtime(),
+      chancy([{ action: "assert", severity: "critical", probability: 0, spec: { check: "title-exists" } }]),
+      opts,
+    );
+    expect(result.verdict).toBe("PASS");
+    expect(result.counts.skipped).toBe(1);
+    expect(result.steps[0]?.check).toBe("title-exists");
+  });
+
+  it("picks the same optional steps for the same seed", async () => {
+    const taken = async (seed: number): Promise<string[]> => {
+      const result = await runJourney(
+        runtime(),
+        chancy(Array.from({ length: 12 }, () => ({ action: "reload" as const, probability: 0.5 }))),
+        { ...opts, seed },
+      );
+      return result.steps.map((s) => s.outcome);
+    };
+    expect(await taken(21)).toEqual(await taken(21));
+    // …and a mixture, rather than all-or-nothing.
+    const outcomes = await taken(21);
+    expect(outcomes).toContain("passed");
+    expect(outcomes).toContain("skipped");
+  });
+});
+
+describe("mergeAttempts", () => {
+  const attemptStep = (
+    index: number,
+    label: string,
+    outcome: StepResult["outcome"],
+    over: Partial<StepResult> = {},
+  ): StepResult => ({
+    index,
+    action: "assert",
+    label,
+    outcome,
+    severity: "high",
+    category: null,
+    check: "selector-visible",
+    detail: `${label}: ${outcome}`,
+    expected: "visible",
+    observed: outcome === "passed" ? "visible" : "absent",
+    durationMs: 5,
+    ...over,
+  });
+
+  /** One attempt, with counts and verdict derived exactly as a real run's are. */
+  const attempt = (steps: StepResult[], over: Partial<JourneyResult> = {}): JourneyResult => ({
+    journeyId: "j",
+    verdict: verdictFor(steps),
+    steps,
+    counts: countOutcomes(steps),
+    screenshots: [],
+    durationMs: 10,
+    writes: false,
+    seed: 7,
+    touchedForm: false,
+    ...over,
+  });
+
+  const ctx = {
+    runId: "run_1",
+    target: "https://digilist.no",
+    profileId: "oslo-mobile",
+    journeyId: "j",
+    market: "no-oslo",
+    device: "mobile",
+    detectedAt: "2026-01-01T00:00:00.000Z",
+    evidence: [],
+  };
+
+  it("reports each step at the WORST outcome any attempt saw, never the last one", () => {
+    // The property the whole feature exists for. Merging on the last attempt
+    // would leave this step `passed`, produce NO finding, and silently discard
+    // the intermittent site defect the three runs were paid for to find.
+    const merged = mergeAttempts([
+      attempt([attemptStep(0, "has a primary heading", "failed", { detail: "the h1 was missing", observed: "absent" })]),
+      attempt([attemptStep(0, "has a primary heading", "passed")]),
+      attempt([attemptStep(0, "has a primary heading", "passed")]),
+    ]);
+    expect(merged.result.steps[0]?.outcome).toBe("failed");
+    expect(merged.result.verdict).toBe("FAIL");
+    // …and it quotes the attempt that actually saw it, not a blend of readings.
+    expect(merged.result.steps[0]?.detail).toBe("the h1 was missing");
+    expect(merged.result.steps[0]?.observed).toBe("absent");
+    expect(merged.result.counts).toEqual({ passed: 0, failed: 1, errored: 0, skipped: 0 });
+  });
+
+  it("ranks errored over failed over passed over skipped, per step index", () => {
+    // `skipped` losing to `passed` matters as much as the rest: "we looked once
+    // and it was fine" is a stronger statement than "we never looked".
+    const merged = mergeAttempts([
+      attempt([
+        attemptStep(0, "a", "passed"),
+        attemptStep(1, "b", "failed"),
+        attemptStep(2, "c", "skipped"),
+        attemptStep(3, "d", "passed"),
+      ]),
+      attempt([
+        attemptStep(0, "a", "errored"),
+        attemptStep(1, "b", "passed"),
+        attemptStep(2, "c", "passed"),
+        attemptStep(3, "d", "skipped"),
+      ]),
+    ]);
+    expect(merged.result.steps.map((s) => s.outcome)).toEqual(["errored", "failed", "passed", "passed"]);
+    expect(merged.result.verdict).toBe("ERROR");
+  });
+
+  it("counts occurrences as the number of attempts a step failed or errored in", () => {
+    const merged = mergeAttempts([
+      attempt([attemptStep(0, "always", "failed"), attemptStep(1, "sometimes", "errored")]),
+      attempt([attemptStep(0, "always", "failed"), attemptStep(1, "sometimes", "passed")]),
+      attempt([attemptStep(0, "always", "failed"), attemptStep(1, "sometimes", "passed")]),
+    ]);
+    expect(merged.occurrences).toEqual({ always: 3, sometimes: 1 });
+  });
+
+  it("does not count a skipped step as an occurrence — it was never executed", () => {
+    const merged = mergeAttempts([
+      attempt([attemptStep(0, "optional", "skipped")]),
+      attempt([attemptStep(0, "optional", "passed")]),
+    ]);
+    expect(merged.occurrences).toEqual({});
+  });
+
+  it("NEVER lets one attempt push a shared label past the attempt count", () => {
+    // Two steps can carry the same label, and findings look occurrences up BY
+    // label. Counting failing steps rather than attempts would report 2 of 1,
+    // and `occurrences === attempts` — status `reproduced` — would then be
+    // unreachable for exactly the checks that repeat.
+    const merged = mergeAttempts([
+      attempt([attemptStep(0, "title-exists", "failed"), attemptStep(1, "title-exists", "failed")]),
+    ]);
+    expect(merged.occurrences).toEqual({ "title-exists": 1 });
+  });
+
+  it("returns a single attempt unchanged, with its occurrences counted over one attempt", () => {
+    const only = attempt([attemptStep(0, "a", "passed"), attemptStep(1, "b", "failed")], {
+      screenshots: ["hero"],
+      durationMs: 42,
+      seed: 99,
+    });
+    const merged = mergeAttempts([only]);
+    expect(merged.result).toEqual(only);
+    expect(merged.occurrences).toEqual({ b: 1 });
+  });
+
+  it("sums the wall clock, keeps the LAST attempt's screenshots, and unions what was touched", () => {
+    const merged = mergeAttempts([
+      attempt([attemptStep(0, "a", "passed")], { durationMs: 100, screenshots: ["hero-1"], touchedForm: true }),
+      attempt([attemptStep(0, "a", "passed")], { durationMs: 250, screenshots: ["hero-2"], writes: true }),
+    ]);
+    // Every attempt wrote its frames to the same path, so only the last survives.
+    expect(merged.result.screenshots).toEqual(["hero-2"]);
+    expect(merged.result.durationMs).toBe(350);
+    expect(merged.result.touchedForm).toBe(true);
+    expect(merged.result.writes).toBe(true);
+  });
+
+  it("keeps the BASE seed, so one value replays the whole set rather than one attempt", () => {
+    const merged = mergeAttempts([
+      attempt([attemptStep(0, "a", "passed")], { seed: 7 }),
+      attempt([attemptStep(0, "a", "passed")], { seed: 8 }),
+      attempt([attemptStep(0, "a", "passed")], { seed: 9 }),
+    ]);
+    expect(merged.result.seed).toBe(7);
+    expect(merged.result.journeyId).toBe("j");
+  });
+
+  it("surfaces an intermittent failure as a finding whose reproducibility is 1 of 3", () => {
+    const merged = mergeAttempts([
+      attempt([attemptStep(0, "has a primary heading", "failed")]),
+      attempt([attemptStep(0, "has a primary heading", "passed")]),
+      attempt([attemptStep(0, "has a primary heading", "passed")]),
+    ]);
+    const findings = findingsFromSteps(merged.result.steps, {
+      ...ctx,
+      attempts: 3,
+      occurrences: merged.occurrences,
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.reproducibility).toEqual({ attempts: 3, occurrences: 1 });
+    // Filed, but not asserted as certain: 92 is what a single sighting scores,
+    // and seeing it once in three tries is a weaker claim than that.
+    expect(findings[0]?.status).toBe("observed");
+    expect(findings[0]?.confidence).toBeLessThan(92);
+  });
+
+  it("reaches status REPRODUCED when every attempt saw the same failure", () => {
+    const merged = mergeAttempts([
+      attempt([attemptStep(0, "has a primary heading", "failed")]),
+      attempt([attemptStep(0, "has a primary heading", "failed")]),
+      attempt([attemptStep(0, "has a primary heading", "failed")]),
+    ]);
+    const findings = findingsFromSteps(merged.result.steps, {
+      ...ctx,
+      attempts: 3,
+      occurrences: merged.occurrences,
+    });
+    expect(findings[0]?.status).toBe("reproduced");
+    expect(findings[0]?.confidence).toBeGreaterThan(92);
   });
 });

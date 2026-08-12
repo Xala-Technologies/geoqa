@@ -1,0 +1,16 @@
+# Telemark industrial belt. Exact match, and the only Telemark exchange in the pool.
+id: porsgrunn-desktop
+label: Porsgrunn, desktop
+market:
+  id: porsgrunn
+  country: NO
+  city: Porsgrunn
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.1408, 9.6561]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

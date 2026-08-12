@@ -19,13 +19,18 @@
 import net from "node:net";
 import type { Market } from "../geo/types.js";
 import { coolingDown, loadCooldowns, recordCooldown } from "./cooldown.js";
-import type { GeoNetworkProvider, GeoNetworkSession, ProviderHealth, SessionResult } from "./types.js";
+import { authProbe } from "./auth-probe.js";
+import type { AuthProbe, GeoNetworkProvider, GeoNetworkSession, ProviderHealth, ProxyAuthResult, SessionResult } from "./types.js";
+export type { AuthProbe, ProxyAuthResult };
+export { authProbe };
 
 export const DEFAULT_COOLDOWN_MS = 60 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 
 /** Injectable TCP reachability probe, so tests never open a socket. */
 export type TcpProbe = (host: string, port: number, timeoutMs: number) => Promise<boolean>;
+
+
 
 /**
  * Does something accept a TCP connection at host:port?
@@ -94,27 +99,99 @@ export function redactProxyUrl(url: string | null): string | null {
 const PROXY_SCHEMES = new Set(["http:", "https:", "socks:", "socks4:", "socks5:", "socks5h:"]);
 
 /**
- * Resolve a market's proxy URL from the environment, most specific first:
- *   1. `GEOQA_PROXY_<MARKET_ID>`   e.g. GEOQA_PROXY_OSLO
- *   2. `GEOQA_PROXY_<COUNTRY>`     e.g. GEOQA_PROXY_NO
- *   3. `GEOQA_PROXY_TEMPLATE`      with {market}, {country}, {countryLower},
- *                                  {city}, {cityLower} substituted — the shape
- *                                  most residential vendors use, where the
- *                                  target country is encoded in the username.
+ * Substitute the market and session placeholders into a proxy URL.
+ *
+ * `{session}` exists because residential vendors have no API for stickiness —
+ * they encode the sticky session in the proxy USERNAME, e.g.
+ * `http://user-cc-de-sessid-abc123-sesstime-15:pw@gw.vendor.net:7777`. Without a
+ * placeholder for it, every connection the browser opens can be handed a
+ * different exit IP, which breaks invariant 16 (ONE JOURNEY = ONE NETWORK
+ * SESSION) and makes EXP-002 meaningless: the experiment would be measuring the
+ * vendor's rotation policy rather than our ability to hold a session.
+ *
+ * An unknown placeholder is left verbatim rather than blanked. A vendor's own
+ * syntax may legitimately contain braces, and silently emptying part of a
+ * username produces a URL that authenticates as somebody else instead of
+ * failing. Anything we do mangle is caught downstream, because `createSession`
+ * validates the SUBSTITUTED url — so a session id that cannot live inside a URL
+ * refuses the run rather than quietly egressing from the wrong place.
  */
-export function resolveProxyUrl(market: Market, env: NodeJS.ProcessEnv): string | null {
-  const byMarket = env[`GEOQA_PROXY_${market.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`];
-  if (byMarket) return byMarket;
-  const byCountry = env[`GEOQA_PROXY_${market.country.toUpperCase()}`];
-  if (byCountry) return byCountry;
-  const template = env.GEOQA_PROXY_TEMPLATE;
-  if (!template) return null;
-  return template
+function substituteProxyPlaceholders(url: string, market: Market, sessionId: string): string {
+  return url
     .replaceAll("{market}", market.id)
     .replaceAll("{country}", market.country.toUpperCase())
     .replaceAll("{countryLower}", market.country.toLowerCase())
     .replaceAll("{city}", market.city)
-    .replaceAll("{cityLower}", market.city.toLowerCase());
+    .replaceAll("{cityLower}", market.city.toLowerCase())
+    .replaceAll("{session}", sessionId);
+}
+
+/**
+ * Resolve a market's proxy URL from the environment, most specific first:
+ *   1. `GEOQA_PROXY_<MARKET_ID>`   e.g. GEOQA_PROXY_OSLO
+ *   2. `GEOQA_PROXY_<COUNTRY>`     e.g. GEOQA_PROXY_NO
+ *   3. `GEOQA_PROXY_TEMPLATE`      the shape most residential vendors use, where
+ *                                  the target country is encoded in the username.
+ *
+ * Substitution then applies UNIFORMLY to whichever source won. It used to run on
+ * the template only, which quietly made `{session}` — and geo targeting — a
+ * privilege of the least specific variable: pinning one market to its own vendor
+ * URL was exactly the case where you most wanted a sticky session key, and that
+ * URL was the one form returned verbatim.
+ */
+/**
+ * Every exit configured for a market, in declaration order.
+ *
+ * A market may name SEVERAL exits, comma-separated, and one is picked per
+ * session:
+ *
+ *   GEOQA_PROXY_DE="http://u:p@gw:8881,http://u:p@gw:8882,http://u:p@gw:8883"
+ *
+ * Why a pool at all, given that one journey must hold ONE identity: rotation
+ * belongs BETWEEN runs, never inside one. A single fixed exit makes every result
+ * for that market inherit whatever is peculiar about that one address — an odd
+ * CDN edge, a badly classified range, a rate limit it has personally earned —
+ * and nothing in the data reveals that the market's verdict is really one IP's
+ * verdict. Rotating between runs samples the market instead of sampling one
+ * address, while `verifyEgressHeld` still holds each individual run to one exit.
+ *
+ * Blank entries are dropped rather than treated as "direct": a trailing comma in
+ * an env var must not silently produce an unrouted run wearing a proxy's name.
+ */
+export function resolveProxyPool(market: Market, env: NodeJS.ProcessEnv, sessionId: string): string[] {
+  const byMarket = env[`GEOQA_PROXY_${market.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`];
+  const byCountry = env[`GEOQA_PROXY_${market.country.toUpperCase()}`];
+  const configured = byMarket || byCountry || env.GEOQA_PROXY_TEMPLATE;
+  if (!configured) return [];
+  return configured
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => substituteProxyPlaceholders(entry, market, sessionId));
+}
+
+/**
+ * Which exit this session gets, chosen from the pool by hashing the session id.
+ *
+ * Hashed rather than random, and rather than a counter, for the same reason the
+ * journey's pacing is seeded: a run has to be replayable. Given the same session
+ * id the same exit is chosen, so re-running a finding reaches the same address —
+ * and a counter would make the choice depend on how many sessions this process
+ * happened to open first, which is not a property of the run.
+ */
+export function selectFromPool(pool: string[], sessionId: string): string | null {
+  if (pool.length === 0) return null;
+  if (pool.length === 1) return pool[0] ?? null;
+  let hash = 2_166_136_261;
+  for (let index = 0; index < sessionId.length; index++) {
+    hash ^= sessionId.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return pool[(hash >>> 0) % pool.length] ?? null;
+}
+
+export function resolveProxyUrl(market: Market, env: NodeJS.ProcessEnv, sessionId: string): string | null {
+  return selectFromPool(resolveProxyPool(market, env, sessionId), sessionId);
 }
 
 export interface ProviderOptions {
@@ -123,6 +200,12 @@ export interface ProviderOptions {
   cooldownPath?: string;
   cooldownMs?: number;
   probe?: TcpProbe;
+  /**
+   * Attempts a real CONNECT and reports the vendor's refusal. Omitted means
+   * reachability only — a caller that has not opted in keeps the old behaviour
+   * rather than silently gaining a network call.
+   */
+  auth?: AuthProbe;
   probeTimeoutMs?: number;
   /** Hosts the proxy should not be used for (a local fixture server). */
   proxyBypass?: string;
@@ -163,6 +246,7 @@ export function directProvider(options: ProviderOptions = {}): GeoNetworkProvide
 export function httpProxyProvider(options: ProviderOptions = {}): GeoNetworkProvider {
   const env = options.env ?? process.env;
   const probe = options.probe ?? tcpProbe;
+  const tryAuth = options.auth ?? ((): Promise<null> => Promise.resolve(null));
   const probeTimeout = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   const newId = options.newSessionId ?? defaultSessionId;
   const name = "http-proxy";
@@ -173,12 +257,26 @@ export function httpProxyProvider(options: ProviderOptions = {}): GeoNetworkProv
     return coolingDown(cools, name, nowMs) ? (cools[name] ?? null) : null;
   };
 
-  /** Any configured market URL — health is about the vendor, not one market. */
+  /**
+   * Any configured exit — health is about the vendor, not one market.
+   *
+   * The FIRST member of a pool, not the raw env value. A market may list several
+   * comma-separated exits, and probing the whole string treats
+   * `http://a:1,http://b:2` as one hostname, which `parseProxyEndpoint` rightly
+   * refuses — so a perfectly good pool reported the vendor as "not configured"
+   * and refused to run. Found by pointing the provider at two local proxies.
+   *
+   * One member is the right granularity: `health()` answers "is the vendor
+   * reachable at all", and per-exit health belongs to the run that used it, which
+   * is what `noteProviderOutcome` records after verifying egress.
+   */
   const anyConfiguredUrl = (): string | null => {
+    const firstOf = (value: string): string | null =>
+      value.split(",").map((entry) => entry.trim()).find((entry) => entry.length > 0) ?? null;
     for (const [key, value] of Object.entries(env)) {
-      if (key.startsWith("GEOQA_PROXY_") && key !== "GEOQA_PROXY_TEMPLATE" && value) return value;
+      if (key.startsWith("GEOQA_PROXY_") && key !== "GEOQA_PROXY_TEMPLATE" && value) return firstOf(value);
     }
-    return env.GEOQA_PROXY_TEMPLATE ?? null;
+    return env.GEOQA_PROXY_TEMPLATE ? firstOf(env.GEOQA_PROXY_TEMPLATE) : null;
   };
 
   return {
@@ -200,24 +298,60 @@ export function httpProxyProvider(options: ProviderOptions = {}): GeoNetworkProv
           cooldownUntil: until,
         };
       }
-      // A template has placeholders, not a real host, so it cannot be probed
-      // as-is. Say so rather than reporting a reachability we did not test.
-      const endpoint = configured.includes("{") ? null : parseProxyEndpoint(configured);
+      /**
+       * Probe the gateway, substituting placeholders first.
+       *
+       * This used to refuse any URL containing a placeholder and report
+       * `unconfigured`, on the reasoning that a template has no real host. That
+       * was wrong in the way that matters: a residential vendor's placeholders
+       * live in the USERNAME (`user-x-country-{countryLower}-session-{session}`)
+       * while the host and port are literal (`gate.decodo.com:7000`), so the one
+       * thing a reachability probe cares about was always there. And because
+       * `prepareRun` treats `unconfigured` as a hard refusal for any non-direct
+       * provider, a template — the normal way to configure a vendor — could never
+       * start a run at all.
+       *
+       * The placeholders are replaced with an inert token purely so the string
+       * parses; nothing authenticates here. Credit and credentials are still not
+       * proven by a TCP connect, which is what `noteProviderOutcome` is for.
+       */
+      const probeable = configured.replace(/\{[A-Za-z]+\}/g, "probe");
+      const endpoint = parseProxyEndpoint(probeable);
       if (!endpoint) {
         return {
           state: "unconfigured",
-          detail: "proxy is a template or not a parseable URL — not probed",
+          detail: `proxy is not a parseable URL: ${redactProxyUrl(probeable)}`,
           cooldownUntil: null,
         };
       }
       const reachable = await probe(endpoint.host, endpoint.port, probeTimeout);
-      return reachable
-        ? { state: "usable", detail: `${endpoint.host}:${endpoint.port} accepted a connection`, cooldownUntil: null }
-        : { state: "unusable", detail: `${endpoint.host}:${endpoint.port} refused a connection`, cooldownUntil: null };
+      if (!reachable) {
+        return { state: "unusable", detail: `${endpoint.host}:${endpoint.port} refused a connection`, cooldownUntil: null };
+      }
+      // Reachable is not usable. A gateway that is listening but rejecting our
+      // credentials, or out of traffic, would otherwise report `usable` and let a
+      // run start that cannot possibly egress.
+      const auth = await tryAuth(probeable, probeTimeout);
+      if (auth === null || auth.ok) {
+        return { state: "usable", detail: `${endpoint.host}:${endpoint.port} accepted a connection`, cooldownUntil: null };
+      }
+      return {
+        state: "unusable",
+        detail: `${endpoint.host}:${endpoint.port} refused authentication${auth.status ? ` (${auth.status})` : ""}${
+          auth.detail ? `: ${auth.detail}` : ""
+        }`,
+        cooldownUntil: null,
+      };
     },
 
     createSession(market, nowMs): Promise<SessionResult> {
-      const url = resolveProxyUrl(market, env);
+      // Mint the id BEFORE resolving the URL, because the URL may embed it via
+      // {session}. Doing it the other way round would put one session key in the
+      // proxy username and a different one on the session we report — the run
+      // would claim a stickiness it never asked the vendor for, and the closing
+      // egress re-read (invariant 16) would be diagnosing the wrong thing.
+      const id = newId(market, nowMs);
+      const url = resolveProxyUrl(market, env, id);
       if (!url) {
         return Promise.resolve({ ok: false, reason: `no proxy configured for market "${market.id}"` });
       }
@@ -230,7 +364,7 @@ export function httpProxyProvider(options: ProviderOptions = {}): GeoNetworkProv
       return Promise.resolve({
         ok: true,
         session: {
-          id: newId(market, nowMs),
+          id,
           marketId: market.id,
           providerName: name,
           proxyUrl: url,

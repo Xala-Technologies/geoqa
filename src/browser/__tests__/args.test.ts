@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commandArgs, screenshotCommand, scrollCommand, sessionArgs, snapshotCommand } from "../args.js";
+import { commandArgs, fillCommand, fillCommandLabel, screenshotCommand, scrollCommand, selectCommand, sessionArgs, snapshotCommand } from "../args.js";
 
 describe("sessionArgs", () => {
   it("emits only --session when nothing else is configured", () => {
@@ -77,5 +77,26 @@ describe("scrollCommand", () => {
 
   it("passes 0 rather than dropping it", () => {
     expect(scrollCommand("down", 0)).toEqual(["scroll", "down", "0"]);
+  });
+});
+
+describe("input commands", () => {
+  it("uses fill, which clears the field first", () => {
+    // `type` appends, so a journey run twice against a browser that autofilled
+    // would submit the value doubled.
+    expect(fillCommand("#email", "qa@example.test")).toEqual(["fill", "#email", "qa@example.test"]);
+  });
+
+  it("names a filled field WITHOUT its value, for anything a human reads", () => {
+    // The value reaches argv, and argv is kept in ExecMeta.command so a failing
+    // call is reproducible — which for this one command would put a password in
+    // the evidence package.
+    expect(fillCommandLabel("#password")).toBe("fill #password <redacted>");
+    expect(fillCommandLabel("#password")).not.toContain("hunter2");
+  });
+
+  it("passes every selected option through as its own argument", () => {
+    expect(selectCommand("#topic", ["support"])).toEqual(["select", "#topic", "support"]);
+    expect(selectCommand("#tags", ["a", "b"])).toEqual(["select", "#tags", "a", "b"]);
   });
 });

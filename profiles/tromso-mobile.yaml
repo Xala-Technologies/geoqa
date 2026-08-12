@@ -1,0 +1,16 @@
+# Northernmost market tested, 1700km from Oslo. The vantage most likely to expose a CDN edge that only serves the south well.
+id: tromso-mobile
+label: Tromso, mobile
+market:
+  id: tromso
+  country: NO
+  city: Tromso
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [69.6492, 18.9553]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+visitorType: anonymous

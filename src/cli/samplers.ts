@@ -10,9 +10,10 @@ import { observeBrowser, observeNetwork, DEFAULT_VERIFY_ENDPOINT } from "../geo/
 import { toSessionConfig } from "../geo/profile.js";
 import { compareCity, compareCountry, compareLanguage, compareTimezone } from "../geo/verify.js";
 import { evaluateMetric, meanOf, rate, type ExperimentSample, type MetricResult, type MetricSpec } from "../experiments/harness.js";
-import { EXP_000, EXP_001, EXP_002, EXP_003, EXP_004, EXP_005, EXP_006 } from "../experiments/definitions.js";
+import { redactProxyUrl, selectProvider } from "../network/provider.js";
+import { EXP_000, EXP_001, EXP_002, EXP_003, EXP_004, EXP_005, EXP_006, EXP_007 } from "../experiments/definitions.js";
 import { DEFECTS, startFixtureServer } from "../fixtures/server.js";
-import { browserVerify, journeyRun, loadProfileOrThrow, type CommandDeps, type ExperimentOptions } from "./commands.js";
+import { browserVerify, journeyRun, loadProfileOrThrow, profileList, type CommandDeps, type ExperimentOptions } from "./commands.js";
 
 const metric = (specs: MetricSpec[], key: string): MetricSpec => {
   const found = specs.find((m) => m.key === key);
@@ -59,11 +60,40 @@ export function summariseBrowserPrimitives(samples: ExperimentSample[]): { metri
 
 // ── EXP-001: geographic egress ───────────────────────────────────────────
 
+/**
+ * Take one egress reading THROUGH THE PROVIDER'S OWN SESSION.
+ *
+ * The provider round-trip is not ceremony, and leaving it out was a real defect:
+ * this sampler used to derive `routed` from whether the `--provider` FLAG said
+ * something other than "direct", while building the browser with no `proxyUrl`
+ * at all. So `--provider http-proxy` launched a direct-egress browser, flipped
+ * the honesty guard off, and let the observed country answer the hypothesis. Run
+ * from a Norwegian office against the Oslo profile that reports
+ * `country-match 100% ✓` — a green tick for a capability that had still never
+ * been exercised, which is the exact lie the whole experiment exists to prevent.
+ *
+ * `routed` is therefore a fact about the SESSION (`proxyUrl !== null`), never
+ * about an argument. A provider that cannot open a session throws, and the
+ * harness records it as a failed sample rather than a quiet direct-egress
+ * reading wearing a proxy's name.
+ */
 export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions, index: number): Promise<Record<string, unknown>> {
   const profile = loadProfileOrThrow(deps, options.profileId);
-  const routed = (options.providerName ?? "direct") !== "direct";
+  const { provider } = selectProvider(options.providerName ?? "direct", {
+    env: deps.env,
+    ...(deps.probe ? { probe: deps.probe } : {}),
+  });
+  const opened = await provider.createSession(profile.market, deps.now());
+  if (!opened.ok) throw new Error(`could not open a network session: ${opened.reason}`);
+  const session = opened.session;
+  const routed = session.proxyUrl !== null;
   const runtime = deps.makeRuntime(
-    toSessionConfig(profile, { sessionId: `exp001-${deps.now()}-${index}`, baseEnv: deps.env }),
+    toSessionConfig(profile, {
+      sessionId: `exp001-${deps.now()}-${index}`,
+      proxyUrl: session.proxyUrl,
+      proxyBypass: session.proxyBypass,
+      baseEnv: deps.env,
+    }),
   );
   try {
     const network = await observeNetwork(runtime, DEFAULT_VERIFY_ENDPOINT);
@@ -71,6 +101,8 @@ export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions
     const city = compareCity(profile.market.city, network.city);
     return {
       routed,
+      provider: provider.name,
+      proxy: redactProxyUrl(session.proxyUrl),
       connected: network.ip !== null,
       ip: network.ip,
       observedCountry: network.country,
@@ -84,6 +116,7 @@ export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions
     };
   } finally {
     await runtime.close();
+    await provider.close(session);
   }
 }
 
@@ -140,12 +173,91 @@ export function summariseEgress(samples: ExperimentSample[]): { metrics: MetricR
 
 // ── EXP-002: session stability ───────────────────────────────────────────
 
-/** How long a sample holds one session open, and how often it re-reads. */
-export const STABILITY_READS = 5;
-export const STABILITY_INTERVAL_MS = 6_000;
+/** The window the external PRD asks about, and the yardstick for the note. */
+export const PRD_STABILITY_WINDOW_MS = 600_000;
 
-export const SHORT_WINDOW_NOTE =
-  `Each sample held ONE session for ${(STABILITY_READS - 1) * (STABILITY_INTERVAL_MS / 1000)}s across ${STABILITY_READS} reads. The PRD asks for a 10-minute window; that is NOT what this measured. A short window can prove instability but cannot prove stability over a long journey.`;
+/**
+ * The default window, and why it is NOT the PRD's ten minutes.
+ *
+ * Ten minutes per sample is 100 minutes for `--samples 10`, and a feasibility
+ * check that takes an hour and a half gets killed halfway — which leaves
+ * results.jsonl half-written and no summary at all, the worst of both outcomes.
+ * So the cheap window stays the default and the note says loudly which window
+ * it measured; the PRD window is a deliberate `--stability-window-ms 600000`
+ * when somebody is willing to pay for it. A long default would not be more
+ * honest, it would just be unrun.
+ */
+export const DEFAULT_STABILITY_WINDOW_MS = 24_000;
+export const DEFAULT_STABILITY_READS = 5;
+
+/**
+ * The EXP-002 knobs, layered onto the shared options.
+ *
+ * Declared here rather than in `ExperimentOptions` so the shared type does not
+ * grow a field per experiment; the sampler states what it reads and any caller
+ * that can supply it satisfies the type.
+ */
+export interface StabilityWindowOptions {
+  /** Total wall clock one sample holds a single session open. */
+  stabilityWindowMs?: number;
+  /** How many egress readings are spread across that window. */
+  stabilityReads?: number;
+}
+
+export type StabilityOptions = ExperimentOptions & StabilityWindowOptions;
+
+export interface StabilityWindow {
+  windowMs: number;
+  reads: number;
+  intervalMs: number;
+}
+
+/**
+ * Resolve the window, DERIVING the interval instead of taking one.
+ *
+ * The window is the claim; the read count is what it costs. Ten minutes at the
+ * old fixed 6s spacing would be 101 identity probes per sample, which trips
+ * ipinfo's rate limit and quietly converts a stickiness measurement into a
+ * throttling measurement. Holding the read count fixed and stretching the
+ * spacing means raising the window costs wall clock only.
+ *
+ * An impossible window REFUSES: a single reading cannot disagree with itself,
+ * so `reads < 2` is not a zero-length window, it is no measurement at all, and
+ * a zero window would report perfect stability having waited for nothing.
+ */
+export function resolveStabilityWindow(options: StabilityOptions): StabilityWindow {
+  const windowMs = options.stabilityWindowMs ?? DEFAULT_STABILITY_WINDOW_MS;
+  const reads = options.stabilityReads ?? DEFAULT_STABILITY_READS;
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
+    throw new Error(`stability window must be a positive number of ms, got ${windowMs}`);
+  }
+  if (!Number.isInteger(reads) || reads < 2) {
+    throw new Error(`stability needs at least 2 reads for one to disagree with another, got ${reads}`);
+  }
+  return { windowMs, reads, intervalMs: windowMs / (reads - 1) };
+}
+
+const duration = (ms: number): string => {
+  const seconds = ms / 1000;
+  return seconds >= 60 ? `${Number((seconds / 60).toFixed(1))}min` : `${Number(seconds.toFixed(1))}s`;
+};
+
+/**
+ * The note every stability summary carries, stating the window ACTUALLY used.
+ *
+ * This used to be a constant sentence ending in "24s", which would have become
+ * a lie the moment anyone raised the window — and a stale note is worse than no
+ * note, because it is the line a reader quotes back as the finding. Both
+ * branches name the real window and say plainly whether the PRD's window was
+ * covered.
+ */
+export function stabilityWindowNote(window: StabilityWindow): string {
+  const shape = `Each sample held ONE session for ${duration(window.windowMs)} across ${window.reads} reads (one every ${duration(window.intervalMs)}).`;
+  if (window.windowMs >= PRD_STABILITY_WINDOW_MS) {
+    return `${shape} That covers the ${duration(PRD_STABILITY_WINDOW_MS)} window the PRD asks for. The reads are spaced, not continuous, so a rotation that healed between two of them is still invisible.`;
+  }
+  return `${shape} The PRD asks for a ${duration(PRD_STABILITY_WINDOW_MS)} window; that is NOT what this measured — pass \`--stability-window-ms ${PRD_STABILITY_WINDOW_MS}\` to measure it. A short window can prove instability but cannot prove stability over a long journey.`;
+}
 
 /**
  * One sample = one session, read repeatedly.
@@ -155,15 +267,16 @@ export const SHORT_WINDOW_NOTE =
  * something else entirely (whether two sessions get the same IP), which is a
  * different and much weaker claim.
  */
-export async function sampleStability(deps: CommandDeps, options: ExperimentOptions, index: number): Promise<Record<string, unknown>> {
+export async function sampleStability(deps: CommandDeps, options: StabilityOptions, index: number): Promise<Record<string, unknown>> {
+  const window = resolveStabilityWindow(options);
   const profile = loadProfileOrThrow(deps, options.profileId);
   const runtime = deps.makeRuntime(
     toSessionConfig(profile, { sessionId: `exp002-${deps.now()}-${index}`, baseEnv: deps.env }),
   );
   const seen: (string | null)[] = [];
   try {
-    for (let read = 0; read < STABILITY_READS; read++) {
-      if (read > 0) await new Promise((r) => setTimeout(r, STABILITY_INTERVAL_MS));
+    for (let read = 0; read < window.reads; read++) {
+      if (read > 0) await new Promise((r) => setTimeout(r, window.intervalMs));
       const network = await observeNetwork(runtime, DEFAULT_VERIFY_ENDPOINT);
       seen.push(network.ip);
     }
@@ -173,6 +286,11 @@ export async function sampleStability(deps: CommandDeps, options: ExperimentOpti
   const first = seen[0] ?? null;
   const readable = seen.filter((ip): ip is string => ip !== null);
   return {
+    // The window travels WITH the sample: a results.jsonl line that does not
+    // say how long it watched cannot be interpreted a month later, and two
+    // runs at different windows are not comparable observations.
+    windowMs: window.windowMs,
+    intervalMs: window.intervalMs,
     reads: seen.length,
     readable: readable.length,
     observed: seen,
@@ -184,10 +302,10 @@ export async function sampleStability(deps: CommandDeps, options: ExperimentOpti
   };
 }
 
-export function summariseStability(samples: ExperimentSample[]): { metrics: MetricResult[]; notes: string[] } {
+export function summariseStability(samples: ExperimentSample[], options: StabilityOptions): { metrics: MetricResult[]; notes: string[] } {
   const measurable = (s: ExperimentSample): boolean => s.data.measurable === true;
   const measurableSamples = samples.filter(measurable);
-  const notes = [SHORT_WINDOW_NOTE];
+  const notes = [stabilityWindowNote(resolveStabilityWindow(options))];
   const drifted = samples.filter((s) => typeof s.data.distinct === "number" && s.data.distinct > 1);
   if (drifted.length > 0) notes.push(`${drifted.length} sample(s) saw the IP change mid-session`);
   return {
@@ -389,6 +507,232 @@ export function summariseEvidenceQuality(samples: ExperimentSample[]): { metrics
   };
 }
 
+// ── EXP-007: concurrency ─────────────────────────────────────────────────
+
+/**
+ * How many journeys run at once in one sample.
+ *
+ * Three, not one: `concurrency: 1` is the sequential path the matrix already
+ * takes, so a batch of one measures nothing about concurrency. Three is the
+ * smallest number where two sessions can contend for the same shared thing
+ * while a laptop still holds every browser plus the runner — and a default that
+ * OOMs the machine it is meant to measure would answer the question by
+ * destroying the evidence.
+ */
+export const DEFAULT_CONCURRENCY = 3;
+
+export interface ConcurrencyOptions {
+  /** How many full runs execute simultaneously in one sample. */
+  concurrency?: number;
+}
+
+export type ConcurrencyExperimentOptions = ExperimentOptions & ConcurrencyOptions;
+
+/** Why `peak-memory-per-session` is declared and still cannot be evaluated. */
+export const NO_MEMORY_PROBE_NOTE =
+  "Peak resident memory across the browser process tree is not observable from this process: agent-browser is a separate daemon and Playwright's Chrome is an unsampled child, so `process.memoryUsage()` measures the runner, not the browsers. The target is declared because OOM is the reason concurrency is 1 — it is `unmeasured`, not a pass.";
+
+export function resolveConcurrency(options: ConcurrencyExperimentOptions): number {
+  const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
+  if (!Number.isInteger(concurrency) || concurrency < 2) {
+    throw new Error(`concurrency must be an integer of at least 2 — 1 is the sequential baseline this experiment compares against, got ${concurrency}`);
+  }
+  return concurrency;
+}
+
+/**
+ * One profile per concurrent session, starting from the requested one.
+ *
+ * Each session gets a DIFFERENT profile, because a run id is
+ * `run_<ms>_<profileId>` (`newRunId`): two sessions on one profile started in
+ * the same millisecond collide on the run id, hence on the browser session name
+ * — and agent-browser's daemon is keyed by session name plus launch flags, so
+ * the second "session" is silently handed the FIRST browser and the batch
+ * measures one browser twice while reporting two. Asking for more sessions than
+ * there are profiles REFUSES instead of wrapping into that collision.
+ */
+export function concurrencyProfiles(deps: CommandDeps, requested: string, count: number): string[] {
+  const ids = profileList(deps).profiles.map((p) => p.id);
+  const start = Math.max(0, ids.indexOf(requested));
+  const ordered = [...ids.slice(start), ...ids.slice(0, start)];
+  if (count > ordered.length) {
+    throw new Error(`concurrency ${count} exceeds the ${ordered.length} distinct profiles available — two sessions sharing a profile share a run id, and therefore a browser`);
+  }
+  return ordered.slice(0, count);
+}
+
+/** What this experiment can and cannot say about "concurrency". */
+export function concurrencyShapeNote(concurrency: number): string {
+  return `Measured ${concurrency} FULL RUNS at once — each with its own browser session, profile and evidence package, which is the shape a matrix scheduler would use. It does NOT measure N contexts inside one browser: the Playwright engine gives each context its own proxy, which is what makes concurrency newly possible, but nothing above browser/ opens more than one context per run.`;
+}
+
+interface ConcurrentSession {
+  profileId: string;
+  ok: boolean;
+  verdict: string | null;
+  durationMs: number | null;
+  instrumentationFindings: number | null;
+  egressHeld: string | null;
+  egressIp: string | null;
+  evidenceId: string | null;
+  error: string | null;
+}
+
+/**
+ * One run, and a thrown run recorded rather than rethrown.
+ *
+ * A session that dies is DATA — the whole question is what happens to N at
+ * once, and the one that died is the interesting one. Letting it reject would
+ * take its peers' readings with it through `Promise.all` and leave the batch
+ * looking like it never happened.
+ */
+async function runConcurrentSession(
+  deps: CommandDeps,
+  options: ConcurrencyExperimentOptions,
+  profileId: string,
+): Promise<ConcurrentSession> {
+  try {
+    const result = await journeyRun(deps, {
+      url: options.url,
+      profileId,
+      journeyId: "landing-page",
+      ...(options.providerName ? { providerName: options.providerName } : {}),
+    });
+    return {
+      profileId,
+      ok: true,
+      verdict: result.verdict,
+      durationMs: result.durationMs,
+      instrumentationFindings: result.findings.filter((f) => f.category === "instrumentation").length,
+      // `unverified` here means the closing probe was unreadable, which is
+      // neither a held identity nor a rotation — the summariser keeps it out of
+      // the denominator rather than counting it either way.
+      egressHeld: result.geo.network.egressHeld.verdict,
+      egressIp: result.geo.network.observed.ip,
+      evidenceId: result.evidenceId,
+      error: null,
+    };
+  } catch (e) {
+    return {
+      profileId,
+      ok: false,
+      verdict: null,
+      durationMs: null,
+      instrumentationFindings: null,
+      egressHeld: null,
+      egressIp: null,
+      evidenceId: null,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/** A share inside ONE batch, or null when nothing qualified — `rate()`'s
+ *  empty-denominator rule, applied within a sample. */
+const shareWithin = (numerator: number, denominator: number): number | null =>
+  denominator === 0 ? null : (numerator / denominator) * 100;
+
+/**
+ * One sample = one solo control run, then a batch of N run at once.
+ *
+ * The control is inside the sample and runs FIRST, alone: a baseline taken
+ * while the batch is running is not a baseline, and without one at all
+ * "the batch agreed with itself" scores a meaningless 100% — the same reason
+ * EXP-006 keeps `/healthy` in its sample set. A control that throws does not
+ * void the sample; the batch readings are still real, and the metrics that need
+ * a baseline report `unmeasured` for that sample instead.
+ *
+ * The control and the first batch session deliberately share the requested
+ * profile — comparing a mobile solo run against a desktop concurrent one would
+ * blame concurrency for a difference the device caused. They cannot collide on a
+ * run id despite that, because the control has to finish before the batch
+ * starts, and a journey takes seconds.
+ */
+export async function sampleConcurrency(deps: CommandDeps, options: ConcurrencyExperimentOptions): Promise<Record<string, unknown>> {
+  const concurrency = resolveConcurrency(options);
+  const profileIds = concurrencyProfiles(deps, options.profileId, concurrency);
+
+  const solo = await runConcurrentSession(deps, options, options.profileId);
+  const startedMs = deps.now();
+  const sessions = await Promise.all(profileIds.map((id) => runConcurrentSession(deps, options, id)));
+  const batchWallClockMs = deps.now() - startedMs;
+
+  const answered = sessions.filter((s) => s.ok);
+  const soloDurationMs = solo.ok ? solo.durationMs : null;
+  const durations = answered.map((s) => s.durationMs).filter((ms): ms is number => ms !== null && Number.isFinite(ms));
+  const meanSessionMs = durations.length === 0 ? null : durations.reduce((a, b) => a + b, 0) / durations.length;
+  const decided = answered.filter((s) => s.egressHeld === "match" || s.egressHeld === "mismatch");
+  const ips = [...new Set(answered.map((s) => s.egressIp).filter((ip): ip is string => ip !== null))];
+
+  return {
+    concurrency,
+    profiles: profileIds,
+    soloProfile: options.profileId,
+    soloOk: solo.ok,
+    soloVerdict: solo.verdict,
+    soloDurationMs,
+    sessions,
+    // Recorded, not scored: the acceptance target is per-session cost, and this
+    // is what a reader needs to compare the batch against N sequential runs.
+    batchWallClockMs,
+    completionRate: shareWithin(
+      sessions.filter((s) => s.ok && s.verdict !== "ERROR" && s.instrumentationFindings === 0).length,
+      sessions.length,
+    ),
+    // No baseline verdict means no agreement to measure — not agreement of 0%.
+    verdictAgreementRate:
+      solo.verdict === null ? null : shareWithin(answered.filter((s) => s.verdict === solo.verdict).length, answered.length),
+    egressHeldRate: shareWithin(decided.filter((s) => s.egressHeld === "match").length, decided.length),
+    meanSessionMs,
+    wallClockFactor:
+      soloDurationMs === null || soloDurationMs <= 0 || meanSessionMs === null ? null : meanSessionMs / soloDurationMs,
+    // Recorded as an explicit null: unread is not zero, and a missing field
+    // would read as "nothing to say about memory" a month from now.
+    peakMemoryMbPerSession: null,
+    distinctEgressIps: ips.length,
+    egressIps: ips,
+    errors: sessions.filter((s) => !s.ok).map((s) => `${s.profileId}: ${String(s.error)}`),
+  };
+}
+
+export function summariseConcurrency(samples: ExperimentSample[], options: ConcurrencyExperimentOptions): { metrics: MetricResult[]; notes: string[] } {
+  const notes = [concurrencyShapeNote(resolveConcurrency(options)), NO_MEMORY_PROBE_NOTE];
+  const errors = samples.flatMap((s) => (Array.isArray(s.data.errors) ? (s.data.errors as string[]) : []));
+  if (errors.length > 0) notes.push(`${errors.length} session(s) never returned a run: ${[...new Set(errors)].join(" | ")}`);
+
+  // Sessions sharing one egress identity is the expected shape on direct
+  // egress and says nothing about concurrency — so it is a note, never a score.
+  const shared = samples.filter((s) => num(s, "distinctEgressIps") === 1 && (num(s, "concurrency") ?? 0) > 1);
+  if (shared.length > 0) {
+    notes.push(
+      `${shared.length} batch(es) saw ONE egress IP across every concurrent session. Expected without a proxy vendor — it means per-session network identity was not exercised, not that it failed.`,
+    );
+  }
+
+  return {
+    metrics: [
+      evaluateMetric(metric(EXP_007.metrics, "concurrent-completion"), meanOf(samples, (s) => num(s, "completionRate")), "no batch reported a session"),
+      evaluateMetric(
+        metric(EXP_007.metrics, "verdict-agreement"),
+        meanOf(samples, (s) => num(s, "verdictAgreementRate")),
+        "no batch had a solo baseline to agree with",
+      ),
+      evaluateMetric(
+        metric(EXP_007.metrics, "egress-identity-held"),
+        meanOf(samples, (s) => num(s, "egressHeldRate")),
+        "no session's closing egress probe could be read — an unread probe is not a held identity",
+      ),
+      evaluateMetric(
+        metric(EXP_007.metrics, "wall-clock-factor"),
+        meanOf(samples, (s) => num(s, "wallClockFactor")),
+        "no batch had a solo baseline to compare its wall clock against",
+      ),
+      evaluateMetric(metric(EXP_007.metrics, "peak-memory-per-session"), meanOf(samples, (s) => num(s, "peakMemoryMbPerSession")), NO_MEMORY_PROBE_NOTE),
+    ],
+    notes,
+  };
+}
+
 // ── registry ─────────────────────────────────────────────────────────────
 
 export interface SamplerPair {
@@ -404,4 +748,5 @@ export const SAMPLERS: Record<string, SamplerPair> = {
   [EXP_004.id]: { sample: sampleProfileConsistency, summarise: summariseProfileConsistency },
   [EXP_005.id]: { sample: sampleJourney, summarise: summariseJourney },
   [EXP_006.id]: { sample: sampleEvidenceQuality, summarise: summariseEvidenceQuality },
+  [EXP_007.id]: { sample: sampleConcurrency, summarise: summariseConcurrency },
 };

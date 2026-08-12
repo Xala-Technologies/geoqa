@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BrowserRuntime } from "../../browser/types.js";
 import { loadCooldowns, saveCooldowns } from "../../network/cooldown.js";
 import { directProvider, httpProxyProvider } from "../../network/provider.js";
 import type { GeoNetworkProvider } from "../../network/types.js";
 import type { RunSpec } from "../context.js";
 import { executeRun, prepareRun } from "../execute.js";
 import { StageError } from "../stages.js";
-import { fakeRuntime } from "./fake-runtime.js";
+import { bad, fakeRuntime, ok } from "./fake-runtime.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const profilePath = path.join(repoRoot, "profiles", "oslo-mobile.yaml");
@@ -24,8 +25,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const base = (over: Partial<RunSpec> = {}) => ({
+const base = (
+  over: Partial<RunSpec> = {},
+): Omit<RunSpec, "proxyUrl" | "proxyBypass" | "initScriptPath"> => ({
   runId: "run_1",
+  engine: "agent-browser",
+  seed: 7,
   target: "https://digilist.no",
   profilePath,
   journeyPath,
@@ -128,6 +133,63 @@ describe("executeRun", () => {
     expect(existsSync(path.join(root, "run_1", "manifest.json"))).toBe(true);
   });
 
+  it("arms tracing before the first navigation, so a failure can keep one", async () => {
+    let started = 0;
+    await withFakeBrowser({
+      traceStart: () => {
+        started++;
+        return Promise.resolve(ok(null));
+      },
+    });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    await executeRun({ spec: prepared.spec, provider: directProvider() });
+    expect(started).toBe(1);
+  });
+
+  it("warns rather than aborting when the engine cannot trace", async () => {
+    // An engine without tracing still produces a valid run; it just cannot hand
+    // a human the artifact that makes a non-reproducing failure diagnosable.
+    await withFakeBrowser({ traceStart: () => Promise.resolve(bad()) });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const lines: string[] = [];
+    const result = await executeRun({
+      spec: prepared.spec,
+      provider: directProvider(),
+      log: (l) => lines.push(l),
+    });
+    expect(result.verdict).toBe("PASS");
+    expect(lines.join("\n")).toContain("tracing unavailable");
+  });
+
+  it("ANNOUNCES a write-declaring journey before it runs", async () => {
+    // A run that registers an account or submits a contact form must say so
+    // up front, not leave it to be discovered in the evidence afterwards.
+    await withFakeBrowser();
+    const prepared = await prepareRun(
+      base({ journeyPath: path.join(repoRoot, "journeys", "contact-form.yaml") }),
+      directProvider(),
+      0,
+    );
+    const lines: string[] = [];
+    await executeRun({
+      spec: prepared.spec,
+      provider: directProvider(),
+      log: (l) => lines.push(l),
+    });
+    expect(lines.join("\n")).toContain("DECLARES WRITES");
+    expect(lines.join("\n")).toContain("will change state on https://digilist.no");
+  });
+
+  it("says nothing of the sort for a read-only journey", async () => {
+    await withFakeBrowser();
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const lines: string[] = [];
+    await executeRun({ spec: prepared.spec, provider: directProvider(), log: (l) => lines.push(l) });
+    expect(lines.join("\n")).not.toContain("DECLARES WRITES");
+    // The seed is always logged: it is how a varied run gets replayed.
+    expect(lines.join("\n")).toContain("seed 7");
+  });
+
   it("CLEARS the provider cooldown when the egress verified correctly", async () => {
     // Topping up a vendor account is the whole recovery; a store that only ever
     // adds would keep a healthy provider frozen forever.
@@ -183,5 +245,136 @@ describe("executeRun", () => {
     const result = await executeRun({ spec: prepared.spec, provider: directProvider() });
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
     expect(new Date(result.startedAt).getTime()).toBeGreaterThan(0);
+  });
+});
+
+describe("executeRun with --repeat", () => {
+  /**
+   * Counts attempts by counting title reads: `title-exists` is asserted exactly
+   * once per attempt by landing-page, and nothing else in a run reads the title.
+   */
+  const attemptCounter = (
+    over: Partial<BrowserRuntime> = {},
+  ): { titles: number[]; over: Partial<BrowserRuntime> } => {
+    const titles: number[] = [];
+    return {
+      titles,
+      over: {
+        getTitle: () => {
+          titles.push(1);
+          return Promise.resolve(ok("Digilist"));
+        },
+        ...over,
+      },
+    };
+  };
+
+  it("runs the journey N times inside ONE session, closing the browser once", async () => {
+    // Repeats are the reason this does NOT violate one-journey-one-session: all
+    // three attempts are the same visitor on the same egress, so what they
+    // measure can still be attributed to one identity.
+    const close = vi.fn(() => Promise.resolve(ok(null)));
+    const counter = attemptCounter({ close });
+    await withFakeBrowser(counter.over);
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const result = await executeRun({ spec: prepared.spec, provider: directProvider(), repeat: 3 });
+    expect(counter.titles).toHaveLength(3);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(result.verdict).toBe("PASS");
+  });
+
+  it("paces each attempt from seed + attemptIndex and logs every one of them", async () => {
+    // Repeating the identical pacing measures flakiness under one timing rather
+    // than the site's flakiness; the base seed still replays the whole set.
+    await withFakeBrowser();
+    const prepared = await prepareRun(base({ seed: 7 }), directProvider(), 0);
+    const lines: string[] = [];
+    await executeRun({
+      spec: prepared.spec,
+      provider: directProvider(),
+      repeat: 3,
+      log: (l) => lines.push(l),
+    });
+    const log = lines.join("\n");
+    expect(log).toContain("3 attempts in ONE session");
+    expect(log).toContain("MEASURE flakiness, they never mask it");
+    expect(log).toContain("attempt 1/3 (seed 7)");
+    expect(log).toContain("attempt 2/3 (seed 8)");
+    expect(log).toContain("attempt 3/3 (seed 9)");
+  });
+
+  it("still reports a step that failed on only ONE attempt — the merge never hides it", async () => {
+    // The whole point of the feature. A merge that took the last attempt would
+    // return PASS here, file no finding, and throw away the intermittent defect
+    // the three runs were paid for.
+    let visibleCalls = 0;
+    await withFakeBrowser({
+      isVisible: () => {
+        visibleCalls++;
+        return Promise.resolve(ok(visibleCalls > 1));
+      },
+    });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const result = await executeRun({ spec: prepared.spec, provider: directProvider(), repeat: 3 });
+    expect(visibleCalls).toBe(3);
+    expect(result.verdict).toBe("FAIL");
+    const finding = result.findings.find((f) => f.title === "has a primary heading");
+    // Filed — and filed HONESTLY. Before reproducibility was fed through, every
+    // real run reported `observed` at a flat 92 whatever it had actually seen.
+    expect(finding?.reproducibility).toEqual({ attempts: 3, occurrences: 1 });
+    expect(finding?.status).toBe("observed");
+    expect(finding?.confidence).toBeLessThan(92);
+  });
+
+  it("reports a step that failed in EVERY attempt as reproduced, at near-certain confidence", async () => {
+    await withFakeBrowser({ isVisible: () => Promise.resolve(ok(false)) });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const result = await executeRun({ spec: prepared.spec, provider: directProvider(), repeat: 3 });
+    const finding = result.findings.find((f) => f.title === "has a primary heading");
+    expect(finding?.reproducibility).toEqual({ attempts: 3, occurrences: 3 });
+    expect(finding?.status).toBe("reproduced");
+    expect(finding?.confidence).toBeGreaterThan(92);
+  });
+
+  it("leaves a single-attempt run's findings exactly as they were", async () => {
+    // The default path must not change: one attempt, one observation, no claim
+    // about repetition that the run is not entitled to make.
+    await withFakeBrowser({ isVisible: () => Promise.resolve(ok(false)) });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const result = await executeRun({ spec: prepared.spec, provider: directProvider() });
+    const finding = result.findings.find((f) => f.title === "has a primary heading");
+    expect(finding?.reproducibility).toEqual({ attempts: 1, occurrences: 1 });
+    expect(finding?.status).toBe("observed");
+    expect(finding?.confidence).toBe(92);
+  });
+
+  it("says nothing about attempts, and asks for exactly one, when repeat is absent or nonsense", async () => {
+    const counter = attemptCounter();
+    await withFakeBrowser(counter.over);
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const lines: string[] = [];
+    await executeRun({ spec: prepared.spec, provider: directProvider(), repeat: 0, log: (l) => lines.push(l) });
+    await executeRun({ spec: prepared.spec, provider: directProvider(), log: (l) => lines.push(l) });
+    expect(counter.titles).toHaveLength(2);
+    expect(lines.join("\n")).not.toContain("attempt");
+  });
+
+  it("states how many TIMES a write-declaring journey will change state", async () => {
+    // Three attempts at a contact form send three real messages. A human is
+    // entitled to that number before it happens, not after.
+    await withFakeBrowser();
+    const prepared = await prepareRun(
+      base({ journeyPath: path.join(repoRoot, "journeys", "contact-form.yaml") }),
+      directProvider(),
+      0,
+    );
+    const lines: string[] = [];
+    await executeRun({
+      spec: prepared.spec,
+      provider: directProvider(),
+      repeat: 3,
+      log: (l) => lines.push(l),
+    });
+    expect(lines.join("\n")).toContain("DECLARES WRITES — this run will change state on https://digilist.no 3 TIMES");
   });
 });

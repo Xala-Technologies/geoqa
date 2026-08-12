@@ -1,0 +1,18 @@
+# The out-of-market visitor on a desktop, which is where the graceless version of
+# "not available in your region" tends to live: an empty hero, or a geo-gate that
+# renders behind the content instead of in place of it.
+id: berlin-desktop
+label: Berlin, desktop
+market:
+  id: berlin
+  country: DE
+  city: Berlin
+  language: de-DE
+  timezone: Europe/Berlin
+  currency: EUR
+  coordinates: [52.52, 13.405]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

@@ -1,0 +1,35 @@
+# Danish reads close enough to Norwegian that a wrong-locale page still looks
+# almost right to a reviewer skimming a screenshot. da-DK against nb-NO is where a
+# language fallback gets caught being approximate rather than absent.
+id: copenhagen-mobile
+label: Copenhagen, mobile
+market:
+  id: copenhagen
+  country: DK
+  city: Copenhagen
+  language: da-DK
+  timezone: Europe/Copenhagen
+  currency: DKK
+  coordinates: [55.6761, 12.5683]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+  # No `emulate:` — deliberately, and measured rather than assumed.
+  #
+  # A Playwright device descriptor sets Chromium's `isMobile`, which introduces a
+  # LAYOUT viewport: a page without `<meta name="viewport">` then reports
+  # window.innerWidth 980 however small the window is (980 vs 390 at the same
+  # 390x844 window, and visualViewport tracks innerWidth exactly, so there is no
+  # page-independent reading).
+  #
+  # `observeBrowser` reads the viewport on the identity-probe page, before the
+  # journey opens the target — so under emulation the viewport axis would measure
+  # the PROBE page's markup rather than the profile. That axis exists because a
+  # mobile profile once rendered at 1280px while every other check passed, so
+  # trading it for a nicer user agent is the wrong way round.
+  #
+  # The cost is real and recorded in docs/gaps.md: without a descriptor these runs
+  # advertise a headless user agent. Fix that by verifying the viewport on the
+  # TARGET page, then restoring `emulate` — not by restoring it first.
+visitorType: anonymous

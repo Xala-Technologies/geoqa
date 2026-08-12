@@ -1,0 +1,19 @@
+{
+  "status": "NOT YET RUN. Every null below is a fact about the machine that will run it. Filling one in from another experiment's run would make this file a forgery.",
+  "command": "geoqa experiment run EXP-007 --samples 5 --geo oslo-mobile --url https://digilist.no/blogg",
+  "samples": 5,
+  "concurrency": 3,
+  "concurrencyNote": "DEFAULT_CONCURRENCY in cli/samplers.ts. No flag reaches `experiment run` yet, so the default is the only value a CLI run can take today; raise it by passing `concurrency` through ExperimentOptions.",
+  "sessionsPerSample": "1 solo control + 3 concurrent runs = 4 runs per sample",
+  "profile": "oslo-mobile",
+  "profiles": "the requested profile plus the next ones in `geoqa profile list` order, one distinct profile per concurrent session",
+  "journey": "landing-page",
+  "target": "https://digilist.no/blogg",
+  "networkProvider": "direct",
+  "engine": "agent-browser (default). Worth running a second time with --engine playwright: the per-context proxy is what made concurrency possible at all.",
+  "agentBrowser": null,
+  "chrome": null,
+  "host": null,
+  "startedAt": null,
+  "finishedAt": null
+}

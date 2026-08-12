@@ -48,6 +48,43 @@ export const StepSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("open"), url: z.string().min(1), label: z.string().optional() }),
   z.object({ action: z.literal("reload"), label: z.string().optional() }),
   z.object({ action: z.literal("click"), selector: z.string().min(1), label: z.string().optional() }),
+  /**
+   * Input, so journeys can exercise functionality rather than only read pages:
+   * search, registration, login, contact forms, CRUD.
+   *
+   * A `fill` value is a SECRET as far as everything downstream is concerned. It
+   * is interpolated from `--var` like any other value, which is how a password
+   * reaches a login journey — and why no step result, log line or evidence
+   * artifact ever records it.
+   */
+  z.object({
+    action: z.literal("fill"),
+    selector: z.string().min(1),
+    value: z.string(),
+    label: z.string().optional(),
+  }),
+  z.object({ action: z.literal("press"), key: z.string().min(1), label: z.string().optional() }),
+  z.object({
+    action: z.literal("select"),
+    selector: z.string().min(1),
+    values: z.array(z.string()).min(1),
+    label: z.string().optional(),
+  }),
+  z.object({ action: z.literal("check"), selector: z.string().min(1), label: z.string().optional() }),
+  /**
+   * A human-length pause, drawn from a seeded generator.
+   *
+   * Not `wait`, which takes a fixed number: a visitor reading a blog post does
+   * not spend exactly 500ms on it, and a runner that always does produces load
+   * patterns and timings that represent nobody. The range is bounded and the
+   * draw is seeded, so the pacing is realistic AND repeatable.
+   */
+  z.object({
+    action: z.literal("pause"),
+    minMs: z.number().int().nonnegative(),
+    maxMs: z.number().int().nonnegative(),
+    label: z.string().optional(),
+  }),
   z.object({
     action: z.literal("scroll"),
     direction: z.enum(["up", "down", "left", "right"]).default("down"),
@@ -90,10 +127,34 @@ export const AssertStepSchema = z.object({
     .optional(),
 });
 
-export type Step =
+/**
+ * Fields every step carries, whatever its action.
+ *
+ * Parsed as a second pass rather than repeated on each member of the union —
+ * the same trick `assert` already needs, and it keeps `probability` from having
+ * to be declared eleven times.
+ */
+export const StepEnvelopeSchema = z.object({
+  /**
+   * How often this step happens, 0..1. Default 1.
+   *
+   * "Sometimes inspect the gallery, sometimes expand the description, sometimes
+   * abandon" is what makes a set of runs representative instead of eleven
+   * identical robots. A step that does not happen is reported `skipped`, never
+   * silently dropped — see the engine.
+   */
+  probability: z.number().min(0).max(1).default(1),
+});
+
+export type StepAction =
   | { action: "open"; url: string; label?: string }
   | { action: "reload"; label?: string }
   | { action: "click"; selector: string; label?: string }
+  | { action: "fill"; selector: string; value: string; label?: string }
+  | { action: "press"; key: string; label?: string }
+  | { action: "select"; selector: string; values: string[]; label?: string }
+  | { action: "check"; selector: string; label?: string }
+  | { action: "pause"; minMs: number; maxMs: number; label?: string }
   | { action: "scroll"; direction: "up" | "down" | "left" | "right"; px?: number; label?: string }
   | { action: "wait"; target: string; label?: string }
   | { action: "screenshot"; label: string; fullPage: boolean }
@@ -106,10 +167,23 @@ export type Step =
       spec: Check;
     };
 
+export type Step = StepAction & { probability: number };
+
 export const JourneySchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   description: z.string().default(""),
+  /**
+   * Does this journey CHANGE anything on the target?
+   *
+   * Declared per journey, and false by default. Registering an account, sending a
+   * contact form or completing a booking creates real records, and a run that did
+   * that must not look identical to one that only read pages. It drives a loud
+   * warning, it is recorded in the evidence metadata, and it is what makes the
+   * screenshot privacy flag honest — a form journey's screenshots plausibly
+   * contain personal data.
+   */
+  writes: z.boolean().default(false),
   steps: z.array(z.unknown()).min(1),
 });
 
@@ -117,20 +191,25 @@ export interface Journey {
   id: string;
   title: string;
   description: string;
+  writes: boolean;
   steps: Step[];
 }
 
-/** Validate one raw step, resolving the two-pass assert shape. */
+/** Validate one raw step, resolving the two-pass assert and envelope shapes. */
 export function parseStep(raw: unknown, index: number): ParseResult<Step> {
   const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
   if (!record) return { ok: false, errors: [`steps[${index}]: not an object`] };
+
+  const envelope = StepEnvelopeSchema.safeParse(record);
+  if (!envelope.success) return { ok: false, errors: prefix(index, formatIssues(envelope.error)) };
+  const { probability } = envelope.data;
 
   if (record.action === "assert") {
     const head = AssertStepSchema.safeParse(record);
     if (!head.success) return { ok: false, errors: prefix(index, formatIssues(head.error)) };
     const body = CheckSchema.safeParse(record);
     if (!body.success) return { ok: false, errors: prefix(index, formatIssues(body.error)) };
-    const step: Step = { action: "assert", severity: head.data.severity, spec: body.data };
+    const step: Step = { action: "assert", severity: head.data.severity, spec: body.data, probability };
     if (head.data.label !== undefined) step.label = head.data.label;
     if (head.data.category !== undefined) step.category = head.data.category;
     return { ok: true, value: step };
@@ -138,7 +217,7 @@ export function parseStep(raw: unknown, index: number): ParseResult<Step> {
 
   const parsed = StepSchema.safeParse(record);
   if (!parsed.success) return { ok: false, errors: prefix(index, formatIssues(parsed.error)) };
-  return { ok: true, value: parsed.data as Step };
+  return { ok: true, value: { ...(parsed.data as StepAction), probability } };
 }
 
 const prefix = (index: number, errors: string[]): string[] => errors.map((e) => `steps[${index}].${e}`);
@@ -155,7 +234,16 @@ export function parseJourney(raw: unknown): ParseResult<Journey> {
     else errors.push(...parsed.errors);
   }
   if (errors.length) return { ok: false, errors };
-  return { ok: true, value: { id: head.data.id, title: head.data.title, description: head.data.description, steps } };
+  return {
+    ok: true,
+    value: {
+      id: head.data.id,
+      title: head.data.title,
+      description: head.data.description,
+      writes: head.data.writes,
+      steps,
+    },
+  };
 }
 
 export function loadJourney(
@@ -181,10 +269,19 @@ export function interpolate(input: string, vars: Record<string, string>): string
   return input.replace(/\{(\w+)\}/g, (whole, name: string) => vars[name] ?? whole);
 }
 
-/** Apply variables to every step field that can carry one. */
+/**
+ * Apply variables to every step field that can carry one.
+ *
+ * `fill` values are interpolated like any other, which is how a credential
+ * reaches a login journey without being committed to a YAML file. Nothing else
+ * about them is special HERE — the secrecy is enforced downstream, where results
+ * are recorded, because that is the only place it can be.
+ */
 export function resolveSteps(steps: Step[], vars: Record<string, string>): Step[] {
   return steps.map((step) => {
     if (step.action === "open") return { ...step, url: interpolate(step.url, vars) };
+    if (step.action === "fill") return { ...step, value: interpolate(step.value, vars) };
+    if (step.action === "select") return { ...step, values: step.values.map((v) => interpolate(v, vars)) };
     if (step.action === "assert" && "value" in step.spec && typeof step.spec.value === "string") {
       return { ...step, spec: { ...step.spec, value: interpolate(step.spec.value, vars) } as Check };
     }

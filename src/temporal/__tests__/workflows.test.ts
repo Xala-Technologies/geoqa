@@ -36,6 +36,8 @@ afterAll(async () => {
 
 const SPEC: RunSpec = {
   runId: "run_1",
+  engine: "agent-browser",
+  seed: 7,
   target: "https://digilist.no",
   profilePath: "/p.yaml",
   journeyPath: "/j.yaml",
@@ -51,6 +53,8 @@ const SPEC: RunSpec = {
 const INPUT: GeoQaRunInput = {
   base: {
     runId: "run_1",
+    engine: "agent-browser",
+    seed: 7,
     target: "https://digilist.no",
     profilePath: "/p.yaml",
     journeyPath: "/j.yaml",

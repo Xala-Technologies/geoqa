@@ -121,6 +121,21 @@ export interface BrowserRuntime {
   scroll(direction: "up" | "down" | "left" | "right", px?: number): Promise<BrowserResult<unknown>>;
   waitFor(target: string): Promise<BrowserResult<unknown>>;
 
+  /**
+   * Input. Present so journeys can exercise real functionality — forms, search,
+   * CRUD — rather than only reading pages.
+   *
+   * `fill` CLEARS first, so a journey is not sensitive to whatever a previous
+   * step or a browser autofill left behind. Its value is treated as a secret by
+   * everything downstream: a step result records that a field was filled and the
+   * selector it targeted, never the text, because these carry credentials and
+   * personal data straight into an evidence package otherwise.
+   */
+  fill(selector: string, value: string): Promise<BrowserResult<unknown>>;
+  press(key: string): Promise<BrowserResult<unknown>>;
+  select(selector: string, values: string[]): Promise<BrowserResult<unknown>>;
+  check(selector: string): Promise<BrowserResult<unknown>>;
+
   /** Environment. */
   setViewport(width: number, height: number): Promise<BrowserResult<unknown>>;
   setDevice(name: string): Promise<BrowserResult<unknown>>;

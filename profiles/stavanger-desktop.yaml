@@ -1,0 +1,16 @@
+# Energy capital and Norway's third urban region. Confirmed exact-match residential exits on Lyse Tele.
+id: stavanger-desktop
+label: Stavanger, desktop
+market:
+  id: stavanger
+  country: NO
+  city: Stavanger
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [58.97, 5.7331]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

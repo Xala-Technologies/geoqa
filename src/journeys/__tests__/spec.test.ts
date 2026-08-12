@@ -12,7 +12,7 @@ describe("parseStep", () => {
   it("parses each non-assert action", () => {
     const cases: unknown[] = [
       { action: "open", url: "https://x" },
-      { action: "reload" },
+      { action: "reload", probability: 1 },
       { action: "click", selector: "@e1" },
       { action: "scroll" },
       { action: "wait", target: "500" },
@@ -34,7 +34,14 @@ describe("parseStep", () => {
   it("parses an assert in two passes and defaults severity to high", () => {
     const out = parseStep({ action: "assert", check: "title-exists" }, 0);
     if (!out.ok) throw new Error("expected ok");
-    expect(out.value).toEqual({ action: "assert", severity: "high", spec: { check: "title-exists" } });
+    // `probability` defaults to 1: a step with no declared probability always
+    // happens, and — see random.ts — does not consume the generator either.
+    expect(out.value).toEqual({
+      action: "assert",
+      severity: "high",
+      probability: 1,
+      spec: { check: "title-exists" },
+    });
   });
 
   it("keeps an assert label when one is given", () => {
@@ -75,11 +82,11 @@ describe("parseJourney", () => {
 
   it("rejects an empty or headless journey", () => {
     expect(parseJourney(journey([])).ok).toBe(false);
-    expect(parseJourney({ title: "no id", steps: [{ action: "reload" }] }).ok).toBe(false);
+    expect(parseJourney({ title: "no id", steps: [{ action: "reload", probability: 1 }] }).ok).toBe(false);
   });
 
   it("defaults description to empty", () => {
-    const out = parseJourney(journey([{ action: "reload" }]));
+    const out = parseJourney(journey([{ action: "reload", probability: 1 }]));
     if (!out.ok) throw new Error("expected ok");
     expect(out.value.description).toBe("");
   });
@@ -118,8 +125,27 @@ describe("the journeys that actually ship", () => {
   const dir = path.join(repoRoot, "journeys");
   const files = readdirSync(dir).filter((f) => f.endsWith(".yaml"));
 
-  it("finds all four", () => {
-    expect(files.sort()).toEqual(["browse.yaml", "conversion-probe.yaml", "landing-page.yaml", "localization.yaml"]);
+  it("finds every shipped journey", () => {
+    expect(files.sort()).toEqual([
+      "browse.yaml",
+      "contact-form.yaml",
+      "conversion-probe.yaml",
+      "landing-page.yaml",
+      "localization.yaml",
+      "reader.yaml",
+      "sweep.yaml",
+    ]);
+  });
+
+  it("declares writes on exactly the journeys that change state", () => {
+    // A journey that submits, registers or books must say so. Getting this wrong
+    // in the safe direction means a run creates records while reporting that it
+    // only read pages — and the screenshot privacy flag stays off.
+    const writes = files.filter((file) => {
+      const out = loadJourney(path.join(dir, file), (p) => readFileSync(p, "utf8"));
+      return out.ok && out.value.writes;
+    });
+    expect(writes).toEqual(["contact-form.yaml"]);
   });
 
   it.each(files)("%s parses, and its id matches its filename", (file) => {
@@ -145,8 +171,8 @@ describe("interpolate", () => {
 describe("resolveSteps", () => {
   it("substitutes into open urls and string check values", () => {
     const steps: Step[] = [
-      { action: "open", url: "{target}/blogg" },
-      { action: "assert", severity: "high", spec: { check: "text-contains", selector: "body", value: "{brand}" } },
+      { action: "open", url: "{target}/blogg", probability: 1 },
+      { action: "assert", severity: "high", probability: 1, spec: { check: "text-contains", selector: "body", value: "{brand}" } },
     ];
     const out = resolveSteps(steps, { target: "https://digilist.no", brand: "Digilist" });
     expect(out[0]).toMatchObject({ url: "https://digilist.no/blogg" });
@@ -155,8 +181,8 @@ describe("resolveSteps", () => {
 
   it("leaves steps without substitutable fields untouched", () => {
     const steps: Step[] = [
-      { action: "reload" },
-      { action: "assert", severity: "high", spec: { check: "lcp-below", value: 2500 } },
+      { action: "reload", probability: 1 },
+      { action: "assert", severity: "high", probability: 1, spec: { check: "lcp-below", value: 2500 } },
     ];
     expect(resolveSteps(steps, { target: "x" })).toEqual(steps);
   });

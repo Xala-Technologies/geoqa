@@ -28,6 +28,16 @@ export default defineConfig({
         "src/cli/index.ts",
         // Connects to Temporal and polls forever. Nothing to assert.
         "src/temporal/worker.ts",
+        // Launches a real Chromium and maps Playwright's API onto the
+        // structural interfaces in playwright.ts. All I/O and adaptation, no
+        // judgement — every behaviour it feeds is covered there, against
+        // injected fakes. Exercising this file means downloading a browser,
+        // which is the cost CI exists to avoid.
+        "src/browser/playwright-launch.ts",
+        // A raw socket and a wire-format parse, no judgement. What a refusal
+        // MEANS for a run is decided in provider.ts's health(), which is covered
+        // against an injected probe. Exercising this file means dialling a vendor.
+        "src/network/auth-probe.ts",
         // Every activity is a thin wrapper that news up a real provider /
         // runtime and delegates; the logic each one calls is at 100%.
         "src/temporal/activities.ts",

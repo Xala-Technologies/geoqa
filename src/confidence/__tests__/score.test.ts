@@ -14,7 +14,7 @@ import {
 const axis = (verdict: AxisResult["verdict"], why = "because"): AxisResult => ({ verdict, reasons: [why] });
 
 const geo = (
-  over: Partial<Record<"country" | "city" | "language" | "timezone" | "viewport", AxisResult>> = {},
+  over: Partial<Record<"country" | "city" | "language" | "timezone" | "viewport" | "egressHeld", AxisResult>> = {},
 ): GeoVerification => ({
   profileId: "oslo-mobile",
   network: {
@@ -22,6 +22,7 @@ const geo = (
     observed: { ip: null, country: "NO", city: "Oslo", region: null, org: null, timezone: null, latencyMs: null },
     country: over.country ?? axis("match"),
     city: over.city ?? axis("match"),
+    egressHeld: over.egressHeld ?? axis("match"),
   },
   browser: {
     requested: { language: "nb-NO", timezone: "Europe/Oslo", viewport: { width: 390, height: 844 } },
@@ -43,6 +44,9 @@ const journey = (counts: Partial<JourneyResult["counts"]>): JourneyResult => ({
   steps: [],
   counts: { passed: 0, failed: 0, errored: 0, skipped: 0, ...counts },
   screenshots: [],
+  writes: false,
+  seed: 1,
+  touchedForm: false,
   durationMs: 1,
 });
 

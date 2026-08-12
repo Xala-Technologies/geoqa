@@ -1,0 +1,630 @@
+# Product requirements
+
+> **Provenance.** This document is **reconstructed from the codebase** — from the
+> implemented behaviour, the acceptance thresholds declared in
+> `src/experiments/definitions.ts`, and the rationale recorded in the source
+> comments. It is not the original PRD. An external PRD exists and is cited by
+> section number in a few places (`PRD §24`, `PRD §37`, and a 10-minute session
+> stickiness target); those anchors are listed in
+> [§8](#8-external-prd-anchors) and are the only places where a requirement is
+> known to exist that this document cannot fully state.
+>
+> Treat this as the authoritative *implemented* contract. Where it disagrees with
+> the external PRD, the external PRD wins on intent and this file should be
+> corrected.
+
+---
+
+## 1. Problem
+
+A search-intelligence platform can tell you a keyword is an opportunity, write
+the article, and publish it. It cannot tell you that the page it just published
+renders at the wrong width, shows the wrong currency, or takes five seconds to
+settle for someone in Bergen.
+
+`geoqa` is the layer that goes and looks. It answers one question the rest of a
+search/content stack cannot: **what does a visitor in a given market actually
+experience on this page, and can we prove it?**
+
+## 2. Scope
+
+**In scope**
+
+- Drive a real browser against a live page under a declared market + device
+  identity.
+- Verify that identity on both axes — network egress and browser environment —
+  and report per-axis verdicts.
+- Execute a deterministic journey of actions and checks, and distinguish "the
+  page is wrong" from "we could not look".
+- Write an evidence package sufficient to reproduce or re-check a finding months
+  later.
+- Score confidence on separate axes, and refuse to score what was not measured.
+- Emit a machine-readable result that another agent can consume.
+- Expand and execute a market × device × journey matrix under a bounded
+  concurrency limit, in one process.
+- Keep the evidence tree bounded in time and size without ever quietly discarding
+  the record of a failure.
+
+**Out of scope**
+
+- Writing to any external system: Linear, Convex, a repo, a dashboard. Runs are
+  read-only against the world — and structurally so, which is why it is not a
+  setting: there is no `readOnly: false` for a code path that does not exist.
+- Any LLM in the measurement pipeline. Adaptive/natural-language journeys are
+  explicitly deferred (see [§8](#8-external-prd-anchors)).
+- Search/SERP observation.
+- Fixing anything it finds.
+- Scheduling. A matrix is a command a human types; nothing runs on a clock.
+
+Concurrency **left** this list. It was out of scope for Phase 0 because one
+profile was one whole Chrome; the per-context proxy made it possible and the
+bounded matrix runner spends it (R-84…R-89). The bound itself is still an
+unmeasured guess until EXP-007 runs.
+
+## 3. Functional requirements
+
+### Geographic identity
+
+- **R-1** Geography is treated as **two independent axes**: network identity (the
+  IP the server sees) and browser environment (what the page's JavaScript
+  believes). They are configured by different mechanisms and verified separately.
+- **R-2** Both axes are observed **through the browser under test**, never
+  through the host's own HTTP client.
+- **R-3** Every axis yields one of exactly three verdicts: `match`, `mismatch`,
+  `unverified`. `unverified` means no reading was obtained and is neither a pass
+  nor a failure.
+- **R-4** A geo profile is **self-contained** — it embeds its market rather than
+  referencing one by id — so an evidence package can answer "what was this run's
+  identity?" from one artifact, without also needing the config file as it stood
+  that day.
+- **R-5** Verified axes: egress country, egress city, `navigator.language`, `Intl`
+  timezone, rendered viewport width.
+  - Country is compared case-insensitively on ISO-3166 alpha-2.
+  - City comparison is **loose and asymmetric**: a city can be proven right, not
+    proven wrong. Egress databases name the exchange's suburb, not the city a
+    human would say, so a non-matching city is `unverified`.
+  - Language is compared on the primary BCP-47 subtag (`nb-NO` and `nb` agree).
+  - Timezone is exact — a wrong clock changes rendered dates and opening hours.
+  - Viewport is compared on **width only**; height varies with browser chrome and
+    no responsive breakpoint keys off it.
+- **R-6** The device profile is applied **before** any observation, and the
+  applied viewport is **read back** rather than assumed.
+- **R-7** Geo verification runs **before** the journey, so a wrong-market run is
+  not paid for in wall clock and then dressed in an authoritative evidence
+  package.
+- **R-8** A provider that cannot serve the requested market fails the run. There
+  is no silent fallback to direct egress.
+- **R-9** Direct (non-geographic) egress always emits an explicit warning that
+  geographic claims are unproven.
+- **R-66** The market matrix is **data, not code**: one profile file per market ×
+  device, with its `id` equal to its filename, so `geoqa profile list` *is* the
+  matrix and a market covered on only one device is visible at a glance. Adding a
+  market is two files and no commit to `src/`.
+- **R-67** Every market is declared on **both** device kinds. A device-specific
+  defect is the class the first live run hit — CLS 0.76 on desktop, passing on
+  mobile — so a market tested on one device is not a covered market.
+- **R-68** A device identity is more than a box. The mobile user agent, device
+  scale factor, touch support and `isMobile` come from a **named device
+  descriptor** (`device.emulate`), because a hardcoded user-agent string goes stale
+  the next time Chrome ships. The profile's own `viewport` is applied **after** the
+  descriptor, so the declared box always wins over the descriptor's — the viewport
+  is a verified axis (R-5) and must mean what the profile says.
+
+### Journeys
+
+- **R-10** A journey is a YAML list of actions and checks. It is **deterministic**:
+  the same file against the same page produces the same steps in the same order.
+  No natural-language steps, no LLM.
+- **R-11** Steps support variable substitution (`{target}`, plus `--var k=v`). An
+  unknown placeholder is left intact rather than replaced with an empty string —
+  `open ""` would navigate somewhere meaningless and report a page failure for
+  what is really a config typo.
+- **R-12** Severity is declared **per step**. A missing CTA on a conversion probe
+  and an LCP 200 ms over budget are different kinds of news; forcing both to fail
+  the run equally trains the owner to ignore it.
+- **R-13** A step may override the finding category derived from its check kind —
+  the same `text-absent` check catches a content bug in one journey and a leaked
+  foreign currency in another, and those go to different people.
+- **R-14** A check reads only what it needs. Vitals and a11y each cost a real
+  round-trip and are not fetched for journeys that do not assert on them.
+- **R-15** State-changing steps are fatal: after one fails, subsequent steps are
+  `skipped`, never executed-and-passed. Observations (assert, screenshot,
+  snapshot) never halt the run, so one pass collects every failure.
+- **R-16** A negative or absent reading is **confirmed after a settle** before
+  being reported — an element mid-animation and an asynchronously emitted LCP
+  otherwise produce defects that do not exist.
+
+### Honest verdicts
+
+- **R-17** A failed assertion (read the page, it was wrong) and a broken tool
+  (the reading never arrived) are **different events**, counted separately.
+- **R-18** An unreadable step is categorised `instrumentation`, its severity is
+  forced to `high`, and it is **never filed against the site**.
+- **R-19** `ERROR` outranks `FAIL` in the run verdict, because "we do not know"
+  and "the page is broken" lead a human to different next actions.
+- **R-20** No code path may return success with absent data. Every browser call
+  returns typed data or a named failure kind.
+
+### Evidence
+
+- **R-21** Retention is tiered by verdict: a passing run keeps almost nothing, a
+  failure keeps everything (including HAR and trace), and an `ERROR` keeps the
+  most because that is when we know least and need most.
+- **R-22** A required artifact that could not be produced is still **described**,
+  at zero bytes, and listed in `missing`. A package that quietly omits the
+  console log on a JavaScript failure must not look identical to one where the
+  console was clean.
+- **R-23** `completeness` is the share of required artifact **kinds** present, not
+  a file count.
+- **R-24** An evidence package must answer: what happened, where, when, in which
+  market, on which device, at which journey step, can we reproduce it, and what
+  technical evidence exists. (Encoded as `REQUIRED_QUESTIONS`.)
+- **R-25** Redaction happens **at write time**, not on export: URL credentials,
+  sensitive query parameters, emails, and Norwegian national ID numbers.
+- **R-26** Proxy credentials are resolved from environment variables only, never
+  from a config file, and are masked anywhere they could reach a human — log, run
+  summary, or manifest.
+- **R-27** Screenshot personal data is **not** claimed to be solved. It is
+  *bounded*: any page with a form or an authenticated session is flagged
+  `review`, and the manifest carries a privacy note naming those artifacts.
+
+### Findings
+
+- **R-28** One finding per non-passing, non-skipped step. A skipped step is not a
+  finding — filing it would double-count the failure that halted the run.
+- **R-29** Every finding carries a `validationMethod`: the concrete steps a human
+  takes to re-check it by hand. For an instrumentation finding, that text says it
+  is *our* defect until it reproduces with a working browser.
+- **R-30** Finding confidence is independent of run confidence, and reflects the
+  strength of the claim: a check that read the page starts high, an
+  instrumentation failure starts much lower, and repetition across attempts moves
+  it.
+- **R-31** Findings are ranked most-severe first, then most-confident.
+- **R-32** The share of findings that are about the *site* rather than about *us*
+  is itself reportable (`siteFindingShare`).
+
+### Confidence
+
+- **R-33** Confidence is **five separate axes** — network identity, browser
+  environment, journey execution, evidence completeness, search observation — not
+  one vague score.
+- **R-34** `overall` is a weighted combination **capped by the weakest axis**. A
+  run that executed perfectly from the wrong country is not a high-confidence run.
+- **R-35** Unreadable steps depress the journey axis far harder than failed ones.
+- **R-36** An unmeasured axis reports `null`, never a number. `searchObservation`
+  stays `null` until a SERP source exists.
+- **R-37** Confidence carries `notes` stating in words why the number is what it
+  is.
+
+### Orchestration
+
+- **R-38** One run is **one atomic unit of work, start to finish**. No persisted
+  intermediate state that a separate scheduled process must later pick up, so
+  there is nothing to orphan when a process dies.
+- **R-39** The same stage implementations serve both the in-process CLI and the
+  durable Temporal path. Stages take dependencies as arguments and may not import
+  the workflow engine.
+- **R-40** Retry policy is **per stage**, and the journey stage does **not**
+  retry: a silent second attempt would convert a real intermittent site failure
+  into a pass. Flakiness is measured by running the journey N times on purpose.
+- **R-41** Cleanup runs even when the run has already failed.
+- **R-42** A durable run's execution history is the audit trail — a run that
+  dropped its work must not look identical to an idle one.
+- **R-43** Matrix runs (market × device × journey) are child workflows, so one
+  market failing does not take the matrix with it and each run keeps its own
+  retry budget and inspectable history.
+- **R-44** A provider failure freezes that provider for a cooldown period, and a
+  subsequent success **clears** it.
+
+### Measuring flakiness instead of hiding it
+
+- **R-69** Repetition is **asked for explicitly** (`--repeat N`, default 1) and is
+  the only mechanism by which a journey runs more than once. It is the measured
+  alternative to the retry R-40 forbids: every attempt is kept and reported, and
+  none of them is a second chance at a green result.
+- **R-70** All N attempts run inside **one** browser and **one** network session,
+  so a repeated run is still one visitor (R-48). A session per attempt would take
+  LCP from one visitor and CLS from another, and nothing measured could be
+  attributed.
+- **R-71** Attempt *k* runs at `seed + k`. Attempts that made identical choices
+  would measure the site's behaviour under one pacing N times rather than measuring
+  variability, and deriving the per-attempt seeds from the base one keeps the whole
+  set replayable from a single number (R-60).
+- **R-72** A merged result takes the **worst** outcome seen at each step index, and
+  keeps that attempt's detail, expected and observed. Reporting the last attempt
+  would file **no** finding for a check that failed once and passed twice — hiding
+  the exact event the repetition exists to surface, which is the damage of a silent
+  retry arrived at from the other end. Keeping the whole record means a finding
+  quotes a reading that actually happened rather than a blend of two attempts.
+- **R-73** Every finding states in how many attempts it appeared. All of them is
+  `reproduced` and near-certain; one of several is filed at markedly lower
+  confidence, because "we saw it once and could not repeat it" is a weaker claim
+  than "it failed every time" and the report must say which one it is. Occurrences
+  are counted once per attempt, so they can never exceed the attempt count and
+  `reproduced` never becomes unreachable.
+- **R-74** A whole-set measurement counts as seen in **every** attempt. The closing
+  egress check (R-49) is measured once for the set, not once per attempt;
+  discounting it as "1 of 3" would understate the only reading there was.
+- **R-75** A journey declaring `writes: true` under `--repeat N` changes state on
+  the target N times, and the run announces the count before the first attempt.
+  Three contact forms is a different act from one, and the operator learns that
+  before it happens (R-64).
+
+### Behaving like a visitor
+
+- **R-57** Journeys exercise **functionality**, not only reading: search,
+  registration, login, contact forms and CRUD. The DSL therefore carries input
+  actions (`fill`, `press`, `select`, `check`) alongside navigation.
+- **R-58** Pacing is **human and bounded**: a `pause` declares a range and the
+  length is drawn from it, because a runner that acts every 500ms produces a load
+  pattern and a set of timings no visitor produces — and never lets a page finish
+  settling.
+- **R-59** Optional behaviour is expressed as a per-step `probability`, so a set of
+  runs is representative rather than eleven identical robots.
+- **R-60** All variation is **seeded**. The seed is part of the run's identity,
+  recorded in the evidence, and settable, so a failing varied run can be repeated
+  exactly. Unseeded realism is not acceptable: it trades away the reproducibility
+  the evidence package exists to provide.
+- **R-61** An optional step that did not happen is reported `skipped`, never
+  omitted — a check that did not run must stay distinguishable from one that
+  passed, and the step indices must not shift.
+- **R-62** Variation is for REALISM, never for evading detection. No fingerprint
+  spoofing, no CAPTCHA circumvention, no synthetic mouse telemetry, nothing whose
+  purpose is to convince a third party that automation is a person.
+
+### Handling what a visitor types
+
+- **R-63** A `fill` or `select` value is a **secret**. It is supplied at run time
+  (never committed to a journey file) and must not reach a step record, a log
+  line, a command string, or any evidence artifact. What is recorded is which
+  selector was filled.
+- **R-64** A journey that changes state on the target declares `writes: true`. The
+  run announces it before starting and records it in the evidence, so a run that
+  created records can never look identical to one that only read pages.
+- **R-65** When a run touched a form or declared writes, its screenshots are
+  flagged for review. Personal data in an image cannot be detected, so the only
+  honest response is to bound it and say so.
+
+### Network sessions
+
+- **R-48** **One journey is one network session.** A run opens one egress
+  identity and keeps it from first navigation to last. Rotation *between* runs is
+  wanted — it stops a single anomalous exit standing in for a market — but
+  rotation *within* a run makes the measurement incoherent, because one metric
+  then describes one visitor and another describes a different one.
+- **R-49** Session stickiness is **verified, not trusted**: the egress identity is
+  re-read after the journey and compared to the opening reading. A proven
+  rotation is an `instrumentation` failure that takes the run to `ERROR`; an
+  unreadable closing probe is `unverified` and does not discard the run.
+- **R-50** The stability check must not disturb the page under test. Evidence is
+  collected after the journey, so a check that navigated away would make vitals,
+  console, network and the a11y tree describe the probe endpoint instead of the
+  site.
+- **R-51** A provider's session identity is **expressible in the proxy URL**
+  (`{session}`), because residential vendors offer no API for stickiness and encode
+  the key in the proxy username. Substitution applies to whichever env source
+  supplied the URL, not to the template alone: a URL pinned to one market is
+  precisely the case that most wants a sticky key. The session id is minted before
+  the URL is resolved, so the key in the username and the key reported on the
+  session are the same string — a run must never claim a stickiness it did not ask
+  the vendor for.
+- **R-76** Placeholder substitution must not corrupt credentials. An unknown
+  placeholder is left **verbatim** rather than blanked, because emptying part of a
+  username authenticates as somebody else instead of failing; and the URL is
+  validated **after** substitution, so a vendor shape that only parses with the key
+  in place is accepted while a key that cannot live in a URL refuses the run.
+- **R-52** The vendor's sticky window must exceed the journey's wall-clock
+  allowance, or the retry policy and the vendor disagree about how long a run may
+  last. Under `--repeat N` the window must exceed **N** journeys, since all N run
+  inside the one session (R-70).
+
+### Browser engines
+
+- **R-53** The engine is replaceable behind `BrowserRuntime`, and is part of a
+  run's identity (`RunSpec.engine`) because two runs of the same journey on
+  different engines are not the same run.
+- **R-54** An engine that throws must have its throws mapped onto the shared
+  failure kinds. No engine-specific failure kind may reach above the seam.
+- **R-55** A capability an engine cannot provide at that point in a session is
+  **refused with a named failure**, never silently no-opped — so the manifest
+  records the artifact as missing rather than the package merely looking complete.
+- **R-56** Constructing a runtime must not launch a browser. Sessions open on
+  first use, so a stateless Activity can rebuild a runtime from a serialisable
+  spec.
+
+### Interface
+
+- **R-45** Every command supports `--json`, and the JSON shape is the integration
+  contract. Agent-to-agent use must never depend on parsing human-readable
+  output.
+- **R-46** Exit codes are meaningful: a `FAIL`/`ERROR` run exits non-zero; an
+  experiment exits non-zero only on a measured `fail`, never on `unmeasured`.
+- **R-47** The process exits only once stdout and stderr have drained — a bare
+  `process.exit()` discards queued pipe output, which is the one place anybody
+  debugs from.
+
+### Configuration
+
+- **R-77** Project-level defaults live in **one** optional file,
+  `geoqa.config.json` in the repo root. Precedence is **flag > config file >
+  built-in default**, uniformly, with no per-command exceptions — a precedence
+  order that varies by command is one nobody can predict from the help text.
+- **R-78** A key that appears in the example file must be **honoured**, and a key
+  the design will not honour must be **absent**. Half a config surface is worse
+  than either whole one: a documented setting that has no effect is indetectable
+  from the outside, because nothing ever contradicts the person who set it.
+- **R-79** Every default is **imported from the constant the code already uses**,
+  never retyped. A hand-copied default is a second source of truth whose drift is
+  invisible: the config keeps serving the old number after the constant moves.
+  Where a constant is legitimately private to its module, the config key is left
+  *unset* rather than duplicated, and "unset" means "that module decides".
+- **R-80** An **unknown key is rejected**, not ignored. A silently dropped
+  `verifyEndoint` typo is the same failure as R-78 arrived at by accident.
+- **R-81** An **absent file is not an error**, and the run states which of the two
+  it used. A run on defaults because the file sits one directory up must not look
+  identical to a run that honoured it.
+- **R-82** A malformed, schema-violating, credential-bearing or
+  **unreadable-but-present** file **stops the run**. Falling back to defaults for a
+  file somebody edited on purpose is precisely the defect the config surface exists
+  to close. "File not found" is the only condition that means "no config".
+- **R-83** Credential-shaped keys are **refused by name**, with a message naming
+  where the value belongs (R-26), rather than as a generic unknown key — which
+  invites the reader to conclude the feature does not exist yet and try harder. A
+  config file is committed, backed up and diffed by people who never intended to
+  handle a password.
+
+### The market matrix
+
+- **R-84** The expansion of market × device × journey is a function of the axis
+  **set**, not of argument order: axes are deduplicated and sorted, so two
+  orderings of the same request produce byte-identical output and one scenario key
+  always means the same scenario.
+- **R-85** **Every** profile and journey the expansion needs is validated before
+  anything launches, and one bad name refuses the whole matrix, listing all of
+  them. Discovering a typo ninety browser launches in is not a report, it is a
+  bill.
+- **R-86** One scenario failing never ends the matrix, and a scenario that could
+  not be executed **at all** is recorded as `unmeasured` with its reason — never
+  dropped, and never absent. A gap in the results must not read as a market that
+  was fine. This includes a *preparation* that refused (R-8): a refusal to
+  downgrade arrives here as data.
+- **R-87** Concurrency is **bounded, declared and measured**: the result records
+  both the limit applied and the peak actually reached. The default is documented
+  as provisional against EXP-007, because each in-flight scenario costs a browser
+  context and, on the daemon engine, a whole Chrome — and picking a parallelism
+  number before measuring is how the first OOM happens.
+- **R-88** A per-scenario seed is **derived from one base seed** and the scenario's
+  own key, so scenarios differ from each other (R-71's argument, at matrix scale)
+  while the whole matrix replays exactly from a single number (R-60).
+- **R-89** At matrix scale a write is **counted and consented to in advance**, not
+  merely announced: a run of state-changing journeys across the matrix is one real
+  form, registration or booking per scenario, and the operator is told the number
+  and must pass an explicit flag before anything launches. A dry run states the
+  count for free.
+
+### Evidence has a shelf life
+
+- **R-90** Retention tiers (R-21) decide what a run **captures**; a separate
+  policy decides how long it is **kept**. Neither can substitute for the other, and
+  unbounded local accumulation of packages that "may contain personal data" (R-27)
+  is a liability rather than a disk-space question.
+- **R-91** Planning never deletes and the **default is a dry run**. There is no
+  flag to forget: destruction is opt-in, because a destructive default is how
+  somebody loses the one trace that mattered.
+- **R-92** Age ceilings are **asymmetric in the same direction as retention**: a
+  passing run's artifacts are cheap to discard because they are cheap to
+  *regenerate*, while a failure's trace may be the only copy of a bug that never
+  recurs.
+- **R-93** A privacy flag **shortens** a ceiling and never extends it, and a
+  flagged run is never selected to free disk space. A disk-space job must not be
+  the thing that quietly removes the only record of what was exposed.
+- **R-94** A cap that could not be met is **reported as a shortfall**, and a run
+  whose identity cannot be established is reported and **left in place**. "Could
+  not get under the cap" must never read as "did", and not knowing what something
+  was is a reason to look, not a licence to delete.
+
+### The wire contract
+
+- **R-95** The machine-readable outputs a consumer integrates against carry a
+  **schema version from a single constant**, stamped by the writer and defaulted
+  nowhere. Two writers with two versions is the failure this prevents.
+- **R-96** The version bumps on a removal, rename, type change or meaning change —
+  anything that makes a consumer written against the old shape wrong — and **not**
+  on a purely additive field. A version that changes every commit trains consumers
+  to ignore it, which is worse than having none.
+
+### Visitor identity across runs
+
+- **R-97** `visitorType: returning` means a **real restored session**: the browser
+  state is saved before the context closes and loaded on the next run of that
+  profile. The saved state is a credential, not evidence — it holds live cookies —
+  so it lives outside any run directory and outlives one run by design.
+- **R-98** A run that **could not** meet its declared visitor type says so. A
+  `returning` profile with no saved session has tested a first-time visitor, and
+  the evidence still records the declaration either way; without a statement of
+  which actually happened the two are indistinguishable, which is R-3's failure in
+  a different costume. An `anonymous` profile saves nothing, because saving would
+  silently make the next run returning.
+
+### Interaction timing
+
+- **R-99** An interaction observer is **armed before the page's own scripts**, not
+  read at the end. The browser's default event-timing buffer retains only slow
+  entries, so a read-time observer reports a *fast* page as never interacted with
+  and understates the metric by up to the buffer's threshold. Arming bounds the
+  residual error at one frame, and the bound is stated where the number is
+  produced.
+- **R-100** A metric with no interaction to measure reports `null`, and `null`
+  means "there was nothing to measure" rather than zero — the same rule as R-3, at
+  the level of a single number. An artifact that can only be produced at
+  context-creation time is likewise **armed always and kept selectively**; it can
+  never be started retroactively for the run that turned out to need it.
+
+## 4. Quality requirements
+
+- **Q-1** Verify by execution, not inspection. Response shapes are captured from
+  the real CLI; workflows are tested against a real worker, so retry counts are
+  assertions about executions that happened.
+- **Q-2** 100% lines/statements/functions coverage, with entrypoints excluded and
+  **every exclusion carrying a comment naming why**. An exclusion without a
+  reason is how "the agent never runs at all" becomes invisible to a green suite.
+- **Q-3** The **unit** suite requires no browser, no network, and no open socket.
+  It is the CI gate.
+- **Q-3b** Claims about what a *browser* does are settled by an **end-to-end**
+  suite driving a real browser through the real run path — because a unit test
+  that injects a fake runtime proves the judgement is right about a reading it was
+  handed, and can never prove the reading is real. It runs offline, against local
+  fixtures.
+- **Q-4** A threshold that could not be measured is never a pass. `unmeasured`
+  outranks `fail` in an experiment's overall verdict.
+- **Q-5** A rate over an empty denominator is `null`, not 0 and not 100.
+- **Q-6** Experiments never run in CI. They need the real world; CI must stay
+  deterministic.
+- **Q-7** Defect fixtures are served locally. Breaking production to test the
+  tester is not an acceptable trade, and a real bug that exists today cannot be
+  relied on to exist tomorrow.
+- **Q-8** The **layering rules are enforced by a tool**, not by review. Every rule
+  carries the failure it prevents in its own text, so a CI log explains the
+  invariant rather than naming a rule; and every rule is proven to fire against a
+  deliberate violation, because a rule with a mistyped pattern is a silent no-op —
+  the same class of defect as an unread config key (R-78). Type-only imports count:
+  changing `import` to `import type` must not be a way to cross a boundary
+  unnoticed.
+
+## 5. Acceptance targets
+
+Declared in `src/experiments/definitions.ts`. Thresholds are **our** acceptance
+targets, not vendor guarantees. A target that cannot be evaluated with today's
+infrastructure is still declared — declaring it and reporting `unmeasured` turns
+"we have no proxy vendor" from an unstated assumption into a recorded fact with a
+number attached.
+
+| Experiment | Metric | Target | Phase 0 result |
+|---|---|---|---|
+| **EXP-000** primitives | primitive-success | ≥ 100% | **pass** — 100% |
+| | browser-launch | ≥ 98% | pass — 100% |
+| **EXP-001** geo egress | connection-success | ≥ 97% | pass — 100% |
+| | country-match | ≥ 98% | **unmeasured** |
+| | city-match | ≥ 90% | **unmeasured** |
+| | latency (mean TTFB) | ≤ 3000 ms | pass — 2303 ms |
+| **EXP-002** sticky session | ip-stability | ≥ 95% | **pass** — 100%, but see caveat |
+| **EXP-003** session isolation | cookie-isolation | ≥ 100% | **pass** — 100% |
+| | storage-isolation | ≥ 100% | pass — 100% |
+| **EXP-004** profile consistency | language / timezone / viewport | ≥ 100% each | **pass** — 100% each |
+| **EXP-005** journey stability | journey-completion | ≥ 95% | **pass** — 100% |
+| | verdict-stability | ≥ 95% | pass — 100% (PASS ×5) |
+| **EXP-006** evidence quality | defect-detection | ≥ 100% | **pass** — 8/8 |
+| | evidence-completeness | ≥ 95% | pass — 95.5% |
+| **EXP-007** concurrency | concurrent-completion | ≥ 95% | **not run** |
+| | verdict-agreement | ≥ 95% | not run |
+| | egress-identity-held | ≥ 100% | not run |
+| | wall-clock-factor | ≤ 2× solo | not run |
+| | peak-memory-per-session | ≤ 500 MB | **unmeasurable today** |
+
+Three caveats are part of the result, not footnotes to it:
+
+**EXP-001 is `unmeasured`, and that is the honest verdict.** With no geo-proxy
+vendor configured, every session egresses from this machine. Running the Oslo
+profile from a Norwegian office observes country `NO` and *would* report
+`country-match 100% ✓` — a green tick for a capability that does not exist. The
+identical run against the Berlin profile would report 0% for the same reason.
+Neither number measures the system under test, so both are `unmeasured` with the
+reason attached. The baseline observations are still written to `results.jsonl`;
+they are simply not allowed to answer the hypothesis. (20 samples, 1 distinct
+egress IP, observed `NO` / Lysaker.)
+
+**EXP-002 measured 24 seconds, not ten minutes.** Each sample held one session
+across 5 reads at 6-second intervals. The external PRD asks for a 10-minute
+window; that is not what was measured. A short window can prove instability but
+cannot prove stability over a long journey. The window is now a **parameter**
+rather than a constant, with the reads spread across whatever window is asked for
+(101 requests at the old fixed spacing would measure ipinfo's rate limiter instead
+of the vendor's stickiness), and the note the summary carries states the window
+actually used. 24 seconds remains the default on purpose — ten minutes × 10
+samples is 100 minutes, and a killed feasibility run leaves a half-written
+`results.jsonl` with no summary. No CLI flag reaches the parameter yet
+([gaps C-1](gaps.md#c-1--the-stability-window-is-a-parameter-now-and-no-flag-reaches-it)),
+so the measured number is still 24 seconds.
+
+**EXP-007 is declared and has not been run**, and one of its targets cannot be
+evaluated at all: peak memory across the browser process tree is not observable
+from the runner, because the browser is a separate daemon on one engine and an
+unsampled child on the other. That target is still declared, because OOM is the
+reason concurrency was 1 — reporting it `unmeasured` with the reason attached turns
+"we never looked at memory" from an unstated assumption into a recorded fact
+(Q-4). The consequence is that EXP-007's overall verdict will be `unmeasured` until
+a process-tree probe exists, and `unmeasured` is not a failed run (R-46).
+
+## 6. What Phase 0 found
+
+Against production `digilist.no/blogg`:
+
+- **CLS 0.76 on desktop, passing on mobile** — a severe, device-specific layout
+  shift, and the finding that motivated the viewport axis. **Superseded:**
+  re-measured 2026-08-12, worst CLS across 14 pages is 0.025. Kept as the reason
+  the axis exists, not as a current defect.
+
+And two defects in `geoqa` itself, both caught by an experiment rather than a
+test:
+
+- A mobile profile rendered at 1280 px because nothing applied the device
+  viewport. Every check passed and the evidence package was 100% complete; only
+  the screenshot showed it. The viewport is now a verified axis (R-6).
+- `is visible` on a missing element returned an error, so "the page has no CTA"
+  was filed as *our* instrumentation failure rather than as a site defect.
+  EXP-006 scored 75% before the fix and 100% after.
+
+Both are the argument for R-17/R-18 and for treating experiments as a distinct
+mechanism from tests.
+
+## 7. Non-goals, restated as design refusals
+
+These are things the system deliberately will not do, each because doing it
+destroys the signal:
+
+- Retry a journey to get a green result.
+- Report the last of several attempts as *the* result, or average them — the worst
+  reading is the one a repeated run exists to find.
+- Average an unverified axis into a pass.
+- Report a number for an axis with no data source.
+- Fall back to direct egress when a market's proxy is unavailable.
+- Put an LLM anywhere in the measurement path while journeys must be
+  reproducible.
+- Score an experiment threshold it could not evaluate.
+- Ship an evidence package that looks complete when it is not.
+- Offer a setting that nothing reads. A knob with no effect is worse than a
+  hardcoded constant, because the constant is at least discoverable.
+- Delete anything by default, or delete something whose identity it could not
+  establish.
+- Fill a gap in a matrix with a passing scenario, a zero, or silence.
+
+## 8. External PRD anchors
+
+Requirements known to exist in the external PRD, cited from the source:
+
+| Anchor | Where cited | Status |
+|---|---|---|
+| **§24** — the questions an evidence package must answer | `evidence/manifest.ts` (`REQUIRED_QUESTIONS`) | implemented as R-24 |
+| **§37** — adaptive recovery in journeys | `journeys/spec.ts` | **deferred by design.** Belongs on top of the deterministic path, and only once that path is reliable enough to have a baseline worth deviating from |
+| 10-minute session stickiness | `cli/samplers.ts` (`PRD_STABILITY_WINDOW_MS`, `resolveStabilityWindow`), EXP-002 notes | **expressible, not yet measured** — the window is a parameter and the PRD's value is a named constant; the default is still 24 s and no flag reaches the parameter. See [§5](#5-acceptance-targets) |
+| "do not create one vague AI-generated score" | `confidence/score.ts` | implemented as R-33/R-34 |
+
+## 9. Phase boundary
+
+**Phase 0 (feasibility) is complete**: deterministic, no LLM, read-only against
+live sites, 7 experiments run against agent-browser 0.34.0 and Chrome 151. Its
+results in [§5](#5-acceptance-targets) are a historical record and are not
+re-measured by later work.
+
+**Phase 1 has landed as capability, not yet as evidence.** A second engine
+(Playwright, per-context proxy, real geolocation, restored visitor sessions), a
+16-profile market matrix, human-paced journeys with seeded variation, journeys that
+fill forms and change state, a bounded in-process matrix runner, a config file that
+is read, evidence pruning, an enforced layer map and a versioned wire contract all
+exist. What has *not* happened is the measurement: EXP-007 has never run, the
+matrix has never been executed end to end against a live site, and the central
+geographic claim still has no exit IP behind it — that last one is a purchase
+(`infra/`), and everything the code can do about it is done.
+
+Everything not built — and everything built but unproven, including one thing that
+is red on the current tree — is tracked in [`gaps.md`](gaps.md).

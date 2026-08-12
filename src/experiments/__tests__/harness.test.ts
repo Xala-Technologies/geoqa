@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EXPERIMENTS, EXP_001, findExperiment } from "../definitions.js";
 import {
@@ -240,12 +241,33 @@ describe("findExperiment", () => {
     expect(findExperiment("EXP-999")).toBeNull();
   });
 
-  it("registers all seven Phase 0 experiments with unique metric keys", () => {
-    expect(Object.keys(EXPERIMENTS)).toHaveLength(7);
+  it("registers all eight Phase 0 experiments with unique metric keys", () => {
+    expect(Object.keys(EXPERIMENTS)).toHaveLength(8);
     for (const experiment of Object.values(EXPERIMENTS)) {
       const keys = experiment.metrics.map((m) => m.key);
       expect(new Set(keys).size, experiment.id).toBe(keys.length);
       expect(experiment.hypothesis.length).toBeGreaterThan(20);
     }
+  });
+
+  it("declares the concurrency experiment the matrix workflow cites, with a target for the OOM it fears", () => {
+    const concurrency = findExperiment("EXP-007");
+    expect(concurrency?.id).toBe("EXP-007-concurrency");
+    // The memory target is the one that keeps concurrency at 1. Declared even
+    // though nothing can evaluate it yet — an undeclared fear is an unstated
+    // assumption, and this experiment exists to stop being one.
+    expect(concurrency?.metrics.map((m) => m.key)).toContain("peak-memory-per-session");
+  });
+
+  // A-3b was a citation pointing at nothing: the comment justifying sequential
+  // execution named EXP-007, and no spec, sampler or directory existed. A cited
+  // experiment that cannot be resolved is worse than an uncited gap, because it
+  // reads as "measured elsewhere".
+  it("resolves every experiment id cited by the matrix workflow", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const workflows = readFileSync(path.join(here, "..", "..", "temporal", "workflows.ts"), "utf8");
+    const cited = [...new Set(workflows.match(/EXP-\d{3}/g) ?? [])];
+    expect(cited.length).toBeGreaterThan(0);
+    for (const id of cited) expect(findExperiment(id)?.id, id).toBeDefined();
   });
 });

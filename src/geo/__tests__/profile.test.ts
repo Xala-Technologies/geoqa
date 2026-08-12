@@ -79,13 +79,21 @@ describe("the profiles that actually ship", () => {
   const dir = path.join(repoRoot, "profiles");
   const files = readdirSync(dir).filter((f) => f.endsWith(".yaml"));
 
-  it("finds all four", () => {
-    expect(files.sort()).toEqual([
-      "berlin-mobile.yaml",
-      "oslo-desktop.yaml",
-      "oslo-mobile.yaml",
-      "stockholm-mobile.yaml",
-    ]);
+  it("covers every market on both devices", () => {
+    // The matrix is the unit of coverage: a market tested on one device only
+    // cannot catch a device-specific defect, which is the class the very first
+    // live run hit (CLS 0.76 on desktop, passing on mobile).
+    //
+    // Derived from the directory rather than a literal list. A hardcoded roster
+    // is a maintenance tax that fires on every market added, and it fired twice
+    // in one day — once at 4 markets, once at 8.
+    const cities = [...new Set(files.map((f) => f.replace(/-(mobile|desktop)\.yaml$/, "")))].sort();
+    expect(cities.length).toBeGreaterThanOrEqual(8);
+    for (const city of cities) {
+      expect(files, `${city} desktop`).toContain(`${city}-desktop.yaml`);
+      expect(files, `${city} mobile`).toContain(`${city}-mobile.yaml`);
+    }
+    expect(files).toHaveLength(cities.length * 2);
   });
 
   it.each(files)("%s parses, and its id matches its filename", (file) => {

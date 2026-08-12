@@ -1,0 +1,16 @@
+# Above the Arctic Circle. Pairs with Tromso to distinguish 'far north' from 'one odd exit'.
+id: bodo-mobile
+label: Bodo, mobile
+market:
+  id: bodo
+  country: NO
+  city: Bodo
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [67.2804, 14.4049]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+visitorType: anonymous

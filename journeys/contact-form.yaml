@@ -1,0 +1,49 @@
+id: contact-form
+title: Contact form, filled and submitted
+description: >
+  J06. Fills a contact form the way a person would — reading the labels, taking
+  time between fields — and SUBMITS it, then checks the confirmation the visitor
+  would see.
+
+  `writes: true` is not decoration. This journey creates a real record on
+  whatever it is pointed at, so the run announces it before starting, records it
+  in the evidence metadata, and flags every screenshot for review — a frame taken
+  mid-form plausibly contains someone's name and email, and no redaction pass
+  can find that in an image.
+
+  Values come from `--var`, never from this file:
+
+    pnpm geoqa journey run --journey contact-form --url https://example.test/contact \
+      --var name="QA Runner" --var email=qa@example.test --var message="Test"
+
+  A `fill` value is treated as a secret everywhere downstream. The step record
+  says which selector was filled and never what went into it, which is what makes
+  the same DSL safe for a login journey.
+writes: true
+steps:
+  - { action: open, url: "{target}", label: open the contact page }
+  - { action: assert, check: selector-visible, selector: "form", severity: critical, label: the form is there }
+  - { action: screenshot, label: empty-form }
+
+  # Read the form before filling it in.
+  - { action: pause, minMs: 1500, maxMs: 3500, label: read the form }
+
+  - { action: fill, selector: "#name", value: "{name}", label: enter a name }
+  - { action: pause, minMs: 600, maxMs: 1800 }
+  - { action: fill, selector: "#email", value: "{email}", label: enter an email }
+  - { action: pause, minMs: 500, maxMs: 1600 }
+  - { action: select, selector: "#topic", values: ["support"], label: choose a topic }
+  - { action: fill, selector: "#message", value: "{message}", label: write the message }
+  - { action: pause, minMs: 800, maxMs: 2400, label: re-read before sending }
+  - { action: check, selector: "#consent", label: accept the terms }
+
+  # Some visitors submit with the keyboard rather than the button.
+  - { action: click, selector: "#send", probability: 0.8, label: press Send }
+  - { action: press, key: "Enter", probability: 0.2, label: submit with the keyboard }
+
+  - { action: wait, target: "#confirmation" }
+  - { action: screenshot, label: confirmation, fullPage: true }
+  - { action: assert, check: selector-visible, selector: "#confirmation", severity: critical, label: the visitor is told it worked }
+  - { action: assert, check: no-http-5xx, severity: critical, label: submitting did not 500 }
+  - { action: assert, check: no-page-errors, severity: high }
+  - { action: assert, check: no-console-errors, severity: medium }

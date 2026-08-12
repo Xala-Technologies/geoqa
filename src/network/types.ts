@@ -58,3 +58,27 @@ export interface GeoNetworkProvider {
   createSession(market: Market, nowMs: number): Promise<SessionResult>;
   close(session: GeoNetworkSession): Promise<void>;
 }
+
+/**
+ * What a proxy said when we tried to authenticate through it.
+ *
+ * Lives here rather than beside either implementation because both need it: the
+ * socket probe produces it, `httpProxyProvider.health()` interprets it, and a
+ * type in one of those files would make them import each other.
+ */
+export interface ProxyAuthResult {
+  ok: boolean;
+  status: number | null;
+  /** The vendor's own explanation of a refusal, when it left one. */
+  detail: string | null;
+}
+
+/**
+ * Attempts a real CONNECT and reports the refusal. Injectable so tests never
+ * dial a vendor.
+ *
+ * `health()` used to prove only that a gateway was listening, and reported
+ * `usable` for a proxy whose credentials were dead and whose traffic was
+ * exhausted. Vendors report both on the 407 — see `auth-probe.ts`.
+ */
+export type AuthProbe = (proxyUrl: string, timeoutMs: number) => Promise<ProxyAuthResult>;

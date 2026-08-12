@@ -1,0 +1,16 @@
+# Mid-Norway west coast. Confirmed on Telia rather than Lyse, so it also varies the ISP under test.
+id: alesund-desktop
+label: Alesund, desktop
+market:
+  id: alesund
+  country: NO
+  city: Alesund
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [62.4722, 6.1495]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

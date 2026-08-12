@@ -76,8 +76,20 @@ export interface Finding {
   detectedAt: string;
 }
 
-/** The full result of one geoqa run — what the CLI prints and an agent consumes. */
+/**
+ * The full result of one geoqa run — what the CLI prints and an agent consumes.
+ *
+ * This shape IS the integration contract (`--json`), so it carries a version.
+ * The constant and the rule for bumping it live next to the other consumed
+ * artifact, in `evidence/manifest.ts` (`GEOQA_SCHEMA_VERSION`) — one number
+ * covers both, because a consumer reading a run result and the evidence package
+ * it points at is reading one contract. It is stamped by `assembleResult`, not
+ * defaulted anywhere, so a result that reached a consumer without going through
+ * the assembler is visibly not a run result.
+ */
 export interface GeoQaRunResult {
+  /** `GEOQA_SCHEMA_VERSION` at the time of the run. */
+  schemaVersion: number;
   runId: string;
   target: string;
   profileId: string;

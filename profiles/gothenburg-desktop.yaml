@@ -1,0 +1,17 @@
+# The non-capital Swedish market at desktop width. Paired with gothenburg-mobile
+# it answers whether a secondary market degrades on one form factor only.
+id: gothenburg-desktop
+label: Gothenburg, desktop
+market:
+  id: gothenburg
+  country: SE
+  city: Gothenburg
+  language: sv-SE
+  timezone: Europe/Stockholm
+  currency: SEK
+  coordinates: [57.7089, 11.9746]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

@@ -34,8 +34,26 @@ export const DEFECTS: DefectFixture[] = [
   { path: "/no-links", description: "A page with no internal links", expects: "navigation", caughtBy: "selector-count-min" },
 ];
 
+/**
+ * The page shell every fixture is served in.
+ *
+ * The viewport meta tag is LOAD-BEARING, not boilerplate. A mobile profile that
+ * emulates a real device sets Chromium's `isMobile`, and a page with no
+ * `<meta name="viewport">` then falls back to the legacy 980px layout viewport —
+ * so `window.innerWidth` reports 980 however small the window is. Measured: 980
+ * without the tag, 390 with it, at the same 390x844 window.
+ *
+ * Without the tag every mobile fixture run reported `viewport: mismatch` and lost
+ * its `trustworthy` flag. That verdict was CORRECT — a page missing this tag
+ * really does render at 980px on a phone — which makes it a site defect worth
+ * detecting rather than something to suppress. The fixtures carry the tag because
+ * they stand in for real responsive pages; a route that omits it deliberately
+ * would be a useful ninth defect.
+ */
 const shell = (title: string, body: string): string =>
-  `<!doctype html><html lang="nb-NO"><head><meta charset="utf-8"><title>${title}</title></head><body>${body}</body></html>`;
+  `<!doctype html><html lang="nb-NO"><head><meta charset="utf-8">` +
+  `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+  `<title>${title}</title></head><body>${body}</body></html>`;
 
 const LINKS = ["/a", "/b", "/c"].map((h) => `<a href="${h}">lenke ${h}</a>`).join(" ");
 const HEADING = "<h1>Fixture</h1>";
@@ -48,6 +66,54 @@ export function fixtureBody(path: string): { status: number; html: string } | nu
     // first EXP-006 run reported the healthy page as defective.
     case "/favicon.ico":
       return { status: 204, html: "" };
+    /**
+     * A stand-in for the egress-identity endpoint, so an end-to-end run can
+     * verify both geographic axes without reaching the internet.
+     *
+     * NOT a defect, so deliberately absent from `DEFECTS`. Serving it as HTML is
+     * fine for both consumers: `observeNetwork` reads `innerText` of the body,
+     * and `observeEgressIp` calls `response.json()`, which parses the body text
+     * regardless of content type. A constant IP also means a healthy run
+     * observes the same egress at both ends, which is what `egressHeld` expects.
+     */
+    case "/ipinfo":
+      return {
+        status: 200,
+        html: JSON.stringify({
+          ip: "213.52.15.251",
+          city: "Lysaker",
+          region: "Akershus",
+          country: "NO",
+          org: "AS2116 GLOBALCONNECT AS",
+          timezone: "Europe/Oslo",
+        }),
+      };
+    /**
+     * A contact form, and its confirmation.
+     *
+     * Here so the input half of the DSL — fill, select, check, press, and a real
+     * submit — can be proven end to end without registering an account on a live
+     * product. `/contact` posts to itself; the server answers a POST with
+     * `/contact-sent`, so a journey can assert on a confirmation the way a human
+     * would read one.
+     */
+    case "/contact":
+      return {
+        status: 200,
+        html: shell(
+          "Contact",
+          `${HEADING}<form method="post" action="/contact">
+             <input name="name" id="name" placeholder="Navn">
+             <input name="email" id="email" type="email" placeholder="E-post">
+             <select name="topic" id="topic"><option value="sales">Salg</option><option value="support">Support</option></select>
+             <input name="consent" id="consent" type="checkbox">
+             <textarea name="message" id="message"></textarea>
+             <button type="submit" id="send">Send</button>
+           </form>${LINKS}`,
+        ),
+      };
+    case "/contact-sent":
+      return { status: 200, html: shell("Takk", `${HEADING}<p id="confirmation">Takk for meldingen din.</p>${LINKS}`) };
     case "/healthy":
       return { status: 200, html: shell("Healthy", `${HEADING}<p>Alt i orden.</p>${LINKS}`) };
     case "/status-404":
@@ -67,6 +133,33 @@ export function fixtureBody(path: string): { status: number; html: string } | nu
       return {
         status: 200,
         html: shell("Console error", `${HEADING}${LINKS}<script>console.error("fixture: console");</script>`),
+      };
+    /**
+     * A heading that arrives LATE — the false-defect reproduction.
+     *
+     * Under load, `selector-visible` reported a missing `h1` on six digilist.no
+     * pages whose raw HTML contained one, and all six passed when re-run alone.
+     * The engine was inventing site defects out of its own slowness, which is the
+     * single failure mode this project exists to prevent.
+     *
+     * 900ms is chosen to exceed the old 600ms absence-settle, so this route fails
+     * against a poll-and-settle implementation and passes against one that
+     * auto-waits. It is a regression test for the engine, not a defect fixture —
+     * hence absent from `DEFECTS`.
+     */
+    case "/slow-heading":
+      return {
+        status: 200,
+        html: shell(
+          "Slow heading",
+          `<p>Venter…</p>${LINKS}<script>
+             setTimeout(() => {
+               const h = document.createElement('h1');
+               h.textContent = 'Late but present';
+               document.body.insertBefore(h, document.body.firstChild);
+             }, 900);
+           </script>`,
+        ),
       };
     case "/no-links":
       return { status: 200, html: shell("No links", `${HEADING}<p>Ingen lenker.</p>`) };
@@ -89,6 +182,17 @@ export interface FixtureServer {
 export function startFixtureServer(): Promise<FixtureServer> {
   const server: Server = createServer((req, res) => {
     const path = (req.url ?? "/").split("?")[0] ?? "/";
+    // A submitted form is answered with its confirmation, so a journey can prove
+    // the write landed rather than only that the button was clickable. The body
+    // is deliberately not read: what was typed is the visitor's, and a fixture
+    // that echoed it would be the one place this repo writes form input to a log.
+    if (req.method === "POST" && path === "/contact") {
+      req.resume();
+      const fixture = fixtureBody("/contact-sent");
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(fixture?.html ?? "");
+      return;
+    }
     const fixture = fixtureBody(path);
     if (!fixture) {
       res.writeHead(404, { "content-type": "text/plain" });

@@ -10,20 +10,20 @@
  * Every stage takes its dependencies as arguments rather than importing them,
  * so each is testable without a browser, a proxy or a workflow engine.
  */
-import { observeBrowser, observeNetwork } from "../geo/observe.js";
+import { observeBrowser, observeEgressIp, observeNetwork } from "../geo/observe.js";
 import { loadGeoProfile } from "../geo/profile.js";
-import type { GeoProfile, GeoVerification } from "../geo/types.js";
-import { verifyGeo } from "../geo/verify.js";
+import type { AxisResult, GeoProfile, GeoVerification } from "../geo/types.js";
+import { compareEgressHeld, verifyGeo } from "../geo/verify.js";
 import type { BrowserRuntime } from "../browser/types.js";
-import { runJourney, type JourneyResult } from "../journeys/engine.js";
-import { loadJourney, resolveSteps } from "../journeys/spec.js";
-import { buildManifest, type Artifact, type EvidenceManifest } from "../evidence/manifest.js";
+import { runJourney, type JourneyResult, type StepResult } from "../journeys/engine.js";
+import { loadJourney, resolveSteps, type Journey } from "../journeys/spec.js";
+import { buildManifest, GEOQA_SCHEMA_VERSION, type Artifact, type EvidenceManifest } from "../evidence/manifest.js";
 import { describeExisting, ensureRunDirectory, writeJsonArtifact, writeManifest, writeTextArtifact } from "../evidence/store.js";
 import { screenshotRisk } from "../evidence/redact.js";
 import { findingsFromSteps, rankFindings } from "../findings/classify.js";
 import type { GeoQaRunResult } from "../findings/types.js";
 import { scoreRun } from "../confidence/score.js";
-import { newEvidenceId, runEvidenceDir, type RunSpec } from "./context.js";
+import { newEvidenceId, runEvidenceDir, type RunEngine, type RunSpec } from "./context.js";
 import { RETENTION } from "../evidence/manifest.js";
 
 export class StageError extends Error {
@@ -89,19 +89,106 @@ export async function verifyEnvironment(
   return verifyGeo(profile, network, browser);
 }
 
-/** Run the journey, with variables resolved against the spec. */
+/**
+ * Run the journey, with variables resolved against the spec.
+ *
+ * `seed` overrides `spec.seed` for one attempt. A repeated run needs each attempt
+ * to pace differently — otherwise every attempt makes identical choices and the
+ * repetition measures nothing about variability — while the whole set stays
+ * reproducible, because the per-attempt seeds are derived from the base one.
+ */
 export async function executeJourney(
   runtime: BrowserRuntime,
   spec: RunSpec,
-  journey: { id: string; title: string; description: string; steps: Parameters<typeof resolveSteps>[0] },
+  journey: Journey,
   log?: (line: string) => void,
+  seed?: number,
 ): Promise<JourneyResult> {
   const vars = { target: spec.target, ...spec.vars };
   const resolved = { ...journey, steps: resolveSteps(journey.steps, vars) };
   return runJourney(runtime, resolved, {
     screenshotDir: runEvidenceDir(spec),
+    seed: seed ?? spec.seed,
     ...(log ? { log } : {}),
   });
+}
+
+/** The check kind reported for a mid-run egress rotation. */
+export const EGRESS_HELD_CHECK = "egress-held";
+
+export interface EgressHeldResult {
+  axis: AxisResult;
+  /** Present ONLY when a rotation was proven. */
+  step: StepResult | null;
+}
+
+/**
+ * Confirm the run held one network identity from first navigation to last.
+ *
+ * Runs AFTER the journey and BEFORE evidence collection, so a proven rotation
+ * reaches `verdictFor` in time to set the retention tier — a run whose
+ * measurements came from two exits is exactly the run whose trace you want.
+ *
+ * A rotation is `errored`, not `failed`, and categorised `instrumentation`. The
+ * page did nothing wrong; our own network moved under the measurement, so
+ * nothing observed can be attributed to the site. Filing it against the site
+ * would be the same mistake as reporting a dead browser as a broken page.
+ *
+ * `unverified` produces NO step. We are not entitled to a verdict we could not
+ * read, and an unreadable closing probe (a strict CSP, an offline endpoint) must
+ * not discard an otherwise good run.
+ */
+export async function verifyEgressHeld(
+  runtime: BrowserRuntime,
+  verifyEndpoint: string,
+  openingIp: string | null,
+  index: number,
+  now: () => number = Date.now,
+): Promise<EgressHeldResult> {
+  const started = now();
+  const closingIp = await observeEgressIp(runtime, verifyEndpoint);
+  const axis = compareEgressHeld(openingIp, closingIp);
+  if (axis.verdict !== "mismatch") return { axis, step: null };
+  return {
+    axis,
+    step: {
+      index,
+      action: "assert",
+      label: "egress held for the whole run",
+      outcome: "errored",
+      severity: "critical",
+      category: "instrumentation",
+      check: EGRESS_HELD_CHECK,
+      detail: axis.reasons.join("; "),
+      expected: `egress stays ${openingIp}`,
+      observed: closingIp,
+      durationMs: now() - started,
+    },
+  };
+}
+
+/**
+ * The trace file's name and type, which differ by ENGINE.
+ *
+ * Both engines produce the `trace` artifact kind and neither produces the same
+ * file: agent-browser's `trace stop` writes a Chrome trace (`{"traceEvents": …}`,
+ * JSON), Playwright's `tracing.stop` writes a ZIP. Both used to land on
+ * `trace.json`, so on a Playwright run the extension lied and the manifest
+ * advertised `application/json` for a zip archive — the file was valid and every
+ * ordinary way of opening it failed, leaving `npx playwright show-trace` as
+ * something you had to already know.
+ *
+ * The kind stays `trace` for both, because retention and completeness ask whether
+ * the run kept a trace, not what container it arrived in. The path and the mime
+ * carry the format; that is the whole honest expression of it.
+ *
+ * This lives in `run/`, not in `evidence/`: the engine is part of the RunSpec's
+ * identity and nothing in `evidence/` may learn an engine's name.
+ */
+export function traceArtifactFormat(engine: RunEngine): { file: string; mime: string } {
+  return engine === "playwright"
+    ? { file: "trace.zip", mime: "application/zip" }
+    : { file: "trace.json", mime: "application/json" };
 }
 
 export interface CollectInput {
@@ -135,15 +222,32 @@ export async function collectEvidence(
       target: spec.target,
       profile: input.profile,
       geo: input.geo,
-      journey: { id: journey.journeyId, verdict: journey.verdict, counts: journey.counts, steps: journey.steps },
+      journey: {
+        id: journey.journeyId,
+        verdict: journey.verdict,
+        counts: journey.counts,
+        // The seed is the only way to replay a run whose pacing and optional
+        // steps were drawn from it, so it belongs in the artifact, not the log.
+        seed: journey.seed,
+        writes: journey.writes,
+        touchedForm: journey.touchedForm,
+        steps: journey.steps,
+      },
       createdAt: input.createdAt,
     }),
   );
 
   // Screenshots were written by the journey itself; describe what landed.
+  //
+  // The risk flags are DERIVED, not hardcoded. They used to be `false, false`,
+  // which was harmless while journeys only read pages and became a lie the moment
+  // one could register an account or send a contact form: a screenshot taken
+  // mid-form plausibly contains a name, an email or a password, and no regex will
+  // ever find it in an image. Flagging it is all we can honestly do.
+  const risk = screenshotRisk({ hadForm: journey.touchedForm, authenticated: journey.writes });
   for (const label of journey.screenshots) {
     const artifact = describeExisting(dir, "screenshot", label, `${label}.png`);
-    artifacts.push({ ...artifact, risk: screenshotRisk({ hadForm: false, authenticated: false }) });
+    artifacts.push({ ...artifact, risk });
   }
 
   if (tier.includes("vitals")) {
@@ -167,8 +271,12 @@ export async function collectEvidence(
     artifacts.push(describeExisting(dir, "har", "har", "network.har"));
   }
   if (tier.includes("trace")) {
-    await runtime.traceStop(`${dir}/trace.json`);
-    artifacts.push(describeExisting(dir, "trace", "trace", "trace.json"));
+    const trace = traceArtifactFormat(spec.engine);
+    await runtime.traceStop(`${dir}/${trace.file}`);
+    // `describeExisting` types an artifact by kind, and a kind cannot know which
+    // engine wrote it — so the format the engine actually produced overrides the
+    // per-kind default rather than the manifest describing a zip as JSON.
+    artifacts.push({ ...describeExisting(dir, "trace", "trace", trace.file), mime: trace.mime });
   }
   if (tier.includes("a11y")) {
     const violations = await runtime.a11y();
@@ -198,6 +306,18 @@ export interface AssembleInput {
   manifest: EvidenceManifest | null;
   startedAt: string;
   durationMs: number;
+  /**
+   * How many times the journey was executed, and how many of those attempts each
+   * step was failed or errored in.
+   *
+   * Optional because one attempt is the common case, and absent they default to
+   * a single observation. Supplying them is what turns a finding from `observed`
+   * into `reproduced` and moves its confidence off the flat base — "we saw it
+   * once and could not repeat it" and "it failed 3 of 3 times" are very different
+   * claims about the world, and the finding must say which one it is.
+   */
+  attempts?: number;
+  occurrences?: Record<string, number>;
 }
 
 /** Combine every stage's output into the run result an agent consumes. */
@@ -213,10 +333,15 @@ export function assembleResult(input: AssembleInput): GeoQaRunResult {
       device: input.profile.device.id,
       detectedAt: input.startedAt,
       evidence: manifest ? manifest.artifacts.map((a) => ({ label: a.label, path: a.path, mime: a.mime })) : [],
+      ...(input.attempts !== undefined ? { attempts: input.attempts } : {}),
+      ...(input.occurrences !== undefined ? { occurrences: input.occurrences } : {}),
     }),
   );
 
   return {
+    // Stamped here, at the one place a run result is built, so no consumer can
+    // receive one without a version telling it which shape it is holding.
+    schemaVersion: GEOQA_SCHEMA_VERSION,
     runId: spec.runId,
     target: spec.target,
     profileId: input.profile.id,

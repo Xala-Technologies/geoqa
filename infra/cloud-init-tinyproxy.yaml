@@ -1,0 +1,76 @@
+#cloud-config
+# ─────────────────────────────────────────────────────────────────────────────
+# A forward HTTP proxy whose only job is to be an exit IP in one country.
+#
+# tinyproxy rather than squid: squid is a caching proxy, and a cache is the last
+# thing a QA exit should have. A cached response would make geoqa measure what
+# the proxy remembered rather than what the site served, and a stale cache would
+# do it silently. tinyproxy forwards and forgets.
+#
+# THE SETTING THAT MATTERS MOST is DisableViaHeader. By default tinyproxy appends
+# `Via: 1.1 tinyproxy` to plain-HTTP requests, which announces to your own CDN
+# that the request is proxied — and a CDN or WAF that treats proxied traffic
+# differently would change the very thing being measured. That is the
+# instrumentation lie this whole project is built to avoid: measuring the
+# instrument instead of the subject.
+#
+# For https:// targets the browser issues CONNECT and the proxy tunnels bytes it
+# cannot read, so no header can be added at all. The Via header only ever touched
+# plain HTTP — which still matters, because an http:// → https:// redirect is
+# exactly the kind of geo behaviour a journey tests.
+# ─────────────────────────────────────────────────────────────────────────────
+
+package_update: true
+packages:
+  - tinyproxy
+  - ufw
+
+write_files:
+  - path: /etc/tinyproxy/tinyproxy.conf
+    owner: root:root
+    permissions: "0640"
+    content: |
+      User tinyproxy
+      Group tinyproxy
+      Port __PROXY_PORT__
+
+      # Bind to every interface. Access control is the firewall's job, not
+      # tinyproxy's: the NSG allows one source address and ufw repeats it, so a
+      # misconfigured Allow line here cannot silently open a relay.
+      Timeout 600
+      MaxClients 60
+      StartServers 4
+      MinSpareServers 4
+      MaxSpareServers 12
+
+      # Basic auth is defence in DEPTH, never the primary control. The proxy
+      # connection itself is unencrypted, so these credentials cross the network
+      # in the clear — which is tolerable only because the firewall already
+      # restricts the source. An open tinyproxy becomes someone else's relay
+      # within hours and takes the IP's reputation with it.
+      BasicAuth __PROXY_USER__ __PROXY_PASS__
+
+      # Do not announce the proxy to the target. See the header above.
+      DisableViaHeader Yes
+
+      # CONNECT is how the browser reaches https:// through a forward proxy.
+      # Restricting the ports keeps this from being a general-purpose tunnel.
+      ConnectPort 443
+      ConnectPort 563
+
+      LogLevel Warning
+      LogFile "/var/log/tinyproxy/tinyproxy.log"
+      PidFile "/run/tinyproxy/tinyproxy.pid"
+
+runcmd:
+  # The firewall is the real access control, so it goes up before the proxy does.
+  - ufw --force reset
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow from __RUNNER_CIDR__ to any port __PROXY_PORT__ proto tcp
+  - ufw --force enable
+  - systemctl enable tinyproxy
+  - systemctl restart tinyproxy
+
+final_message: "geoqa exit ready on port __PROXY_PORT__ after $UPTIME seconds"

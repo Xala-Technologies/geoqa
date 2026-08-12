@@ -1,0 +1,16 @@
+# Ostfold, close to the Swedish border. Useful for catching a geo-redirect that fires on proximity rather than country.
+id: sarpsborg-mobile
+label: Sarpsborg, mobile
+market:
+  id: sarpsborg
+  country: NO
+  city: Sarpsborg
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.2839, 11.1096]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+visitorType: anonymous
