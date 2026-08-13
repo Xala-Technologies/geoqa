@@ -61,7 +61,9 @@ alone would have known none of that.
 - Gate today: lint clean · boundaries clean (94 modules) · **925 unit tests at
   100% lines/statements/functions** · 18 e2e against real Chromium.
 - Live proxy: Decodo residential, 50 GB to 12 Sep, credentials in `.env`
-  (gitignored, 600). `sp7fr0q8ps` on `gate.decodo.com:7000`, `user-` prefix
+  (gitignored, 600). The sub-account username is in `DECODO_PROXY_USER`, deliberately
+  not written here — it identifies a billable account, which is the same reason
+  `tenant/types.ts` stores a variable NAME rather than the value. `gate.decodo.com:7000`, `user-` prefix
   required. Rotation between sessions and stickiness within one both proven.
 - `digilist.no` is 430/430 clean, so a red sweep now means a geoqa defect.
 
