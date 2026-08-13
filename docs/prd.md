@@ -172,6 +172,20 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-129** Runs are queryable across time, and the index is a **derived cache** over
+  the evidence tree rather than the record itself. Each run's own artifact is the
+  authority on that run, so a corrupt or deleted index costs nothing permanent and is
+  rebuildable. A store that owned the record would introduce the failure this system
+  exists to prevent — a confident answer about runs that did not happen the way it says.
+- **R-130** Appending to the index can **never fail a run**. A run that verified a site
+  correctly and wrote its evidence has not failed at anything a user cares about if a
+  cache line could not be written.
+- **R-131** A regression is a check that **used to pass** in the same
+  profile + journey + target, reported once at the transition. A failure with no earlier
+  pass is not a regression; it may never have worked. An `ERROR` run is skipped rather
+  than counted as a failed check, because `ERROR` means geoqa could not read the page,
+  and reporting our own instrumentation failure as the site's regression is the one
+  confusion this system refuses to make.
 - **R-126** A profile or journey id is **not a path**. It becomes a filename, so it is
   constrained to lowercase letters, digits and inner hyphens, and every resolved
   candidate is re-checked to be inside the directory it belongs to. Before this,

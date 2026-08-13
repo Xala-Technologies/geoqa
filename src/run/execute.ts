@@ -17,6 +17,8 @@ import { withEgressHeld } from "../geo/verify.js";
 import { mergeAttempts, withExtraStep, type JourneyResult } from "../journeys/engine.js";
 import type { GeoQaRunResult } from "../findings/types.js";
 import { buildRuntime, newRunId, resolveVisitorState, writeInitScript, type RunSpec } from "./context.js";
+import { appendRun } from "../history/store.js";
+import { toRunRecord } from "../history/records.js";
 import {
   applyDeviceProfile,
   assembleResult,
@@ -45,6 +47,21 @@ export interface ExecuteOptions {
    * each step together with how often it happened.
    */
   repeat?: number;
+  /**
+   * The tenant this run belongs to, for the history index. Null for single-target use.
+   *
+   * Only the id: `executeRun` has no business loading a tenant, and the id is the whole
+   * of what a cross-run question needs to scope by.
+   */
+  tenantId?: string | null;
+  /**
+   * Append this run to `<evidenceRoot>/runs.jsonl`. Default on.
+   *
+   * A flag rather than always-on because the experiment samplers execute hundreds of
+   * runs whose value is the aggregate, not the individual history — and an index that
+   * fills with sampler runs makes a real trend harder to see, not easier.
+   */
+  recordHistory?: boolean;
 }
 
 export interface PrepareResult {
@@ -218,7 +235,7 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
       visitor: { declared: profile.visitorType, restored: visitor.restored, unmet: visitor.unmet },
     });
 
-    return assembleResult({
+    const assembled = assembleResult({
       spec: options.spec,
       profile,
       geo: verifiedGeo,
@@ -239,6 +256,31 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
         ...(held.step ? { [held.step.label]: attempts.length } : {}),
       },
     });
+
+    /**
+     * Append to the run index — and NEVER let that fail the run.
+     *
+     * A run that verified a site correctly and wrote its evidence has not failed at
+     * anything a user cares about if a cache line could not be written. So the failure
+     * is logged and the result is returned regardless. The index is a derived cache;
+     * `geoqa runs rebuild` reconstructs it from the runs on disk, which is why losing a
+     * line costs nothing permanent.
+     */
+    if (options.recordHistory !== false) {
+      const vitalsRead = await runtime.vitals();
+      const problem = appendRun(
+        options.spec.evidenceRoot,
+        toRunRecord(assembled, {
+          tenantId: options.tenantId ?? null,
+          seed: result.seed,
+          engine: options.spec.engine,
+          ...(vitalsRead.ok ? { vitals: { lcp: vitalsRead.data.lcp, cls: vitalsRead.data.cls, ttfb: vitalsRead.data.ttfb, inp: vitalsRead.data.inp } } : {}),
+        }),
+      );
+      if (problem !== null) log(`warning: ${problem}`);
+    }
+
+    return assembled;
   } finally {
     if (!options.keepOpen) await runtime.close();
   }

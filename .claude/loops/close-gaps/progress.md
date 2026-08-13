@@ -673,8 +673,74 @@ Docs: gaps **A-8**, **B-11**; PRD **R-126 … R-128**.
 Gate: lint clean · boundaries clean (100 modules / 396 deps) · **1109 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
-## Next: slice 9
+## Slice 9 · Run persistence — DONE, and the database answer changed
 
-Run persistence — findings and verdicts queryable across runs. This is what trends,
-regression detection and any UI need, and it is where the database decision from slice 6
-comes due.
+`<evidenceRoot>/runs.jsonl`, one record per run, under the tenant's root when scoped —
+so a tenant's history inherits the containment already proven in slice 6.
+
+**The decision: the index is a DERIVED CACHE, not the truth.** Each run's `run.json` is
+the authority on that run, so a corrupt, truncated, hand-edited or deleted index costs
+nothing permanent and `runs rebuild` reconstructs it. A store that owned the record would
+introduce exactly the failure this project exists to prevent — a confident answer about
+runs that did not happen the way it says.
+
+**Why not SQLite, which Node now ships.** I checked rather than assumed: `node:sqlite`
+exists on Node 22.19 and prints `ExperimentalWarning: SQLite is an experimental feature
+and might change at any time`. A CLI that emits that before every line of output is a
+worse tool, and "may change at any time" is a poor foundation for the store trends and a
+UI depend on. JSONL costs one line per run, is greppable, diffs in review, and cannot
+lose a run because the run is still on disk. Recorded when SQLite *does* become right:
+when a query needs an index rather than a scan — a tenant with 10,000 runs is a 10 MB
+file scanned in milliseconds, but a hosted UI serving many tenants concurrently is a
+different problem, and this shape imports into a table without a rewrite.
+
+### Regression detection, proven live
+
+A page loses its `h1` between two runs at a stable origin:
+
+```
+1 regression(s) — a check that used to pass and now does not:
+  has a primary heading · oslo-desktop/h1 · last good …05.988Z → first bad …08.306Z
+```
+
+The first attempt at this demo did NOT produce a regression, and the engine was right: I
+ran the two halves against ephemeral fixture ports, so they were genuinely different
+targets. Fixed by binding a stable port.
+
+Four narrowings, each preventing a specific false report:
+
+- Scoped to one profile + journey + target — merging them averages a real regression into
+  noise.
+- Only the transition, so a check that broke on Monday is one entry, not one per day.
+- A failure with no earlier pass is not a regression; it may never have worked.
+- An **ERROR run is skipped**, not read as a failed check. `ERROR` means geoqa could not
+  read the page, and reporting our own instrumentation failure as the site's regression
+  is the one confusion this codebase is built to avoid.
+
+`runs list` exits 1 when there is a regression, so a scheduled check goes red.
+
+### Three honesty properties carried through
+
+`meanConfidence` is `null` for an empty history, never 0. A `null` vital stays null
+rather than becoming a zero that would show a page getting *faster* the moment it stopped
+being measurable. And `--limit` truncates the printed list only — how many runs there
+have been, and what broke, are questions about all of them.
+
+**Appending can never fail a run.** A run that verified a site and wrote its evidence has
+not failed at anything a user cares about if a cache line could not be written.
+
+**Residual:** a rebuilt record is poorer than an appended one — `run.json` carries the
+journey verdict and seed but not the assembled confidence report — and it says so rather
+than filling gaps with defaults that would read as real readings.
+
+Docs: gaps **A-4** closed; PRD **R-129 … R-131**.
+
+Gate: lint clean · boundaries clean (102 modules / 402 deps) · **1151 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
+## Next: slices 10–12 (search intelligence)
+
+A-2 Serper with a REAL `health()`; wire `searchObservation` three-state; then run EXP-007
+and the 100-session milestone. Read the DataForSEO warning in `network/types.ts` first —
+a credentials-present check let a zero-balance account pass for weeks, and that account is
+still overdrawn.

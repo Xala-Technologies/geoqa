@@ -45,6 +45,9 @@ import {
   renderMatrixResult,
   renderPruneResult,
   renderRunResult,
+  renderRunsList,
+  runsList,
+  runsRebuild,
   resolveEvidenceRoot,
   resolveProfileId,
 } from "./commands.js";
@@ -282,6 +285,7 @@ async function main(argv: string[]): Promise<number> {
       headed: flagBool(args, "headed"),
       repeat: flagNumber(args, "repeat", 1),
       corroborate: flagBool(args, "corroborate"),
+      ...(tenant !== null ? { tenantId: tenant.id } : {}),
       ...(args.flags.seed !== undefined ? { seed: flagNumber(args, "seed", 0) } : {}),
     });
     emit(result, renderRunResult(result));
@@ -345,6 +349,35 @@ async function main(argv: string[]): Promise<number> {
     // scenarios is zero evidence.
     if (result.result === null) return 0;
     return result.result.verdict === "FAIL" || result.result.verdict === "ERROR" ? 1 : 0;
+  }
+
+  if (group === "runs" && (action === "list" || action === undefined)) {
+    const result = runsList(deps, {
+      ...(args.flags.url !== undefined ? { target: flagString(args, "url", "") } : {}),
+      ...(args.flags.geo !== undefined || args.flags.country !== undefined ? { profileId } : {}),
+      ...(args.flags.journey !== undefined ? { journeyId: flagString(args, "journey", "") } : {}),
+      ...(args.flags.verdict !== undefined ? { verdict: flagString(args, "verdict", "") } : {}),
+      ...(args.flags.since !== undefined ? { since: flagString(args, "since", "") } : {}),
+      limit: flagNumber(args, "limit", 20),
+    });
+    emit(result, renderRunsList(result));
+    // Red when a check that used to pass now does not. A regression report nobody's CI
+    // notices is a report nobody reads.
+    return result.regressions.length > 0 ? 1 : 0;
+  }
+
+  if (group === "runs" && action === "rebuild") {
+    const result = runsRebuild(deps);
+    emit(
+      result,
+      [
+        `rebuilt the run index from the evidence tree — ${result.written} run(s)`,
+        ...result.unreadable.map((u) => `  ! ${u}`),
+      ].join("\n"),
+    );
+    // A run directory the rebuild could not read is a gap in the history, and a
+    // scheduled rebuild must go red rather than look fine.
+    return result.unreadable.length > 0 ? 1 : 0;
   }
 
   if (group === "evidence" && action === "inspect") {

@@ -136,7 +136,7 @@ against, 90% is likely unreachable and the threshold is wrong.
 - [x] **8 · Tenant-scoped profiles and journeys.** Loaded from tenant storage,
       not the repo. The YAML shape stays — it is data, it cannot reach the
       browser, and a non-engineer can edit it.
-- [ ] **9 · Run persistence.** Findings and verdicts queryable across runs. This
+- [x] **9 · Run persistence.** Findings and verdicts queryable across runs. This
       is what trends, regression detection and any UI need.
 
 ### Search intelligence

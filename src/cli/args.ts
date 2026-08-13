@@ -398,6 +398,38 @@ Multi-tenancy:
       --concurrency (EXP-007, default 3) is how many full runs execute at once in
       one sample — the number matrix run --concurrency is currently guessing.
 
+  geoqa runs list [--url <url>] [--geo <profile>] [--journey <id>]
+                  [--verdict PASS|FAIL|ERROR|PASS_WITH_WARNINGS]
+                  [--since <iso>] [--limit <n>] [--json]
+      The run history, and the REGRESSIONS in it — checks that used to pass and now do
+      not. Exits 1 when there is one, so a scheduled check goes red.
+
+      A regression is scoped to one profile + journey + target, because "the h1 check
+      started failing" is only meaningful for a fixed combination of those three;
+      merging them is how a real regression gets averaged into noise. Only the
+      TRANSITION is reported, so a check that broke on Monday is one entry with a
+      Monday date rather than one per day since. A failure with no earlier pass is not
+      a regression — it may never have worked. And an ERROR run is skipped rather than
+      counted as a failed check: ERROR means geoqa could not read the page, and
+      reporting our own instrumentation failure as the site's regression is the one
+      confusion this project refuses to make.
+
+      --limit applies to the printed list only, never to the summary or the
+      regressions: how many runs there have been, and what broke, are questions about
+      all of them.
+
+  geoqa runs rebuild [--json]
+      Rebuild the index from the runs on disk. Exits 1 if any run directory could not
+      be read, because a gap in the history must not look like a clean rebuild.
+
+      The index at <evidence-root>/runs.jsonl is a DERIVED CACHE, not the truth. Each
+      run's own run.json is the authority on that run, so a corrupt, truncated,
+      hand-edited or deleted index costs nothing permanent — which is why this is a
+      JSONL file over the evidence tree rather than a database that owns the record. A
+      rebuilt entry is poorer than an appended one (run.json carries the journey's
+      verdict, not the assembled confidence report) and says so rather than filling the
+      gaps with defaults that would read as real readings.
+
   geoqa evidence inspect <runId> [--json]
       Show a run's evidence manifest, what is missing, and its completeness.
 

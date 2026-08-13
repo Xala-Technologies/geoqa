@@ -61,6 +61,19 @@ import {
   type QuotaDecision,
 } from "../tenant/quota.js";
 import { decodoUsageProbe, type UsageProbe } from "../tenant/usage-probe.js";
+import {
+  filterHistory,
+  findRegressions,
+  nodeHistoryFs,
+  readHistory,
+  rebuildHistory,
+  summariseHistory,
+  type HistoryFilter,
+  type HistoryFs,
+  type HistorySummary,
+  type Regression,
+} from "../history/store.js";
+import { HISTORY_SCHEMA_VERSION, type RunRecord } from "../history/records.js";
 import type { Tenant } from "../tenant/types.js";
 import { executeRun, prepareRun } from "../run/execute.js";
 import {
@@ -171,6 +184,8 @@ export interface CommandDeps {
    * single-target use has always done.
    */
   tenantId?: string;
+  /** Injectable so history tests never touch a real tree. Same reason `pruneFs` exists. */
+  historyFs?: HistoryFs;
 }
 
 /**
@@ -826,6 +841,8 @@ export interface JourneyRunOptions {
   profileId: string;
   /** Read a second IP-geo database and report whether the two agree. */
   corroborate?: boolean;
+  /** Recorded on the run's history entry, so a tenant's trend is its own. */
+  tenantId?: string;
   journeyId: string;
   providerName?: string;
   vars?: Record<string, string>;
@@ -889,6 +906,7 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
     provider,
     log: deps.log,
     repeat: options.repeat ?? 1,
+    ...(options.tenantId !== undefined ? { tenantId: options.tenantId } : {}),
   });
   return { ...result, warnings };
 }
@@ -1121,7 +1139,13 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
       // Prefixed with the scenario, because under concurrency a bare warning
       // cannot be attributed to the market it is about.
       for (const w of prepared.warnings) deps.log(`warning: ${scenario.key}: ${w}`);
-      return { spec: prepared.spec, provider, log: deps.log, repeat: options.repeat ?? 1 };
+      return {
+        spec: prepared.spec,
+        provider,
+        log: deps.log,
+        repeat: options.repeat ?? 1,
+        ...(deps.tenantId !== undefined ? { tenantId: deps.tenantId } : {}),
+      };
     },
     run: deps.runOnce,
     now: deps.now,
@@ -1353,6 +1377,130 @@ export function renderPruneResult(result: EvidencePruneResult): string {
       : `  applied: deleted ${execution.deletedRunIds.length} run(s), reclaimed ${formatBytes(execution.reclaimedBytes)}`,
   );
   for (const failure of execution.failed) lines.push(`  FAILED ${failure.runId}: ${failure.error}`);
+  return lines.join("\n");
+}
+
+// ── runs (history) ───────────────────────────────────────────────────────
+
+export interface RunsListResult {
+  summary: HistorySummary;
+  runs: RunRecord[];
+  regressions: Regression[];
+  /** Index lines that could not be parsed. A half-written last line is normal. */
+  skipped: number;
+  /** Said out loud when the index has gaps a rebuild would close. */
+  warnings: string[];
+}
+
+/**
+ * The history, filtered, with regressions.
+ *
+ * `limit` applies to the RUN LIST only and never to the summary or the regressions:
+ * "the last 20 runs" is a display preference, while "how many runs have there been"
+ * and "what broke" are questions about all of them. Truncating the answer to match the
+ * display would be a quieter version of the same lie as an unmeasured metric reported
+ * as fine.
+ */
+export function runsList(
+  deps: CommandDeps,
+  options: HistoryFilter & { limit?: number } = {},
+): RunsListResult {
+  const { records, skipped } = readHistory(deps.evidenceRoot, deps.historyFs ?? nodeHistoryFs);
+  const matching = filterHistory(records, options);
+  const warnings: string[] = [];
+  if (skipped > 0) {
+    warnings.push(
+      `${skipped} line(s) of the run index could not be parsed and were skipped — a half-written final line is normal after an interrupted run. The evidence is still on disk: "geoqa runs rebuild" reconstructs the index from it.`,
+    );
+  }
+  const limit = options.limit ?? 20;
+  return {
+    // Over EVERY matching run, not the truncated list.
+    summary: summariseHistory(matching),
+    runs: matching.slice(-limit).reverse(),
+    regressions: findRegressions(matching),
+    skipped,
+    warnings,
+  };
+}
+
+/**
+ * Rebuild the index from the runs on disk.
+ *
+ * The operation that makes the index safe to treat as a cache. `run.json` is the
+ * authority on its own run, so a corrupt, truncated, hand-edited or deleted index costs
+ * nothing permanent — which is the whole reason this is JSONL over the evidence tree
+ * rather than a database that owns the truth.
+ */
+export function runsRebuild(deps: CommandDeps): { written: number; unreadable: string[] } {
+  return rebuildHistory(
+    deps.evidenceRoot,
+    (runJson, runId) => {
+      // `run.json` holds the run, the profile and the journey; a record needs the
+      // result shape, so the fields are read defensively rather than cast. A file that
+      // does not describe a run is reported by the caller, not guessed at.
+      const doc = runJson as { runId?: string; target?: string; profile?: { id?: string }; journey?: { id?: string; verdict?: string; seed?: number } };
+      if (typeof doc.runId !== "string") return null;
+      return {
+        schemaVersion: HISTORY_SCHEMA_VERSION,
+        runId: doc.runId,
+        tenantId: null,
+        target: typeof doc.target === "string" ? doc.target : "",
+        profileId: doc.profile?.id ?? "",
+        journeyId: doc.journey?.id ?? "",
+        // The JOURNEY's verdict, which is what run.json records. A rebuilt record is
+        // therefore slightly poorer than an appended one — run.json does not carry the
+        // assembled run verdict or the confidence report — and that is stated rather
+        // than papered over with defaults that would read as real readings.
+        verdict: (doc.journey?.verdict as RunRecord["verdict"] | undefined) ?? "ERROR",
+        startedAt: new Date(Number(/^run_(\d+)_/.exec(runId)?.[1] ?? 0)).toISOString(),
+        durationMs: 0,
+        seed: doc.journey?.seed ?? 0,
+        engine: "unknown",
+        evidenceId: null,
+        findings: { total: 0, bySeverity: {}, byCategory: {}, labels: [] },
+        confidence: { overall: 0, geo: 0, browser: 0, journey: 0, evidence: 0 },
+        geo: {
+          requestedCountry: "",
+          requestedCity: "",
+          observedCountry: null,
+          observedCity: null,
+          country: "unverified",
+          city: "unverified",
+          egressHeld: "unverified",
+          agreement: "unverified",
+        },
+        latencyMs: null,
+        vitals: { lcp: null, cls: null, ttfb: null, inp: null },
+      };
+    },
+    deps.historyFs ?? nodeHistoryFs,
+  );
+}
+
+export function renderRunsList(result: RunsListResult): string {
+  const lines: string[] = [];
+  const s = result.summary;
+  lines.push(
+    s.runs === 0
+      ? "no runs recorded yet"
+      : `${s.runs} run(s) from ${s.first} to ${s.last} — ${Object.entries(s.byVerdict).map(([v, n]) => `${n} ${v}`).join(", ")}`,
+  );
+  // Null, not 0, on an empty history: "no runs" and "runs that scored zero" are
+  // different facts and only one of them is bad news.
+  if (s.meanConfidence !== null) lines.push(`  mean overall confidence ${s.meanConfidence}`);
+  for (const w of result.warnings) lines.push(`  ! ${w}`);
+  if (result.regressions.length > 0) {
+    lines.push(`  ${result.regressions.length} regression(s) — a check that used to pass and now does not:`);
+    for (const r of result.regressions.slice(0, 10)) {
+      lines.push(`    ${r.label} · ${r.profileId}/${r.journeyId} · last good ${r.lastGood.startedAt} → first bad ${r.firstBad.startedAt}`);
+    }
+  }
+  for (const run of result.runs) {
+    lines.push(
+      `  ${run.verdict.padEnd(18)} ${run.startedAt} ${run.profileId.padEnd(18)} ${run.journeyId.padEnd(18)} conf ${String(run.confidence.overall).padStart(3)} ${run.target}`,
+    );
+  }
   return lines.join("\n");
 }
 

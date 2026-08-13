@@ -30,6 +30,9 @@ import {
   renderMatrixResult,
   renderPruneResult,
   renderRunResult,
+  renderRunsList,
+  runsList,
+  runsRebuild,
   checkTenantScope,
   enforceQuota,
   resolveEvidenceRoot,
@@ -1499,5 +1502,137 @@ describe("tenant-scoped profiles and journeys", () => {
     // A refusal is not "try the next root": it means the id got past the pattern and is
     // trying to leave.
     expect(resolveDataPath(deps({ tenantId: "digilist" }), "profiles", "../../../etc/hosts").ok).toBe(false);
+  });
+})
+
+describe("runs history", () => {
+  const line = (over: Record<string, unknown>): string =>
+    JSON.stringify({
+      schemaVersion: 1,
+      runId: "run_1000_oslo-desktop",
+      tenantId: null,
+      target: "https://a.test/",
+      profileId: "oslo-desktop",
+      journeyId: "landing-page",
+      verdict: "PASS",
+      startedAt: "2026-08-13T10:00:00.000Z",
+      durationMs: 5,
+      seed: 7,
+      engine: "playwright",
+      evidenceId: "ev_1",
+      findings: { total: 0, bySeverity: {}, byCategory: {}, labels: [] },
+      confidence: { overall: 100, geo: 100, browser: 100, journey: 100, evidence: 100 },
+      geo: { requestedCountry: "NO", requestedCity: "Oslo", observedCountry: "NO", observedCity: "Oslo", country: "match", city: "match", egressHeld: "match", agreement: "unverified" },
+      latencyMs: 100,
+      vitals: { lcp: null, cls: null, ttfb: null, inp: null },
+      ...over,
+    });
+
+  const withIndex = (text: string, dirs: Record<string, string[]> = {}, files: Record<string, string> = {}): CommandDeps => {
+    const store: Record<string, string> = { [path.join(evidenceRoot, "runs.jsonl")]: text, ...files };
+    return deps({
+      historyFs: {
+        exists: (p) => p in store,
+        read: (p) => {
+          if (!(p in store)) throw new Error(`ENOENT ${p}`);
+          return store[p] as string;
+        },
+        append: (p, t) => { store[p] = (store[p] ?? "") + t; },
+        write: (p, t) => { store[p] = t; },
+        mkdir: () => {},
+        listDirs: (p) => dirs[p] ?? [],
+      },
+    });
+  };
+
+  it("summarises and lists, newest first", () => {
+    const result = runsList(withIndex(`${line({ runId: "r1" })}\n${line({ runId: "r2", startedAt: "2026-08-13T11:00:00.000Z", verdict: "FAIL" })}\n`));
+    expect(result.summary.runs).toBe(2);
+    expect(result.summary.byVerdict).toEqual({ PASS: 1, FAIL: 1 });
+    expect(result.runs.map((r) => r.runId)).toEqual(["r2", "r1"]);
+  });
+
+  it("applies the limit to the LIST and never to the summary or regressions", () => {
+    // "The last 20 runs" is a display preference; "how many runs have there been" and
+    // "what broke" are questions about all of them. Truncating the answer to match the
+    // display would be a quieter version of reporting an unmeasured metric as fine.
+    const lines = Array.from({ length: 5 }, (_, i) => line({ runId: `r${i}`, startedAt: `2026-08-13T1${i}:00:00.000Z` })).join("\n");
+    const result = runsList(withIndex(`${lines}\n`), { limit: 2 });
+    expect(result.runs).toHaveLength(2);
+    expect(result.summary.runs).toBe(5);
+  });
+
+  it("filters, and the summary describes the FILTERED set", () => {
+    const result = runsList(withIndex(`${line({ runId: "r1", journeyId: "landing-page" })}\n${line({ runId: "r2", journeyId: "browse" })}\n`), {
+      journeyId: "browse",
+    });
+    expect(result.summary.runs).toBe(1);
+    expect(result.runs[0]?.runId).toBe("r2");
+  });
+
+  it("reports skipped lines and points at the rebuild, without failing", () => {
+    // A half-written final line is normal after an interrupted run, and the evidence is
+    // still on disk.
+    const result = runsList(withIndex(`${line({ runId: "r1" })}\n{"half\n`));
+    expect(result.summary.runs).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain("runs rebuild");
+  });
+
+  it("surfaces a regression, and renders it", () => {
+    const good = line({ runId: "r1", startedAt: "2026-08-13T10:00:00.000Z" });
+    const bad = line({
+      runId: "r2",
+      startedAt: "2026-08-13T11:00:00.000Z",
+      verdict: "FAIL",
+      findings: { total: 1, bySeverity: { critical: 1 }, byCategory: { functional: 1 }, labels: ["has a primary heading"] },
+    });
+    const result = runsList(withIndex(`${good}\n${bad}\n`));
+    expect(result.regressions).toHaveLength(1);
+    const rendered = renderRunsList(result);
+    expect(rendered).toContain("1 regression(s)");
+    expect(rendered).toContain("has a primary heading");
+    expect(rendered).toContain("last good");
+  });
+
+  it("renders an empty history without inventing a confidence number", () => {
+    const rendered = renderRunsList(runsList(withIndex("")));
+    expect(rendered).toContain("no runs recorded yet");
+    expect(rendered).not.toContain("mean overall confidence");
+  });
+
+  it("rebuilds the index from the runs on disk", () => {
+    // What makes the index safe to treat as a cache: run.json is the authority on its
+    // own run, so a corrupt or deleted index costs nothing permanent.
+    const runJson = JSON.stringify({ runId: "run_1000_oslo-desktop", target: "https://a.test/", profile: { id: "oslo-desktop" }, journey: { id: "landing-page", verdict: "PASS", seed: 3 } });
+    const scoped = withIndex("garbage\n", { [evidenceRoot]: ["run_1000_oslo-desktop"] }, { [path.join(evidenceRoot, "run_1000_oslo-desktop", "run.json")]: runJson });
+    const rebuilt = runsRebuild(scoped);
+    expect(rebuilt.written).toBe(1);
+    expect(rebuilt.unreadable).toEqual([]);
+    // And the corrupt line is gone, because rebuild OVERWRITES.
+    const after = runsList(scoped);
+    expect(after.skipped).toBe(0);
+    expect(after.runs[0]?.seed).toBe(3);
+  });
+
+  it("reports a run.json it could not read rather than dropping the run silently", () => {
+    const scoped = withIndex("", { [evidenceRoot]: ["run_1_a"] });
+    const rebuilt = runsRebuild(scoped);
+    expect(rebuilt.written).toBe(0);
+    expect(rebuilt.unreadable[0]).toContain("no run.json");
+  });
+
+  it("reports a run.json with no runId as not describing a run", () => {
+    const scoped = withIndex("", { [evidenceRoot]: ["run_1_a"] }, { [path.join(evidenceRoot, "run_1_a", "run.json")]: "{}" });
+    expect(runsRebuild(scoped).unreadable[0]).toContain("did not describe a run");
+  });
+
+  it("derives a rebuilt run's start time from its run id", () => {
+    // A run id is `run_<epochMs>_<slug>`, which is also why the history sorts
+    // chronologically by id.
+    const runJson = JSON.stringify({ runId: "run_1700000000000_x", journey: { verdict: "FAIL" } });
+    const scoped = withIndex("", { [evidenceRoot]: ["run_1700000000000_x"] }, { [path.join(evidenceRoot, "run_1700000000000_x", "run.json")]: runJson });
+    runsRebuild(scoped);
+    expect(runsList(scoped).runs[0]?.startedAt).toBe(new Date(1_700_000_000_000).toISOString());
   });
 })

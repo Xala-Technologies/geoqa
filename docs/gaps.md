@@ -359,16 +359,63 @@ discarded the `proxySubUser` field added minutes earlier in the same slice — s
 describing a field the tenant file did not have. Restored here. `git checkout` is not an
 undo for a file with other uncommitted work in it.
 
-### A-4 · Findings have nowhere to go
+### A-4 · CLOSED — findings and verdicts are queryable across runs
 
-Read-only by design: no Linear, no Convex, no repo write, no dashboard, no
-persistence beyond the on-disk evidence directory. A finding's lifecycle ends
-when the process prints it. There is also no aggregation across runs — no trend,
-no regression detection, no "this CLS was 0.31 last week".
+`<evidenceRoot>/runs.jsonl`, one record per run, appended as each finishes, under the
+tenant's evidence root when a run is scoped — so a tenant's history inherits the
+containment already proven in `tenant/registry.ts` rather than inventing its own.
 
-**Cannot be closed by code here.** A findings sink is deferred to a later phase
-by the owner. Noted so it is not mistaken for an oversight, and so nobody builds
-half of one.
+**The decision worth recording is that the index is a DERIVED CACHE, not the truth.**
+Each run's `run.json` is the authority on that run, so a corrupt, truncated,
+hand-edited or deleted index costs nothing permanent and `geoqa runs rebuild`
+reconstructs it. A store that owned the record would introduce exactly the failure this
+project exists to prevent: a confident answer about runs that did not happen the way it
+says.
+
+**Why not SQLite, which Node now ships.** `node:sqlite` is EXPERIMENTAL — it prints a
+warning on every invocation and its own documentation says it may change at any time.
+A CLI that emits an experimental-feature warning before every line of output is a worse
+tool, and "may change at any time" is a poor foundation for the store that trends and a
+UI are meant to depend on. JSONL costs one line per run, is greppable, diffs in a
+review, and cannot lose a run because the run is still on disk. **When SQLite becomes
+right:** when a query needs an index rather than a scan — a tenant with 10,000 runs is a
+10 MB file scanned in milliseconds, but a hosted UI serving many tenants concurrently is
+a different problem, and this shape imports into a table without a rewrite.
+
+Regression detection is the payoff and is proven live on a stable origin: a page loses
+its `h1`, and
+
+```
+1 regression(s) — a check that used to pass and now does not:
+  has a primary heading · oslo-desktop/h1 · last good …05.988Z → first bad …08.306Z
+```
+
+Four deliberate narrowings, each of which prevents a specific false report:
+
+- Scoped to one profile + journey + target. "The h1 check started failing" is only
+  meaningful for a fixed combination, and merging them averages a real regression into
+  noise.
+- Only the TRANSITION. A check that broke on Monday is one entry with a Monday date, not
+  one per day since — a list that grows while nothing new breaks is a list nobody reads.
+- A failure with no earlier pass is NOT a regression. It may never have worked, and
+  saying otherwise sends somebody looking for a change that does not exist.
+- An `ERROR` run is SKIPPED, not read as a failed check. `ERROR` means geoqa could not
+  read the page; reporting our own instrumentation failure as the site's regression is
+  the single confusion this whole codebase is built to avoid.
+
+Three honesty properties carried through: `meanConfidence` is `null` for an empty
+history rather than 0; a `null` vital stays null rather than becoming a zero that would
+show a page getting faster the moment it stopped being measurable; and `--limit`
+truncates the printed list only, never the summary or the regressions.
+
+**Appending can never fail a run.** A run that verified a site correctly and wrote its
+evidence has not failed at anything a user cares about if a cache line could not be
+written, so the problem is logged and the result returned.
+
+**Residual:** a rebuilt record is poorer than an appended one — `run.json` carries the
+journey's verdict and seed but not the assembled confidence report — and it says so
+rather than filling the gaps with defaults that would read as real readings. Widening
+`run.json` to carry the assembled result would close it and is a schema change.
 
 ### A-5 · Adaptive recovery deferred
 
