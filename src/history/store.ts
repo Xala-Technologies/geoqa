@@ -200,14 +200,18 @@ export function findRegressions(records: RunRecord[]): Regression[] {
   for (const record of records) {
     // Instrumentation failures carry no information about whether a check passed.
     if (record.verdict === "ERROR") continue;
-    const key = `${record.profileId} ${record.journeyId} ${record.target}`;
+    // A JSON tuple rather than a delimited string. The first version used literal NUL bytes
+    // as separators, which worked and made this whole file register as BINARY to grep — so
+    // searching it silently returned nothing. A file nobody can grep is a file whose next bug
+    // takes longer to find.
+    const key = JSON.stringify([record.profileId, record.journeyId, record.target]);
     byScope.set(key, [...(byScope.get(key) ?? []), record]);
   }
 
   const regressions: Regression[] = [];
   for (const [key, scoped] of byScope) {
     const runs = [...scoped].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
-    const [profileId = "", journeyId = "", target = ""] = key.split(" ");
+    const [profileId = "", journeyId = "", target = ""] = JSON.parse(key) as [string, string, string];
     // Every label that has ever failed in this scope; each is asked about once.
     const labels = new Set(runs.flatMap((r) => r.findings.labels));
     for (const label of labels) {

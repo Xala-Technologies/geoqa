@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ABSOLUTE_FLOOR, buildConfidenceSeries, buildSeries, MIN_POINTS_FOR_DIRECTION, NOISE_FLOOR, notableTrends } from "../trends.js";
 import type { RunRecord } from "../../history/records.js";
@@ -205,5 +207,33 @@ describe("notableTrends", () => {
   it("needs at least MIN_POINTS_FOR_DIRECTION to report anything at all", () => {
     const justUnder = Array.from({ length: MIN_POINTS_FOR_DIRECTION - 1 }, (_, i) => (i < 2 ? 100 : 900));
     expect(notableTrends(buildSeries(series(justUnder), "ttfb"))).toEqual([]);
+  });
+});
+
+describe("the source stays greppable", () => {
+  /**
+   * A regression test for a maintainability defect, which is unusual and earns its place.
+   *
+   * The first version of the composite group keys in this module and in `history/store.ts`
+   * used literal NUL bytes as separators. It worked, every test passed, and it made both files
+   * register as BINARY to `grep` — so searching them silently returned nothing. That defeated
+   * the review of the very change that introduced it: three greps came back empty and the
+   * natural reading was "the code is not there".
+   *
+   * A file nobody can grep is a file whose next bug takes longer to find, so this asserts the
+   * tree stays text. A NUL as a test VALUE is fine — `registry.test.ts` needs one to prove a
+   * tenant id containing it is refused — but it is written as an escape rather than embedded.
+   */
+  it("contains no literal NUL byte anywhere in src/", async () => {
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((entry) => {
+        const full = join(dir, entry);
+        return statSync(full).isDirectory() ? walk(full) : full.endsWith(".ts") ? [full] : [];
+      });
+    const offenders = walk(root).filter((file) => readFileSync(file).includes(0));
+    expect(offenders).toEqual([]);
   });
 });
