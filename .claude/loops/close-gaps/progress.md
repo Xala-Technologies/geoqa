@@ -1053,9 +1053,74 @@ Docs: gaps **A-9** opened with its closing conditions, **A-10** closed; PRD **R-
 Gate: lint clean · boundaries clean (115 modules / 452 deps) · **1269 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
+## Slices 16 + 17 · The frontend — DONE. 18 partial, 19 needs a decision.
+
+**React, not Electron**, on the criterion the task list recorded: *does it need filesystem
+access beyond a served directory?* It does not. Evidence is files under a root, and a browser
+reads them over HTTP like any other asset. Electron would buy filesystem access nothing needs
+and cost a 100 MB runtime, a signing story and a release channel.
+
+**Static, and that is the design.** `geoqa dashboard build` writes one `dashboard.json`
+beside the evidence; the app fetches it and renders. No server, no port, no auth surface,
+nothing to keep running — the whole thing is a directory you can open or put behind a CDN.
+
+### The architectural point: `Measured<T>`
+
+Every judgement lives in `src/report/view.ts` at 100% coverage. The UI is a renderer. That
+split exists for one reason: **a dashboard is where a number gets believed**, and the engine
+refuses everywhere to conflate "we could not look" with "it is fine". So a UI is not trusted
+to remember that a null LCP is not `0` — instead every displayed value arrives as
+
+```ts
+{ measured: true,  value: 421, text: "421ms" }
+{ measured: false, reason: "no interaction was timed — …", text: "not measured" }
+```
+
+A renderer writing `{v.text}` gets "not measured", because an absence is a different TYPE
+from a reading. Styling them apart is then emphasis rather than the only thing between a
+reader and a wrong conclusion.
+
+Three consequences worth keeping:
+
+- **CLS `0` renders as `0`**, because zero means nothing moved — the best possible answer. A
+  truthy check instead of a null check would have hidden every perfect score.
+- **`ERROR` and `unverified` get their own tone**, never the failure tone. An ERROR is our
+  defect; an unverified city is unproven rather than wrong.
+- `dashboard build` **counts the absences** it wrote, so the honesty rule is visible in the
+  CLI output rather than only in a comment.
+
+A drift test asserts the UI's mirrored types still match the view model, so a rename fails
+the engine's suite instead of silently producing a blank panel.
+
+### Verified rendering in a real browser
+
+Served the built app beside a real `dashboard.json` from the 2-page × 3-market Decodo matrix,
+loaded it in Chromium: **no page errors, 8 rows, 6 "not measured" cells with hover reasons**,
+`unverified` pills in grey rather than red, and a latency-by-market table showing Berlin
+467ms / Oslo 529ms / Bodø 596ms with the spread.
+
+### Slice 18 (trends) — PARTIAL
+
+Regressions are in the dashboard, which is the useful half. A time series per metric is not:
+the history has the data, but the view model exposes no series and the UI has no chart. Small
+and additive, not done.
+
+### Slice 19 (auth and tenant onboarding) — NOT DONE, and it conflicts with the design
+
+A static file has no auth surface, which is exactly why the UI needs no server. Auth requires
+one — a process, a session store, a port to expose. That is a real architectural decision
+with an operational cost, and it should be the owner's rather than assumed. Until then,
+per-tenant isolation is by DIRECTORY: build a dashboard under a tenant's evidence root and
+that file contains only that tenant's runs.
+
+Docs: PRD **R-147 … R-150**.
+
+Gate: lint clean · boundaries clean (117 modules / 462 deps) · **1291 tests at 100%**
+lines/statements/functions · e2e **30/30** · `pnpm ui:build` clean.
+
 ## Next
 
-Slices 16–19, the frontend. Slice 16 was an approval gate on React vs Electron; the criterion
+Slice 18's time series, and slice 19 once the auth question is decided. Slice 16 was an approval gate on React vs Electron; the criterion
 recorded in `task.md` is whether it needs filesystem access beyond a served directory, and it
 does not — evidence is files under a root, and a static app can read them over HTTP. React,
 and the reasoning goes in the commit. The milestone is unblocked and

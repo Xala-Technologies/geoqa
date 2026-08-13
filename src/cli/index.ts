@@ -31,10 +31,12 @@ import {
   evidenceInspect,
   evidencePrune,
   experimentRun,
+  dashboardBuild,
   enforceQuota,
   gateCheck,
   keywordsResearch,
   loadUrlList,
+  renderDashboardBuild,
   renderGateResult,
   renderKeywordReport,
   renderSiteAnalysis,
@@ -356,6 +358,13 @@ async function main(argv: string[]): Promise<number> {
     // scenarios is zero evidence.
     if (result.result === null) return 0;
     return result.result.verdict === "FAIL" || result.result.verdict === "ERROR" ? 1 : 0;
+  }
+
+  if (group === "dashboard" && (action === "build" || action === undefined)) {
+    const result = dashboardBuild(deps, {
+      ...(args.flags.since !== undefined ? { since: flagString(args, "since", "") } : {}),
+    });
+    return emit(result.view, renderDashboardBuild(result));
   }
 
   if (group === "site" && (action === "analyse" || action === "analyze" || action === undefined)) {

@@ -172,6 +172,22 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-147** The UI is **static** and read-only: one JSON file written beside the evidence,
+  fetched by an app that is a directory. No server means no port, no auth surface and nothing
+  to keep running. Electron was declined on the recorded criterion — nothing needs filesystem
+  access beyond a served directory, since evidence is files a browser reads over HTTP.
+- **R-148** Every value a UI displays arrives as a **`Measured<T>`**: a reading with its
+  formatted text, or an explicit absence carrying the reason. A renderer cannot show a
+  missing metric as a value, because an absence is a different TYPE from a reading — and a
+  dashboard is exactly where a number gets believed, so "we could not look" must not arrive
+  as `0` at the last step.
+- **R-149** Zero is a **real reading** where zero is meaningful. A CLS of 0 means nothing
+  moved, which is the best possible answer; a truthy check instead of a null check would hide
+  every perfect score.
+- **R-150** `ERROR` and `unverified` get their **own tone**, never the failure tone. An ERROR
+  is our defect and a site failure is the site's; an unverified city is unproven rather than
+  wrong. Colouring either like a failure would put back the conflation the verdict model
+  removed.
 - **R-144** Site analysis answers the question a crawler from one datacentre cannot: does
   this page behave differently **depending on where the visitor is**? Verdict divergence
   across markets, the latency spread with its factor, and pages measured in some markets but
