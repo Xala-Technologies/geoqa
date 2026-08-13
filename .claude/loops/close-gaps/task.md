@@ -117,9 +117,9 @@ against, 90% is likely unreachable and the threshold is wrong.
 - [x] **2d · J06 manual language override.** Oslo IP → Norwegian homepage →
       select English → navigate → English persists. Expressible with existing
       steps plus `storageState`; cheap, and it exposes bad geo-redirects.
-- [ ] **3 · D-1c: `proxy verify` honours `--engine`.** Runs on agent-browser
+- [x] **3 · D-1e: `proxy verify` honours `--engine`.** Already closed; the entry was stale. Runs on agent-browser
       regardless and hangs with no Chrome. Cost an hour during the Decodo work.
-- [ ] **4 · D-1b: experiment samplers honour the engine.**
+- [x] **4 · D-1b: experiment samplers honour the engine.**
 - [ ] **5 · B-7 + C-8 + C-5.** Say when a returning visitor was NOT restored;
       verify `emulate` actually applied (same class as the 1280px mobile bug);
       add `inp-below` with an interaction before the read.

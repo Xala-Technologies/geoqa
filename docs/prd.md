@@ -172,6 +172,12 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-113** `--engine` and the configured verify endpoint reach **every** command
+  that opens a browser, experiments included. An experiment whose samples are taken
+  through an engine nobody asked about answers a different question than the one
+  printed at the top of its summary — and for EXP-000, whose subject IS the adapter,
+  it answers no question at all. Absent means the default engine, so an experiment
+  re-run without the flag stays comparable with its own stored results.
 - **R-112** A step that can NAVIGATE records the URL it landed on. Without it a
   click records nothing, and any check that fails afterwards cannot be attributed —
   a live run failed a language-persistence check and the evidence could not say

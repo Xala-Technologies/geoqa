@@ -1075,6 +1075,26 @@ export interface ExperimentOptions {
   profileId: string;
   url: string;
   providerName?: string;
+  /**
+   * Which browser adapter the samples are taken through.
+   *
+   * Absent means `DEFAULT_ENGINE`, which is what every experiment measured before
+   * this field existed — so an experiment re-run without `--engine` still measures
+   * what its recorded results measured. The field matters because it is the
+   * difference between a feasibility number about the daemon engine and one about
+   * Playwright, and EXP-001's own hypothesis is about the proxy rather than the
+   * adapter: measuring it through an engine nobody uses answers a question nobody
+   * asked.
+   */
+  engine?: RunEngine;
+  /**
+   * The egress-identity endpoint. Absent means `DEFAULT_VERIFY_ENDPOINT`.
+   *
+   * Here because the samplers reached for the constant directly, so a configured
+   * `network.verifyEndpoint` did not reach an experiment at all — the exact shape of
+   * defect B-1 closed for the config file, reappearing one layer down.
+   */
+  verifyEndpoint?: string;
 }
 
 export type Sampler = (deps: CommandDeps, options: ExperimentOptions, index: number) => Promise<Record<string, unknown>>;

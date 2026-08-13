@@ -7,7 +7,7 @@ import type { GeoQaRunResult } from "../../findings/types.js";
 import type { ExperimentSample } from "../../experiments/harness.js";
 import { EXP_007 } from "../../experiments/definitions.js";
 import { bad, fakeRuntime, ok } from "../../run/__tests__/fake-runtime.js";
-import { defaultDeps, profileList, type CommandDeps } from "../commands.js";
+import { defaultDeps, profileList, DEFAULT_ENGINE, type CommandDeps, type RuntimeRequest } from "../commands.js";
 import { parseArgs } from "../args.js";
 import {
   DEFAULT_CONCURRENCY,
@@ -816,5 +816,81 @@ describe("experimentKnobs", () => {
     const window = resolveStabilityWindow({ id: "EXP-002", samples: 3, profileId: "oslo-desktop", url: "https://x", ...result.knobs });
     expect(window).toEqual({ windowMs: 600_000, reads: 3, intervalMs: 300_000 });
     expect(stabilityWindowNote(window)).toContain("10min");
+  });
+});
+
+describe("every sampler honours --engine and --verifyEndpoint (D-1b)", () => {
+  /** Capture what each sampler asked its runtime factory for. */
+  const capturing = (): { requests: (RuntimeRequest | undefined)[]; opened: string[]; deps: CommandDeps } => {
+    const requests: (RuntimeRequest | undefined)[] = [];
+    const opened: string[] = [];
+    const d = deps({
+      makeRuntime: (_config, request) => {
+        requests.push(request);
+        return fakeRuntime({
+          open: (url: string) => {
+            opened.push(url);
+            return Promise.resolve(ok({ url, title: "T", targetId: "t", launchHash: "h", browserLaunched: false }));
+          },
+        });
+      },
+    });
+    return { requests, opened, deps: d };
+  };
+
+  const base = { id: "EXP-001", samples: 1, profileId: "oslo-desktop", url: "https://x" };
+
+  it("takes EXP-001's samples through the engine it was asked for, not agent-browser", async () => {
+    // Before this, `experiment run --engine playwright` took every sample through
+    // agent-browser and reported a clean result for an engine it never touched.
+    const cap = capturing();
+    await sampleEgress(cap.deps, { ...base, engine: "playwright" }, 0);
+    expect(cap.requests.map((r) => r?.engine)).toEqual(["playwright"]);
+    // And the profile travels with it: a Playwright context with no locale renders
+    // this machine's geography while claiming to verify a market's.
+    expect(cap.requests[0]?.profile.id).toBe("oslo-desktop");
+  });
+
+  it("defaults to the engine every recorded experiment result was measured on", async () => {
+    // An experiment re-run without --engine must still measure what its stored
+    // results measured, or the two are not comparable.
+    const cap = capturing();
+    await sampleEgress(cap.deps, base, 0);
+    expect(cap.requests[0]?.engine).toBe(DEFAULT_ENGINE);
+  });
+
+  it("reads the endpoint it was given rather than the constant", async () => {
+    // The samplers reached for DEFAULT_VERIFY_ENDPOINT directly, so a configured
+    // network.verifyEndpoint did not reach an experiment at all — B-1's defect one
+    // layer down.
+    const cap = capturing();
+    await sampleEgress(cap.deps, { ...base, verifyEndpoint: "http://127.0.0.1:1/ipinfo" }, 0);
+    expect(cap.opened).toContain("http://127.0.0.1:1/ipinfo");
+  });
+
+  it("carries the engine into EXP-003's TWO isolated sessions, not just the first", async () => {
+    // Two runtimes, and a per-call-site default is exactly how one of them ends up
+    // on a different engine than the other while the sample reports one number.
+    const cap = capturing();
+    await sampleIsolation(cap.deps, { ...base, id: "EXP-003", engine: "playwright" }, 0);
+    expect(cap.requests.map((r) => r?.engine)).toEqual(["playwright", "playwright"]);
+  });
+
+  it("carries it into EXP-004 and EXP-002", async () => {
+    const four = capturing();
+    await sampleProfileConsistency(four.deps, { ...base, id: "EXP-004", engine: "playwright" }, 0);
+    expect(four.requests[0]?.engine).toBe("playwright");
+
+    const two = capturing();
+    await sampleStability(two.deps, { ...base, id: "EXP-002", engine: "playwright", stabilityWindowMs: 2, stabilityReads: 2 }, 0);
+    expect(two.requests[0]?.engine).toBe("playwright");
+  });
+
+  it("carries it into EXP-000, whose SUBJECT is the adapter", async () => {
+    // The one experiment where the engine is the thing under test rather than a
+    // detail of how the measurement was taken.
+    const cap = capturing();
+    await sampleBrowserPrimitives(cap.deps, { ...base, id: "EXP-000", engine: "playwright" });
+    expect(cap.requests[0]?.engine).toBe("playwright");
   });
 });

@@ -17,8 +17,8 @@ Current baseline, all green:
 | Gate | Result |
 |---|---|
 | `pnpm lint` | clean |
-| `pnpm boundaries` | no violations, 94 modules / 372 deps |
-| `pnpm test:coverage` | **1013 tests, 100%** lines/statements/functions |
+| `pnpm boundaries` | no violations, 94 modules / 374 deps |
+| `pnpm test:coverage` | **1019 tests, 100%** lines/statements/functions |
 | `pnpm test:e2e` | **28/28** |
 
 Single file, while iterating:

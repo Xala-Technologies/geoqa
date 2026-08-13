@@ -345,6 +345,11 @@ async function main(argv: string[]): Promise<number> {
       profileId,
       url: flagString(args, "url", "https://example.com"),
       providerName,
+      // The engine and endpoint now reach the samplers (D-1b). Before this,
+      // `experiment run --engine playwright` took every sample through
+      // agent-browser and reported a clean result for an engine it never touched.
+      engine,
+      verifyEndpoint,
       ...knobs.knobs,
     };
     const result = await experimentRun(deps, experimentOptions, pair.sample, pair.summarise);

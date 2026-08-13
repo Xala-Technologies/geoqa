@@ -13,7 +13,17 @@ import { evaluateMetric, meanOf, rate, type ExperimentSample, type MetricResult,
 import { redactProxyUrl, selectProvider } from "../network/provider.js";
 import { EXP_000, EXP_001, EXP_002, EXP_003, EXP_004, EXP_005, EXP_006, EXP_007 } from "../experiments/definitions.js";
 import { DEFECTS, startFixtureServer } from "../fixtures/server.js";
-import { browserVerify, journeyRun, loadProfileOrThrow, profileList, type CommandDeps, type ExperimentOptions } from "./commands.js";
+import {
+  browserVerify,
+  journeyRun,
+  loadProfileOrThrow,
+  profileList,
+  DEFAULT_ENGINE,
+  type CommandDeps,
+  type ExperimentOptions,
+} from "./commands.js";
+import type { BrowserRuntime, BrowserSessionConfig } from "../browser/types.js";
+import type { GeoProfile } from "../geo/types.js";
 import { parseDurationMs, type ParsedArgs } from "./args.js";
 
 const metric = (specs: MetricSpec[], key: string): MetricSpec => {
@@ -29,6 +39,20 @@ const num = (sample: ExperimentSample, key: string): number | null => {
 
 const truthy = (key: string) => (s: ExperimentSample): boolean => s.data[key] === true;
 
+/**
+ * The engine and endpoint an experiment runs through, resolved once.
+ *
+ * Five call sites built their runtime with `deps.makeRuntime(config)` and no
+ * request, so `experiment run` was agent-browser-only whatever `--engine` said, and
+ * three of them reached for `DEFAULT_VERIFY_ENDPOINT` directly so a configured
+ * endpoint never arrived either. One helper rather than five conditionals: a
+ * per-site default is how two of them end up disagreeing about what "unset" means.
+ */
+const runtimeFor = (deps: CommandDeps, options: ExperimentOptions, profile: GeoProfile, config: BrowserSessionConfig): BrowserRuntime =>
+  deps.makeRuntime(config, { engine: options.engine ?? DEFAULT_ENGINE, profile });
+
+const endpointFor = (options: ExperimentOptions): string => options.verifyEndpoint ?? DEFAULT_VERIFY_ENDPOINT;
+
 /** The note every unmeasurable geographic metric carries in Phase 0. */
 export const NO_VENDOR_NOTE =
   "No geo-proxy vendor is configured, so every session egressed from this machine. The target is declared but cannot be evaluated — this is `unmeasured`, not a pass.";
@@ -36,7 +60,14 @@ export const NO_VENDOR_NOTE =
 // ── EXP-000: agent-browser primitives ────────────────────────────────────
 
 export async function sampleBrowserPrimitives(deps: CommandDeps, options: ExperimentOptions): Promise<Record<string, unknown>> {
-  const result = await browserVerify(deps, options.url);
+  // EXP-000 is the one experiment whose subject IS the adapter — "do these
+  // primitives answer on this engine" — so honouring `--engine` here is not
+  // uniformity for its own sake, it is the difference between measuring the engine
+  // asked about and measuring a different one.
+  const result = await browserVerify(deps, options.url, {
+    profileId: options.profileId,
+    ...(options.engine ? { engine: options.engine } : {}),
+  });
   return {
     passed: result.passed,
     total: result.total,
@@ -88,7 +119,10 @@ export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions
   if (!opened.ok) throw new Error(`could not open a network session: ${opened.reason}`);
   const session = opened.session;
   const routed = session.proxyUrl !== null;
-  const runtime = deps.makeRuntime(
+  const runtime = runtimeFor(
+    deps,
+    options,
+    profile,
     toSessionConfig(profile, {
       sessionId: `exp001-${deps.now()}-${index}`,
       proxyUrl: session.proxyUrl,
@@ -97,7 +131,7 @@ export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions
     }),
   );
   try {
-    const network = await observeNetwork(runtime, DEFAULT_VERIFY_ENDPOINT);
+    const network = await observeNetwork(runtime, endpointFor(options));
     const country = compareCountry(profile.market.country, network.country);
     const city = compareCity(profile.market.city, network.city);
     return {
@@ -271,14 +305,17 @@ export function stabilityWindowNote(window: StabilityWindow): string {
 export async function sampleStability(deps: CommandDeps, options: StabilityOptions, index: number): Promise<Record<string, unknown>> {
   const window = resolveStabilityWindow(options);
   const profile = loadProfileOrThrow(deps, options.profileId);
-  const runtime = deps.makeRuntime(
+  const runtime = runtimeFor(
+    deps,
+    options,
+    profile,
     toSessionConfig(profile, { sessionId: `exp002-${deps.now()}-${index}`, baseEnv: deps.env }),
   );
   const seen: (string | null)[] = [];
   try {
     for (let read = 0; read < window.reads; read++) {
       if (read > 0) await new Promise((r) => setTimeout(r, window.intervalMs));
-      const network = await observeNetwork(runtime, DEFAULT_VERIFY_ENDPOINT);
+      const network = await observeNetwork(runtime, endpointFor(options));
       seen.push(network.ip);
     }
   } finally {
@@ -326,8 +363,8 @@ export function summariseStability(samples: ExperimentSample[], options: Stabili
 export async function sampleIsolation(deps: CommandDeps, options: ExperimentOptions, index: number): Promise<Record<string, unknown>> {
   const profile = loadProfileOrThrow(deps, options.profileId);
   const stamp = `${deps.now()}-${index}`;
-  const a = deps.makeRuntime(toSessionConfig(profile, { sessionId: `isoA-${stamp}`, baseEnv: deps.env }));
-  const b = deps.makeRuntime(toSessionConfig(profile, { sessionId: `isoB-${stamp}`, baseEnv: deps.env }));
+  const a = runtimeFor(deps, options, profile, toSessionConfig(profile, { sessionId: `isoA-${stamp}`, baseEnv: deps.env }));
+  const b = runtimeFor(deps, options, profile, toSessionConfig(profile, { sessionId: `isoB-${stamp}`, baseEnv: deps.env }));
   try {
     await a.open(options.url);
     await b.open(options.url);
@@ -368,7 +405,10 @@ export async function sampleProfileConsistency(deps: CommandDeps, options: Exper
   const { localeInitScript } = await import("../geo/profile.js");
   writeFileSync(initScript, localeInitScript(profile));
 
-  const runtime = deps.makeRuntime(
+  const runtime = runtimeFor(
+    deps,
+    options,
+    profile,
     toSessionConfig(profile, { sessionId: `exp004-${deps.now()}-${index}`, initScriptPath: initScript, baseEnv: deps.env }),
   );
   try {
@@ -417,6 +457,10 @@ export async function sampleJourney(deps: CommandDeps, options: ExperimentOption
     url: options.url,
     profileId: options.profileId,
     journeyId: "landing-page",
+    // Forwarded rather than left to `journeyRun`'s own default, so `--engine`
+    // means the same thing whether an experiment runs the journey or a human does.
+    ...(options.engine ? { engine: options.engine } : {}),
+    ...(options.verifyEndpoint ? { verifyEndpoint: options.verifyEndpoint } : {}),
     ...(options.providerName ? { providerName: options.providerName } : {}),
   });
   return {
@@ -462,6 +506,10 @@ export async function sampleEvidenceQuality(deps: CommandDeps, options: Experime
       url: `${server.origin}${defect.path}`,
       profileId: options.profileId,
       journeyId: "landing-page",
+      ...(options.engine ? { engine: options.engine } : {}),
+      // No verifyEndpoint override: this experiment runs against the LOCAL fixture
+      // server and its geography is irrelevant to what it measures, which is whether
+      // a defect produces evidence that explains itself.
     });
     const siteFindings = result.findings.filter((f) => f.category !== "instrumentation");
     const categories = [...new Set(siteFindings.map((f) => f.category))];
@@ -597,6 +645,8 @@ async function runConcurrentSession(
       url: options.url,
       profileId,
       journeyId: "landing-page",
+      ...(options.engine ? { engine: options.engine } : {}),
+      ...(options.verifyEndpoint ? { verifyEndpoint: options.verifyEndpoint } : {}),
       ...(options.providerName ? { providerName: options.providerName } : {}),
     });
     return {

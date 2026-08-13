@@ -1,14 +1,14 @@
 {
   "id": "EXP-002-sticky-session",
   "hypothesis": "A single journey keeps one coherent network identity for its whole duration.",
-  "samples": 3,
-  "succeeded": 3,
+  "samples": 1,
+  "succeeded": 1,
   "failed": 0,
-  "startedAt": "2026-08-12T12:06:47.172Z",
-  "finishedAt": "2026-08-12T12:08:10.363Z",
+  "startedAt": "2026-08-13T07:35:27.292Z",
+  "finishedAt": "2026-08-13T07:35:58.214Z",
   "metrics": [
     {
-      "key": "***",
+      "key": "ip-stability",
       "description": "Samples whose IP matched the session's first reading",
       "target": 95,
       "unit": "percent",
@@ -20,6 +20,6 @@
   ],
   "verdict": "pass",
   "notes": [
-    "Each sample held ONE session for 24s across 5 reads. The PRD asks for a 10-minute window; that is NOT what this measured. A short window can prove instability but cannot prove stability over a long journey."
+    "Each sample held ONE session for 30s across 3 reads (one every 15s). The PRD asks for a 10min window; that is NOT what this measured — pass `--stability-window 10m` to measure it. A short window can prove instability but cannot prove stability over a long journey."
   ]
 }

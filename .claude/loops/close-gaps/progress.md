@@ -341,7 +341,69 @@ Docs: gaps **C-11**, **C-12**; PRD **R-109 … R-112**.
 Gate: lint clean · boundaries clean (94 modules / 372 deps) · **1013 tests at 100%**
 lines/statements/functions · e2e **28/28**.
 
-## Next: slice 3
+## Slice 3 · D-1e — already closed, and the entry was stale
 
-D-1c — `proxy verify` honours `--engine`. It runs on agent-browser regardless and
-hangs with no Chrome, which cost an hour during the Decodo work.
+`proxy verify` has honoured `--engine` since `RuntimeRequest` landed;
+`cli/commands.ts` passes `{ engine, profile }` to `makeRuntime`. **The entry
+contradicted D-1b in the same document**, which already said "closed for
+`browser verify` and `proxy verify`".
+
+Confirmed by running it rather than reading it: `proxy verify --geo bergen-desktop
+--provider http-proxy --engine playwright` returns a full two-axis verification at
+confidence 100 through a live Decodo exit, and did so repeatedly during the
+corroboration work in slice 2b.
+
+Kept in the register rather than deleted, because the failure it records is real and
+it is about the register itself: two entries describing the same code disagreed, and
+the pessimistic one was believed. Slice 1 existed to fix exactly this and this
+survived it.
+
+Slice 3 therefore cost no code, so slice 4 was taken in the same run.
+
+## Slice 4 · D-1b — the experiment samplers honour the engine — DONE
+
+`ExperimentOptions` gained `engine` and `verifyEndpoint`, and every runtime an
+experiment builds now goes through one `runtimeFor(deps, options, profile, config)`
+helper instead of five call sites with their own defaults. That consolidation is the
+point, not tidiness: a per-site default is how EXP-003's **two** isolated sessions
+end up on different engines while the sample reports one number. The three samplers
+that delegate to `journeyRun` forward both fields, so `--engine` means the same thing
+whether an experiment runs a journey or a human does.
+
+Absent still means `DEFAULT_ENGINE`, so an experiment re-run without the flag
+measures what its stored results measured — otherwise the new results and the old
+ones are not comparable.
+
+EXP-000 is the one where this is more than uniformity: its subject IS the adapter, so
+taking its samples through an engine nobody asked about answered a different question
+than the one printed at the top of its own summary.
+
+### Proven by running it, and it unblocked something
+
+**EXP-002 had never produced a measurement through the residential proxy at all.**
+The samplers were agent-browser-only and there is no Chrome for that engine here, so
+the experiment could not execute — which means C-1's flag work in slice 2 had landed
+into a path that still could not run. Through Playwright and a live Decodo Bergen
+exit:
+
+```
+EXP-002-sticky-session — PASS
+  ✓ ip-stability   100.0% vs ≥ 95%
+  · Each sample held ONE session for 30s across 3 reads (one every 15s).
+    The PRD asks for a 10min window; that is NOT what this measured.
+```
+
+The note is doing its job: a cheap window cannot be read as the expensive claim. A
+**10-minute, 5-read** run (T04, the PRD's actual window) was launched after this and
+its result is recorded separately.
+
+Docs: gaps **D-1b** and **D-1e** closed; PRD **R-113**.
+
+Gate: lint clean · boundaries clean (94 modules / 374 deps) · **1019 tests at 100%**
+lines/statements/functions · e2e **28/28**.
+
+## Next: slice 5
+
+B-7 + C-8 + C-5 — say when a returning visitor was NOT restored; verify `emulate`
+actually applied (same class as the 1280px mobile bug); add `inp-below` with an
+interaction before the read.

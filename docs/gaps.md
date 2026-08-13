@@ -933,12 +933,23 @@ are deliberately shared across engines.
 Where: `.dependency-cruiser.mjs`, `package.json` (`boundaries`),
 `.github/workflows/ci.yml`.
 
-### D-1e · `proxy verify` still runs on agent-browser
+### D-1e · CLOSED, and it was stale when it was written
 
-`proxy verify --provider http-proxy` ignores `--engine` and uses agent-browser,
-which has no Chrome installed — so it hangs rather than verifying. The Decodo
-verification had to go through `journey run --engine playwright` instead. Only the
-journey path honours the engine flag for proxied runs.
+`proxy verify` has honoured `--engine` since `RuntimeRequest` landed:
+`cli/commands.ts` passes `{ engine, profile }` to `makeRuntime`. **This entry
+contradicted [D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers)
+in the same document**, which already said "closed for `browser verify` and
+`proxy verify`".
+
+Confirmed by running it, not by reading it — `proxy verify --geo bergen-desktop
+--provider http-proxy --engine playwright` returns a full two-axis verification at
+confidence 100 through a live Decodo exit, and did so repeatedly during the
+corroboration work.
+
+Left in place rather than deleted, because the failure it records is a real one and
+it is about this file: two entries describing the same code disagreed, and the
+pessimistic one was believed. A gap register nobody trusts is worse than none, which
+is why slice 1 existed — and this survived it.
 
 ### D-1b · The engine choice is uniform, except for the experiment samplers
 
@@ -958,21 +969,37 @@ because changing the launch identity of the command that proves the primitives
 would change what EXP-000 measured. `--engine playwrite` is now refused (exit 2)
 instead of silently running agent-browser.
 
-**Still open for the seven experiment samplers.** **Verified now**:
-`cli/samplers.ts` calls `deps.makeRuntime(config)` with no request at lines 90,
-273, 328, 329 and 370, so `experiment run` is agent-browser-only. `ExperimentOptions`
-also carries no `engine` and no `verifyEndpoint`, and lines 99 and 280 use
-`DEFAULT_VERIFY_ENDPOINT` directly, so a configured verify endpoint does not reach
-an experiment either. The change is one field plus five call sites — and it is the
+**CLOSED for the samplers too.** `ExperimentOptions` gained `engine` and
+`verifyEndpoint`, and every runtime an experiment builds now goes through one
+`runtimeFor(deps, options, profile, config)` helper rather than five call sites with
+their own defaults — a per-site default is how EXP-003's two isolated sessions end
+up on different engines while the sample reports one number. The three samplers that
+delegate to `journeyRun` forward both fields, so `--engine` means the same thing
+whether an experiment runs the journey or a human does. Absent still means
+`DEFAULT_ENGINE`, so an experiment re-run without the flag measures what its stored
+results measured.
+
+EXP-000 is the one where this is not merely uniformity: its subject IS the adapter,
+so taking its samples through an engine nobody asked about answered a different
+question than the one printed at the top of the summary.
+
+**Proven by running it.** EXP-002 had never produced a measurement through the
+residential proxy, because the samplers were agent-browser-only and there is no
+Chrome for that engine here — so the experiment could not execute at all. Through
+Playwright and a live Decodo Bergen exit it now reports `ip-stability 100%` over a
+30-second window across 3 reads, and the summary note still says plainly that the
+PRD's ten minutes were not covered.
+
+The original diagnosis, kept because it was accurate: the change was one field plus
+five call sites — and it was the
 same `ExperimentOptions` edit that
 [C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it) and
 [A-3b](#a-3b--exp-007-exists-now-and-has-never-been-run) are waiting on. An option
 nothing reads is the defect [B-1](#b-1--the-config-file-is-read-now--except-for-two-keys)
 closed, so add the field and the call sites together or neither.
 
-Consequence today: EXP-001 measures egress through agent-browser and the journey
-and matrix paths can use either engine. Both are valid — the experiment proves the
-proxy, the journey proves the browser — but the engine choice is not yet uniform.
+Consequence today: none. The engine choice is uniform across `browser verify`,
+`proxy verify`, `journey run`, `matrix run` and all eight experiment samplers.
 
 ### D-1c · Closed: a trace carries its own format
 
