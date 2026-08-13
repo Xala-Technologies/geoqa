@@ -19,6 +19,40 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — A real cookie proven to survive, and the last code-closable gap closed
+
+**B-7 is closed, and with it there is no code-closable item left in `docs/gaps.md`.**
+
+The mechanism had been finished for a while — a Playwright context saves its session
+before closing, `resolveVisitorState` decides what a run's visitor actually is, and
+`run.json` records `{declared, restored, unmet}` so a first-time visit and a returning
+one are distinguishable in the evidence. What was missing was proof that a real cookie
+survives, and that is **not a claim one run can make about itself**: `storageState` is
+written when the browser closes.
+
+So the suite gained the shape it did not have — two runs of one profile:
+
+| Run | Verdict | `run.json` visitor |
+|---|---|---|
+| first | **FAIL**, correctly — the site has never seen this browser | `restored: false`, `unmet` naming the seeded session |
+| second | **PASS** | `restored: true`, `unmet: null` |
+
+Three details carry the proof. The marker is `<p id="visitor">`, not translated copy —
+a word like "tilbake" could legitimately appear on a first visit. The cookie is the
+**only** difference between the fixture's two branches, both 200 with a heading and
+links, so nothing else in the journey can account for a passing second run. And
+`Max-Age` is a year rather than a session cookie, because `storageState` persists
+cookies with an expiry and drops session ones — a session cookie would have failed at
+the wrong layer for the wrong reason.
+
+**Checked by mutation, not only by passing.** Disabling the restore branch makes the
+second run fail and the first still pass. That is the shape a real proof has: sensitive
+to exactly the mechanism it names. Worth doing because C-6 records that this project's
+coverage gate proves *execution*, not *assertion* — and a brand-new test for a
+previously-dead path is precisely where that distinction bites.
+
+---
+
 ## 2026-08-13 — Fixing what the second site found, and a fourth defect the fix exposed
 
 C-13 and C-14 are closed, and writing the test for them surfaced C-17.

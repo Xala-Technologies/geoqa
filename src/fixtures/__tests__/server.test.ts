@@ -256,3 +256,26 @@ describe("the client-rendering fixtures", () => {
     expect(fixtureBody("/empty-body")?.html).toContain("<body></body>");
   });
 });
+
+describe("/returning", () => {
+  it("greets a first-time visitor and SETS the cookie that changes the answer", () => {
+    const page = fixtureBody("/returning");
+    expect(page?.html).toContain("first-time");
+    expect(page?.headers?.["set-cookie"]).toContain("seen=1");
+    // A year, not a session cookie: Playwright's `storageState` persists cookies with an
+    // expiry and drops session ones, so a session cookie would fail at the wrong layer and
+    // for the wrong reason — testing the opposite of what the fixture is named for.
+    expect(page?.headers?.["set-cookie"]).toContain("Max-Age=");
+  });
+
+  it("recognises a visitor carrying the cookie, and changes NOTHING else", () => {
+    const first = fixtureBody("/returning");
+    const back = fixtureBody("/returning", "seen=1");
+    expect(back?.html).toContain("returning");
+    // The cookie must be the only difference. A returning branch that also fixed a 404 or
+    // added a heading would let an unrelated repair look like a restored session.
+    expect(back?.status).toBe(first?.status);
+    expect(back?.html).toContain("<h1>");
+    expect(back?.headers).toBeUndefined();
+  });
+});

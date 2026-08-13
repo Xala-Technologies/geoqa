@@ -771,7 +771,7 @@ Still true, and unsolvable rather than unfinished: nothing detects personal data
 [B-3](#b-3--closed--the-har-is-recorded-listed-flagged-and-deleted-when-unretained) —
 the HAR is a second artifact with the same problem, and it carries the same flag now.
 
-### B-7 · A returning visitor is restored now, and nothing says when it was not
+### B-7 · CLOSED — a real cookie is proven to survive between two runs
 
 **Closed for the mechanism.** `PwContext.saveStorageState` plus
 `PwSession.saveStatePath` mean a Playwright context saves the visitor's session
@@ -829,11 +829,30 @@ reported as fine. Two lines in `execute.ts` (log the warning) and one field in
 `collectEvidence`'s `run.json` (`visitor: { declared, restored, unmet }`, purely
 additive so no schema bump) close it.
 
-**Residual, and small: no e2e proves a real cookie survives.** The profile exists and
-the path is exercised, but the two-run sequence — first run sets a cookie, second run
-sees it — is not automated. It needs an e2e that runs the same profile twice against a
-fixture that sets a cookie, which is a test-harness shape this suite does not have yet
-(every existing case is a single run).
+**CLOSED: a real cookie is proven to survive.** `/returning` serves two branches that
+differ ONLY by a cookie — both 200, both with a heading and links — and
+`journeys/returning-visitor.yaml` asserts `#visitor` reads `returning`. The e2e runs
+`oslo-desktop-returning` twice against it:
+
+| Run | Verdict | `run.json` visitor |
+|---|---|---|
+| first | **FAIL** — correctly, the site has never seen this browser | `restored: false`, `unmet` naming the seeded session |
+| second | **PASS** | `restored: true`, `unmet: null` |
+
+Three details are the point rather than polish. The marker is `<p id="visitor">`, not
+translated copy — a word like "tilbake" could legitimately appear on a first visit, and
+`/lang` carries `<p id="locale">` for the same reason. The cookie is the only difference
+between the branches, so nothing else in the journey can account for a passing second
+run. And `Max-Age` is a year rather than a session cookie, because Playwright's
+`storageState` persists cookies with an expiry and drops session ones — a session
+cookie would have failed at the wrong layer, for the wrong reason.
+
+**Verified by MUTATION, not only by passing.** Disabling the restore branch
+(`if (false && exists(file))`) makes the second run fail and the first still pass,
+which is the shape a real proof has: the test is sensitive to exactly the mechanism it
+names. [C-6](#c-6--coverage-proves-execution-not-assertion) says coverage proves
+execution rather than assertion, so a new test for a previously-dead path is worth
+checking that way before it is believed.
 
 Where: `browser/playwright.ts`, `run/context.ts` (`VISITOR_STATE_DIR`,
 `resolveVisitorState`), `profiles/*.yaml`.
@@ -1930,12 +1949,11 @@ The first is not a priority call — it is a red suite. After that the order is
 6. ~~**B-3's HAR residue**~~ — DONE. The collection reorder, the pass-tier delete and
    the privacy flag all landed together; `harStop` closes the context because on
    Playwright that is the flush, and fail-tier completeness is 100 rather than 88.
-7. **B-7's last half** — the warning is surfaced and `run.json` records
-   `{declared, restored, unmet}`; the `returning` profile exists. What is left is
-   the **e2e**: run one profile twice against a fixture that sets a cookie and
-   assert the second run sees it. It needs a two-run harness this suite does not
-   have — every existing case is a single run. **This is the only remaining
-   code-closable item in the whole document.**
+7. ~~**B-7's last half**~~ — DONE. The two-run e2e exists: `oslo-desktop-returning`
+   against `/returning`, failing on the first run and passing on the second, and
+   mutation-checked so it is sensitive to the restore branch it names. **With this,
+   no code-closable item remains in this document** — everything below needs a
+   decision, a live environment, or a Temporal worker.
 8. **C-8 and C-15 both need a DECISION, not an implementation.** C-8: mobile
    profiles are mobile by viewport only and present a desktop UA — closing it means
    choosing emulation (and losing `window.innerWidth` control, measured at 980 vs

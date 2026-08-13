@@ -362,6 +362,81 @@ describe("a client-rendered page whose body is EMPTY at load", () => {
   });
 });
 
+describe("a returning visitor, across TWO runs", () => {
+  /**
+   * The only case in this suite that needs more than one run, and the reason B-7 stayed open
+   * with its mechanism finished.
+   *
+   * `storageState` is written when the context CLOSES, so "the session survived" is not a claim
+   * a single run can make about itself. Every other case here is one run; this one seeds a
+   * session and then proves the next run inherited it.
+   *
+   * Both runs happen in `beforeAll` rather than one per `it`, so the second assertion does not
+   * silently depend on the first having executed. That coupling would have held today —
+   * `fileParallelism: false` and vitest runs `it`s in order — and it would have made
+   * `-t "is RECOGNISED"` fail on its own, which is the kind of test nobody trusts twice.
+   */
+  let first: GeoQaRunResult;
+  let second: GeoQaRunResult;
+
+  const visitorRun = (runId: string): Promise<GeoQaRunResult> =>
+    run({
+      runId,
+      target: `${fixtures.origin}/returning`,
+      profilePath: path.join(profilesDir, "oslo-desktop-returning.yaml"),
+      journeyPath: path.join(journeysDir, "returning-visitor.yaml"),
+    });
+
+  const visitorRecord = (runId: string): { declared: string; restored: boolean; unmet: string | null } =>
+    (
+      JSON.parse(readFileSync(evidenceFile(runId, "run.json"), "utf8")) as {
+        visitor: { declared: string; restored: boolean; unmet: string | null };
+      }
+    ).visitor;
+
+  const stateFile = (): string => path.join(evidenceRoot, "visitors", "oslo-desktop-returning.json");
+
+  beforeAll(async () => {
+    first = await visitorRun("e2e_visitor_first");
+    second = await visitorRun("e2e_visitor_second");
+  });
+
+  it("tests a FIRST-TIME visitor on the first run, and says so rather than claiming otherwise", () => {
+    // The honest half. A profile declaring `returning` cannot be one until some run has seeded
+    // the session, and the evidence records what was actually tested — not what the profile
+    // asked for. A run that recorded `visitorType: returning` either way would make a
+    // first-time visit and a returning one indistinguishable, which is the same class of lie as
+    // an unmeasured metric reported as fine.
+    expect(first.verdict).toBe("FAIL");
+
+    const visitor = visitorRecord("e2e_visitor_first");
+    expect(visitor.declared).toBe("returning");
+    expect(visitor.restored).toBe(false);
+    expect(visitor.unmet).toContain("tested a FIRST-TIME visitor");
+
+    // And the session is saved anyway, or no run would ever get to be a returning one.
+    expect(existsSync(stateFile())).toBe(true);
+  });
+
+  it("is RECOGNISED on the second run, which is the whole claim", () => {
+    // The proof. Same profile, same page, same journey — and the only thing that changed is a
+    // cookie restored from the file the previous run wrote. The fixture's two branches are
+    // otherwise identical (200, a heading, links), so nothing else in the journey can account
+    // for the difference.
+    expect(second.verdict).toBe("PASS");
+    expect(second.findings).toEqual([]);
+
+    const visitor = visitorRecord("e2e_visitor_second");
+    expect(visitor.restored).toBe(true);
+    expect(visitor.unmet).toBeNull();
+
+    // The step that carries the claim actually ran and passed, rather than being skipped by an
+    // earlier halt — a PASS with the load-bearing step missing would prove nothing.
+    const step = journeySteps("e2e_visitor_second").find((s) => s.label === "the site recognises this browser");
+    expect(step?.outcome).toBe("passed");
+  });
+});
+
 describe("a heading that arrives late", () => {
   it("WAITS for it instead of inventing a missing-heading defect", async () => {
     // The regression this exists for: under load, `selector-visible` reported a

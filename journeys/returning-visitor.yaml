@@ -1,0 +1,28 @@
+id: returning-visitor
+title: A visitor the site recognises
+description: >
+  The one journey that means nothing on its own. It asserts that the page treats
+  this browser as a RETURNING visitor — which is false on a profile's first run
+  by construction, because the session it needs is written when that run's
+  browser closes. Run it twice against the same profile: the first run seeds the
+  session and legitimately fails, the second proves the session survived.
+
+  That two-run shape is why B-7 stayed open with its mechanism finished. A
+  cookie restored from `storageState` cannot be demonstrated inside one run, and
+  a mechanism nothing exercises is a mechanism nobody knows is broken.
+
+  Requires `--profile oslo-desktop-returning` (or any profile declaring
+  `visitorType: returning`) and `--engine playwright`. agent-browser isolates
+  cookies per session and the session name is the run id, so every run there
+  arrives as a first-time visitor — `resolveVisitorState` says so out loud
+  rather than letting the journey fail for a reason that is not the page's.
+steps:
+  - { action: open, url: "{target}", label: open target }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  # The marker is an id-carrying element, not translated copy. A word like
+  # "tilbake" could legitimately appear on a first visit; `#visitor` states the
+  # claim exactly, which is the same reason `/lang` carries `<p id="locale">`.
+  - { action: assert, check: text-contains, selector: "#visitor", value: returning, severity: high, category: functional, label: the site recognises this browser }
+  - { action: screenshot, label: as-seen }
+  - { action: assert, check: no-page-errors, severity: high }

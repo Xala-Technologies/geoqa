@@ -457,6 +457,12 @@ unmeasured guess until EXP-007 runs.
   derived from its outcome, because no author can know in advance that a step will be
   unreadable — and a journey that could would file our blindness as its own subject
   area.
+- **R-167** A claim that cannot be made by one run is proven across **two**. A saved
+  session is written when the browser closes, so "the session survived" is not something
+  a single run can assert about itself; the first run seeds it and legitimately fails,
+  the second inherits it and passes. The fixture's two branches differ only by the
+  cookie, so nothing else can account for the difference — a returning branch that also
+  repaired something unrelated would let that repair masquerade as a restored session.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never
