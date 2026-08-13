@@ -115,9 +115,24 @@ export function tierFor(verdict: JourneyVerdict): RetentionTier {
   }
 }
 
-export function missingArtifacts(tier: RetentionTier, artifacts: Artifact[]): ArtifactKind[] {
+/**
+ * The policy in force, which is the DEFAULT unless a run carried its own.
+ *
+ * `geoqa.config.json`'s `evidence.retention` was parsed, validated, defaulted and deep-copied
+ * for a while, and then read by nobody — the exact defect gaps B-1 is named for, recurring
+ * inside the module built to prevent it. Threading it here rather than mutating `RETENTION` is
+ * what keeps a narrowed tier from leaking between runs in one process; the mutable module
+ * object stays the default and nothing writes to it.
+ *
+ * The same table MUST reach both the collector and the manifest. If only the collector honoured
+ * a narrowed tier, every run would report the kinds it was told not to keep as MISSING, and
+ * completeness would fall for obeying the config — a policy that punishes you for setting it.
+ */
+export type RetentionPolicy = Record<RetentionTier, ArtifactKind[]>;
+
+export function missingArtifacts(tier: RetentionTier, artifacts: Artifact[], policy: RetentionPolicy = RETENTION): ArtifactKind[] {
   const present = new Set(artifacts.filter((a) => a.bytes > 0).map((a) => a.kind));
-  return RETENTION[tier].filter((kind) => !present.has(kind));
+  return policy[tier].filter((kind) => !present.has(kind));
 }
 
 /**
@@ -127,9 +142,9 @@ export function missingArtifacts(tier: RetentionTier, artifacts: Artifact[]): Ar
  * is precisely backwards — the trace is the one that makes a failure
  * reproducible.
  */
-export function completenessOf(tier: RetentionTier, artifacts: Artifact[]): number {
-  const required = RETENTION[tier];
-  const missing = missingArtifacts(tier, artifacts);
+export function completenessOf(tier: RetentionTier, artifacts: Artifact[], policy: RetentionPolicy = RETENTION): number {
+  const required = policy[tier];
+  const missing = missingArtifacts(tier, artifacts, policy);
   return Math.round(((required.length - missing.length) / required.length) * 100);
 }
 
@@ -144,6 +159,13 @@ export interface BuildManifestInput {
   createdAt: string;
   verdict: JourneyVerdict;
   artifacts: Artifact[];
+  /**
+   * The policy this run collected under. Omitted means the built-in table.
+   *
+   * It has to be the SAME table the collector used, or a narrowed tier would report the kinds
+   * it was told not to keep as missing and completeness would fall for obeying the config.
+   */
+  retention?: RetentionPolicy;
 }
 
 export function buildManifest(input: BuildManifestInput): EvidenceManifest {
@@ -157,8 +179,8 @@ export function buildManifest(input: BuildManifestInput): EvidenceManifest {
     verdict: input.verdict,
     tier,
     artifacts: input.artifacts,
-    missing: missingArtifacts(tier, input.artifacts),
-    completeness: completenessOf(tier, input.artifacts),
+    missing: missingArtifacts(tier, input.artifacts, input.retention),
+    completeness: completenessOf(tier, input.artifacts, input.retention),
     // Widened past screenshots deliberately. It used to say "screenshot(s)", which was true
     // when they were the only flagged artifact and became a way of understating the problem
     // once a HAR carried the same flag: a reader who trusts the note would have shared a file

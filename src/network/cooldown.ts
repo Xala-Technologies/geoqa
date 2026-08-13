@@ -21,7 +21,21 @@
  *     bound and a stale key cannot outlive its window.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import path, { dirname } from "node:path";
+
+/** The store's filename, beside `runs.jsonl` under the evidence root. */
+export const COOLDOWN_FILE = "cooldowns.json";
+
+/**
+ * Where this installation's provider cooldowns live.
+ *
+ * Under the evidence root, and therefore under the TENANT's root when one is scoped: a tenant
+ * with its own proxy account must not inherit another tenant's frozen vendor, and must not
+ * freeze theirs. Derived in one place so no command can look at a different file than the one
+ * the last run wrote — two paths for one vendor's health is how a cooled-down provider gets
+ * retried by whichever command read the other.
+ */
+export const cooldownStorePath = (evidenceRoot: string): string => path.join(evidenceRoot, COOLDOWN_FILE);
 
 /** resource key → cooldown-until epoch-ms. Absent or past ⇒ available. */
 export type Cooldowns = Record<string, number>;

@@ -62,6 +62,7 @@ import {
   resolveProfileId,
 } from "./commands.js";
 import { configPath, loadConfig } from "../config/load.js";
+import { cooldownStorePath } from "../network/cooldown.js";
 import { findExperiment } from "../experiments/definitions.js";
 import { DEFAULT_MATRIX_CONCURRENCY } from "../run/matrix.js";
 import { gateExitCode } from "../gate/publish.js";
@@ -132,6 +133,17 @@ async function main(argv: string[]): Promise<number> {
     // `--evidence-root` with no value amounts to.
     evidenceRoot: resolveEvidenceRoot(repoRoot, config.evidence.root, flagString(args, "evidence-root", "")),
     browserTimeouts: config.browser,
+    // The loader already deep-copied it, so `deps` holds the run's own table and nothing here
+    // aliases the module-level `RETENTION` that every other run reads.
+    retention: config.evidence.retention,
+    // Beside `runs.jsonl` under the evidence root: both are derived state about this
+    // installation, and `--tenant` replaces that root, so a tenant with its own proxy account
+    // gets its own cooldowns rather than inheriting another tenant's frozen vendor.
+    //
+    // Resolved here rather than inside a command because the tenant swap happens below and
+    // every command must see the same store — two paths for one vendor's health is how a
+    // cooled-down provider gets retried by whichever command looked at the other file.
+    cooldownMs: config.network.cooldownMs,
   });
   /**
    * `--tenant`, resolved BEFORE anything else that touches the filesystem.
@@ -153,6 +165,10 @@ async function main(argv: string[]): Promise<number> {
     deps.tenantId = tenant.id;
     console.error(`tenant: ${tenant.id} (${tenant.name}) — evidence under ${tenancy.evidenceRoot}`);
   }
+  // AFTER the tenant swap, and derived from the root that survived it. Set here rather than in
+  // `defaultDeps` because that runs before the swap, and a cooldown path pointing at the shared
+  // root would let one tenant's failed vendor freeze another's.
+  deps.cooldownPath = cooldownStorePath(deps.evidenceRoot);
 
   const providerName = flagString(args, "provider", config.network.provider);
   const verifyEndpoint = config.network.verifyEndpoint;

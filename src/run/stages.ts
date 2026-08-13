@@ -269,7 +269,11 @@ export async function collectEvidence(
 ): Promise<EvidenceManifest> {
   const { spec, journey } = input;
   const dir = ensureRunDirectory({ root: spec.evidenceRoot, runId: spec.runId });
-  const tier = RETENTION[verdictTier(journey.verdict)];
+  // The run's own policy, or the built-in table. The SAME one reaches `buildManifest` below —
+  // if only the collector honoured a narrowed tier, the manifest would report the kinds the
+  // config told it not to keep as missing, and completeness would fall for obeying the config.
+  const policy = spec.retention ?? RETENTION;
+  const tier = policy[verdictTier(journey.verdict)];
   const artifacts: Artifact[] = [];
 
   /**
@@ -391,6 +395,7 @@ export async function collectEvidence(
   }
 
   const manifest = buildManifest({
+    ...(spec.retention ? { retention: spec.retention } : {}),
     evidenceId: newEvidenceId(spec.runId),
     runId: spec.runId,
     createdAt: input.createdAt,

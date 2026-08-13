@@ -383,6 +383,15 @@ whether anything asked or not, so a green run left an unlisted network log on di
 Unlisted is the worse half: pruning walks the manifest. `pruneUnlistedHar` says so in
 the log, because a deleted file is the one thing a reader cannot go back and check.
 
+**32. A config key is honoured at the CALL SITE, and the retention policy is one
+table.** Parsing a key nothing reads is B-1, and it recurred twice inside the module
+written to prevent it. `evidence.retention`, `network.cooldownMs` and the `browser`
+caps now travel on `RunSpec`/`ExecuteOptions` to the code that acts on them. The
+retention table reaches both `collectEvidence` and `buildManifest` — honouring it in
+the collector alone would report the kinds the config excluded as MISSING and drop
+completeness for obeying the config. Carried as a copy: `RETENTION` is module-level
+and mutable, and one run narrowing a tier must not narrow every later run's.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

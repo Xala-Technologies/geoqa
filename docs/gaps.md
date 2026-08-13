@@ -12,7 +12,7 @@ at all; nothing started tracing, so every fail-tier trace was zero bytes; the
 geolocation permission was denied and stubbed (Playwright); the screenshot
 privacy flag was hardcoded; a sticky-session key could not be expressed in a
 proxy URL; finding reproducibility was plumbed but fed by nothing;
-`geoqa.config.json` was read by nothing ([B-1](#b-1--the-config-file-is-read-now--except-for-two-keys));
+`geoqa.config.json` was read by nothing ([B-1](#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site));
 redaction masked every experiment metric key ([B-2](#b-2--redaction-no-longer-masks-structural-field-names));
 `visitorType` was declared and unused ([B-7](#b-7--a-returning-visitor-is-restored-now-and-nothing-says-when-it-was-not));
 the layering invariants were enforced by review only ([D-1](#d-1--the-layer-map-is-enforced-by-a-tool-now-and-it-has-already-earned-it));
@@ -511,7 +511,7 @@ on its first run against the real tree, and
 the e2e suite out loud. A defect a tool shouts about is a better defect than one a
 document has to remember.
 
-### B-1 · The config file is read now — except for two keys
+### B-1 · CLOSED — every key in the example is honoured at the call site
 
 **Closed for most of the surface.** `src/config/load.ts` reads
 `geoqa.config.json` from the repo root, `src/config/schema.ts` validates it, and
@@ -541,38 +541,60 @@ Honoured today, **verified** at the call site: `network.provider` (fallback for
 `matrixRun`, and lands on `RunSpec.verifyEndpoint`), `evidence.root` (via
 `resolveEvidenceRoot`; relative paths resolved against the repo root, flag wins).
 
-**Two keys are still inert, and one of them is the exact defect this entry was
-written about.** `grep -rn "cooldownMs\|\.retention" src/cli src/run` excluding
-tests returns **nothing** — verified now:
+**CLOSED: `evidence.retention` decides what a run collects AND what its manifest
+calls required.** It was parsed, validated, defaulted and deep-copied, then read by
+nobody — B-1's own defect recurring inside the module built to prevent it. It now
+travels on `RunSpec` (a plain record of string arrays, so the durable path rebuilds
+it unchanged) and reaches both `collectEvidence` and `buildManifest`. **Both halves
+were required together**: had only the collector honoured a narrowed tier, every run
+would report the kinds the config told it not to keep as MISSING and completeness
+would fall — a policy that punishes you for setting it. Carried as the loader's copy,
+never a reference to the module-level `RETENTION`, so one run narrowing a tier cannot
+narrow what every later run in the process keeps; a test pins that.
 
-| Config key | State |
-|---|---|
-| `evidence.retention` | parsed, defaulted, merged, deep-copied — and read by nobody. `stages.ts:214` still uses the module-level `RETENTION` |
-| `network.cooldownMs` | parsed and defaulted; `ExecuteOptions` has no `cooldownMs` and nothing passes `cooldownPath` either, so `noteProviderOutcome` is a no-op from the CLI regardless |
+**CLOSED: `network.cooldownMs`, and the store it belongs to was unreachable
+entirely.** Nothing in the CLI passed `cooldownPath` either, so `httpProxyProvider`
+returned null from `cooldownUntil` and `noteProviderOutcome` returned immediately —
+a vendor that failed mid-sweep was retried on every scenario, which is exactly what
+the store was ported from agent-fleet to prevent. Both halves are wired: the READ
+into `selectProvider`, the WRITE into `executeRun`. A store that only ever added
+would freeze a recovered vendor, so the success path clears it, unchanged. The file
+lives at `<evidence-root>/cooldowns.json`, beside `runs.jsonl` — both derived state
+about this installation — and is resolved AFTER the `--tenant` swap, so a tenant with
+its own proxy account neither inherits nor causes another tenant's freeze.
 
-`geoqa.config.example.json` says "Every key below is READ", which is now true of
-the loader and false of the run. Either thread them or delete them from the
-example — half a config surface is still worse than either whole one.
+**CLOSED: `browser.commandTimeoutMs` / `idleTimeoutMs` reach `journey run` and
+`matrix run`.** They reached `browser verify` and `proxy verify` only, so a cap on a
+hung command applied to the two commands least likely to hang and silently not to the
+two that do the work. Now on `RunSpec` — both plain numbers, neither changes
+agent-browser's launch identity, so invariant 12 holds. Spread conditionally, because
+`exec.ts` reads 0 as "no cap" and a run with no cap does not fail, it hangs.
 
-**A third key is honoured on only some commands.** `browser.commandTimeoutMs` /
-`idleTimeoutMs` reach `CommandDeps.browserTimeouts` and therefore `browser verify`
-and `proxy verify`, but **not** `journey run` or `matrix run`: `buildRuntime`
-(`run/context.ts:98`) constructs `new AgentBrowserRuntime(config)` with no options.
-`RunSpec` needs `commandTimeoutMs?`/`idleTimeoutMs?` — both JSON-serialisable, and
-neither changes agent-browser's launch identity, so invariant 12 is safe.
+**CLOSED: `ProviderOptions.cooldownMs` deleted.** Nothing read it; the live path is
+`noteProviderOutcome`'s own options. Passing the config value there would have looked
+wired and done nothing — a fresh B-1 inside the fix for B-1.
 
-Also still true: **`ProviderOptions.cooldownMs` (`network/provider.ts:149`) is
-dead** — nothing in that file reads it. Passing the config value there would look
-wired and do nothing, i.e. a fresh B-1. Delete the field or make
-`httpProxyProvider` use it; the live path is `noteProviderOutcome`'s own options.
+**CLOSED: the `.gitignore` rationale.** `/geoqa.config.json` is not ignored because
+it carries credentials — it cannot; they come from `GEOQA_PROXY_*` only (R-26) and
+the loader refuses a credential-shaped key by name. It is ignored because evidence
+roots, timeouts and retention are machine-local choices, and a committed one would
+silently retune everyone else's runs. `geoqa.config.example.json`'s claim that every
+key is READ is now true of the run as well as the loader.
 
-And the `.gitignore` rationale on line 21 is now wrong twice over:
-`/geoqa.config.json` is ignored as "local config carries proxy credentials", but
-credentials come from `GEOQA_PROXY_*` only (R-26) and the loader now **refuses
-credential-shaped keys by name** with a message saying where they belong.
+**One half stays open, and it belongs to D-2 rather than here.** The durable path
+READS cooldowns (`prepare` forwards `cooldownPath` to `selectProvider`) and never
+WRITES one: `noteProviderOutcome` lives in `executeRun`, which is the in-process path
+only. So a Temporal run would honour a freeze the CLI set and never set one itself.
+Putting the other three keys on `RunSpec` means the durable path picks all of them up
+for free — `collectEvidenceActivity` passes `args.spec`, `buildRuntime` reads the caps
+— so the cooldown write is the single remaining asymmetry, and it waits behind
+[D-2](#d-2--the-in-process-matrix-runs-the-durable-one-still-cannot-be-started) with
+B-4's, because nothing starts a worker to exercise it.
 
-Where: `src/config/schema.ts`, `src/config/load.ts`, `cli/index.ts`,
-`geoqa.config.example.json`, `.gitignore:21`.
+Where: `evidence/manifest.ts` (`RetentionPolicy`), `run/context.ts` (`RunSpec`),
+`run/stages.ts`, `run/execute.ts`, `network/cooldown.ts` (`cooldownStorePath`),
+`network/provider.ts`, `cli/commands.ts`, `cli/index.ts`,
+`geoqa.config.example.json`, `.gitignore`.
 
 ### B-2 · Redaction no longer masks structural field names
 
@@ -1576,7 +1598,7 @@ five call sites — and it was the
 same `ExperimentOptions` edit that
 [C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it) and
 [A-3b](#a-3b--exp-007-exists-now-and-has-never-been-run) are waiting on. An option
-nothing reads is the defect [B-1](#b-1--the-config-file-is-read-now--except-for-two-keys)
+nothing reads is the defect [B-1](#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site)
 closed, so add the field and the call sites together or neither.
 
 Consequence today: none. The engine choice is uniform across `browser verify`,
@@ -1708,11 +1730,10 @@ The first is not a priority call — it is a red suite. After that the order is
 
 1. **B-10** (e2e asserts `trace.json`) — `pnpm test:e2e` fails. One filename, plus
    the manifest assertion that would have caught it.
-2. **B-1's residue** — thread `evidence.retention` and `network.cooldownMs`, or
-   delete them from the example. A config file that documents a key nothing reads
-   is the defect this entry closed, reopened in two places. Same commit should fix
-   the `.gitignore` rationale and delete or use the dead
-   `ProviderOptions.cooldownMs`.
+2. ~~**B-1's residue**~~ — DONE. `evidence.retention` reaches both the collector and
+   the manifest, the cooldown store is reachable from the CLI at all for the first
+   time, the browser caps reach `journey run`, the dead `ProviderOptions.cooldownMs`
+   is gone and the `.gitignore` rationale is corrected.
 3. **One `ExperimentOptions` edit closes three entries** — `engine`,
    `verifyEndpoint`, `stabilityWindowMs`, `stabilityReads`, `concurrency`, plus the
    five `makeRuntime` call sites in `samplers.ts` and the flags in `index.ts`. That
