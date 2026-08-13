@@ -19,6 +19,69 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — A second live target, and three defects it found in an hour
+
+`xala.no` was named as the second real site, which was the whole of what
+[C-7](docs/gaps.md#c-7--one-live-target) was blocked on — it needed permission and a
+name, not an implementation. The journeys were pointed at it the same day.
+
+**It found three defects in geoqa within the hour, which is the entire argument for a
+second site.** `fixtures/server.ts` covers *known* defects on purpose and cannot do
+this: a fixture we wrote cannot surprise us.
+
+### A text check has no settle (C-13)
+
+`getText` is `innerText`, and Playwright auto-waits only for the element to be
+**attached**. On a client-rendered site the shell's `<html>` and `<body>` are attached
+immediately, so the read returns `""` before hydration and every text check compares
+against an empty string — then files the result as a **site** finding.
+
+| Moment | `body.innerText` | `body.innerHTML` |
+|---|---|---|
+| `load` | **0 chars** | 1,404 |
+| +1s | 6,077 | 80,534 |
+
+The engine reported `page carries the market's language marker — 0 chars read`
+against a site whose `<html lang>` is `nb-NO` and correct.
+
+This is a lesson the engine **already learned once and never generalised**: a negative
+*visibility* reading has confirmed itself since `d7a4700`, because an element
+mid-animation reads as absent. A text read has the same failure mode and none of the
+protection.
+
+### An unsubstituted `{placeholder}` can pass a check green (C-14)
+
+`text-absent` with `value: "{forbiddenCurrency}"` asks whether the page lacks the
+literal string `{forbiddenCurrency}`. Every page does. **The check passes, having
+verified nothing** — the exact conflation of *we could not measure* with *it is fine*
+that this engine exists to refuse, and invisible, because the run reports PASS and
+nobody looks.
+
+### The localization journey looks for an attribute in rendered text (C-15)
+
+Its central check reads `innerText` and searches for a language marker that lives in
+`<html lang="nb-NO">`. `innerText` never returns attributes, so the check cannot
+detect the thing it is named for — on any site, correctly localised or not.
+
+### What the site itself showed (C-16)
+
+`landing-page` and `reader` pass. `search` correctly fails and there is genuinely no
+search input at either width — verified directly, unlike digilist where the input
+exists and a breakpoint hides it. And the `h1` **rotates between reads**, which makes
+any headline text assertion a coin flip.
+
+### One hypothesis the data killed, kept because the method is the point
+
+The first probe read `innerText` at `load`, got 0 characters, and produced a
+confident hypothesis that `locator("html").innerText()` was broken. The same probe
+against `digilist.no` returned 11,542 characters and killed it in one line.
+
+A measurement taken at the wrong moment is not a weaker version of the right answer.
+It is a different and confident wrong one — and the only thing that caught it was
+checking a second subject before believing the first.
+
+---
+
 ## 2026-08-13 — Closing the gaps that could be closed by code
 
 Seven merges. The through-line: the engine already refused to confuse *we could not

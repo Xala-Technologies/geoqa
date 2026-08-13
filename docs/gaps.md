@@ -1491,6 +1491,123 @@ single slow run is noise and "latest" means whichever finished last.
 
 ## D. Tooling and process gaps
 
+### C-13 · A text check has NO settle, so a client-rendered site reports a false site defect
+
+**Found by pointing the engine at a second real site**, which is exactly what
+[C-7](#c-7--one-live-target) said a second site was for.
+
+`getText` is `locator.innerText()`. Playwright auto-waits for the element to be
+ATTACHED, and on a client-rendered site the `<html>` and `<body>` of the shell are
+attached immediately — so the read returns `""` instantly, before hydration. Every
+text check then compares against an empty string and files a **site** finding.
+
+Measured on `xala.no`, a Next-style SPA:
+
+| Moment | `body.innerText` | `body.innerHTML` | `h1` visible |
+|---|---|---|---|
+| `load` | **0 chars** | 1,404 | no |
+| +1s | 6,077 | 80,534 | yes |
+| +3s | 6,325 | 83,555 | yes |
+
+The `localization` journey duly reported
+`[high] page carries the market's language marker — observed 0 chars read`
+against a site whose `<html lang>` is `nb-NO`, i.e. correct.
+
+**This is a lesson the engine already learned once and never generalised.** `d7a4700`
+and `9f10d48` made a negative VISIBILITY reading confirm itself before being reported,
+because an element mid-entrance-animation reads as absent. A text read has exactly the
+same failure mode and none of the protection — and it is worse, because
+`selector-visible` at least has a 5-second budget, which is why the `landing-page`
+journey passes on the same site in the same second that the text check reads zero.
+
+The fix has the same shape as the visibility one: a text read of ZERO characters is
+not a reading, it is "nothing rendered yet", and it must be re-read before a check is
+allowed to build a verdict on it. A non-empty read that simply lacks the value is a
+real reading and must NOT be retried — that is a site finding and retrying it would be
+the silent-retry defect the journey engine refuses everywhere else.
+
+Where: `browser/playwright.ts` (`getText`), `journeys/assertions.ts`
+(`text-contains`, `text-absent`).
+
+### C-14 · An unsubstituted `{placeholder}` in a `text-absent` check passes VACUOUSLY
+
+Found in the same run, and it is the more dangerous of the two.
+
+[R-11](prd.md) leaves an unknown placeholder intact rather than replacing it with an
+empty string, and that reasoning is sound where it was made: `open ""` would navigate
+somewhere meaningless and report a page failure for a config typo. Carried into an
+**assert**, the same rule produces two different lies:
+
+- `text-contains` with `value: "{expectLanguageMarker}"` → asks whether the page
+  contains the literal string `{expectLanguageMarker}`. It does not, so a **high**
+  severity site finding is filed for a variable the operator forgot to pass.
+- `text-absent` with `value: "{forbiddenCurrency}"` → asks whether the page LACKS the
+  literal string `{forbiddenCurrency}`. Every page on earth does. **The check passes,
+  green, having verified nothing.**
+
+The second is the one that matters. A false FAIL wastes an afternoon; a false PASS is
+the exact conflation of "we could not measure" with "it is fine" that this engine
+exists to refuse, and it is invisible — the run reports PASS and nobody looks.
+
+A check whose value still contains an unsubstituted `{...}` after resolution should be
+`errored`/instrumentation — our defect, not the site's — never `passed` and never
+`failed`. `resolveSteps` already knows which placeholders it could not fill.
+
+Where: `journeys/spec.ts` (`resolveSteps`), `journeys/assertions.ts`.
+
+### C-15 · The localization journey looks for a markup ATTRIBUTE in rendered TEXT
+
+`localization.yaml` asserts
+`text-contains selector: html value: "{expectLanguageMarker}"`, and its own
+description calls it "the reason this project exists".
+
+`getText` is `innerText`. A language marker lives in `<html lang="nb-NO">` — an
+**attribute**, which `innerText` never returns. So even against a fully hydrated,
+correctly-localised page the check cannot detect the thing it is named for.
+
+Confirmed rather than reasoned: `digilist.no` renders 11,542 characters of
+`innerText` and carries `lang="en"`; the string `en` as a *marker* is not findable in
+that text in any meaningful way, and `nb-NO` would not be either.
+
+The check needs to read the attribute — `evaluate` already exists and
+`observeBrowser` already reads `navigator.language` — or the journey needs to name a
+marker that genuinely appears in visible copy (a Norwegian word, a `kr` price). The
+first is the honest one, because a visible-copy marker tests the copy, not the
+document's declared language.
+
+Where: `journeys/localization.yaml`, `journeys/assertions.ts`.
+
+### C-16 · xala.no, the second live target: what the journeys found
+
+Not geoqa gaps — **findings about the second site**, recorded so they are not lost,
+and because C-7 is only worth closing if the measuring actually happens.
+
+- **`landing-page`: PASS**, every axis verified, evidence complete.
+- **`reader`: PASS**, journey confidence 74 — four steps never ran.
+- **`search`: correctly FAILS, and there is no search box to find.** Verified directly
+  at 1440px and 390px: `input[type='search']`, `input[name='q']`, `input[name='s']`,
+  `[role='searchbox']` and every `input` on the page — **zero matches at either
+  width**, hidden or otherwise. Unlike [C-10](#c-10--digilistno-the-search-box-is-reachable-at-no-profile-width-live-finding)
+  on digilist, where the input exists and is hidden by a breakpoint, xala.no simply
+  has no search. The follow-on `fill` then errors, which is [C-9](#c-9--closed--an-action-step-no-longer-spends-a-navigation-budget-on-a-missing-element)'s
+  known and deliberate remaining behaviour — now at 8 seconds rather than 30.
+- **`localization`: FAILS for two reasons that are both OURS**, C-13 and C-15. The
+  site's `<html lang>` is `nb-NO` and correct.
+- **The `h1` ROTATES between reads.** At +3s: "Vi bygger saksbehandlingssystemer";
+  at +8s: "Vi bygger bevillingsportaler". Any text assertion against this page's
+  headline is a coin flip, and no shipped journey does that — but a `text-contains`
+  on an `h1` is an obvious thing for the next journey author to write.
+
+**A methodological note worth keeping.** The first probe of this investigation read
+`innerText` at `load` with no settle, got 0 characters, and produced the confident
+hypothesis that `locator("html").innerText()` was broken. Running the same probe
+against `digilist.no` returned 11,542 characters and killed it in one line. That is
+[C-12](#c-12--j06-does-not-complete-on-digilistno-and-the-reason-is-not-established)'s
+lesson arriving again from a new direction: **a measurement taken at the wrong moment
+is not a weaker version of the right answer, it is a different and confident wrong
+one.** The rule that saved it was comparing against a second subject before believing
+the first.
+
 ### D-1 · The layer map is enforced by a tool now, and it has already earned it
 
 **Closed.** `.dependency-cruiser.mjs` declares six `error`-severity rules, each
