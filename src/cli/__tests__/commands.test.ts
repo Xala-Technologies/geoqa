@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ import {
   journeyPath,
   journeyRun,
   loadProfileOrThrow,
+  loadUrlList,
   matrixRun,
   parsePrunePolicy,
   profileList,
@@ -28,6 +29,7 @@ import {
   renderPruneResult,
   renderRunResult,
   resolveEvidenceRoot,
+  resolveProfileId,
   runtimeOptions,
   scenarioSeed,
   verificationSpec,
@@ -998,5 +1000,207 @@ describe("renderRunResult", () => {
 
   it("omits the evidence line when nothing was captured", () => {
     expect(renderRunResult(result({ evidenceId: null }))).not.toContain("evidence:");
+  });
+});
+
+describe("loadUrlList", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), "geoqa-urls-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reads a file into the target axis", () => {
+    const file = path.join(dir, "sitemap.txt");
+    writeFileSync(file, "# pages\nhttps://digilist.no/faq\nhttps://digilist.no/priser\n");
+    expect(loadUrlList(file)).toEqual({ ok: true, urls: ["https://digilist.no/faq", "https://digilist.no/priser"] });
+  });
+
+  it("reports an unreadable file as an ERROR, never as an empty list", () => {
+    // An empty list would run the matrix against the single --url and report a
+    // clean pass over one page while the operator believed they had swept a
+    // sitemap.
+    const result = loadUrlList(path.join(dir, "absent.txt"));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("--urls-file");
+  });
+
+  it("attributes a bad line to the file it came from", () => {
+    const file = path.join(dir, "bad.txt");
+    writeFileSync(file, "https://ok.no\nnope\n");
+    const result = loadUrlList(file);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain(file);
+    expect(result.errors[0]).toContain("line 2");
+  });
+});
+
+describe("resolveProfileId", () => {
+  it("resolves a place to the profile that exists", () => {
+    expect(resolveProfileId(deps(), { country: "NO", city: "Oslo" })).toEqual({ ok: true, id: "oslo-desktop" });
+  });
+
+  it("is case-insensitive about both, because a country code is not a spelling test", () => {
+    expect(resolveProfileId(deps(), { country: "no", city: "oslo" })).toEqual({ ok: true, id: "oslo-desktop" });
+  });
+
+  it("takes the device from --device and defaults to desktop", () => {
+    expect(resolveProfileId(deps(), { city: "Oslo", device: "mobile" })).toEqual({ ok: true, id: "oslo-mobile" });
+    expect(resolveProfileId(deps(), { city: "Oslo" })).toEqual({ ok: true, id: "oslo-desktop" });
+  });
+
+  it("passes --geo straight through, and defaults when nothing names an identity", () => {
+    expect(resolveProfileId(deps(), { geo: "bergen-mobile" })).toEqual({ ok: true, id: "bergen-mobile" });
+    expect(resolveProfileId(deps(), {})).toEqual({ ok: true, id: "oslo-desktop" });
+  });
+
+  it("REFUSES both forms at once rather than ranking them", () => {
+    // Two identities have no correct answer, and picking either silently means a
+    // run reporting a city it was not asked about.
+    const result = resolveProfileId(deps(), { geo: "bergen-desktop", city: "Oslo" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("give one");
+  });
+
+  it("refuses a place with no profile and LISTS the places there are", () => {
+    // Without the list, "no profile for NO/Atlantis" sends someone to read the
+    // profiles directory; the answer is a flag away.
+    const result = resolveProfileId(deps(), { country: "NO", city: "Atlantis" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("available:");
+    expect(result.errors[0]).toContain("NO/Oslo");
+  });
+
+  it("refuses an ambiguous country rather than letting directory order pick the identity", () => {
+    // A bare --country NO matches every Norwegian city.
+    const result = resolveProfileId(deps(), { country: "NO" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("--geo");
+  });
+});
+
+describe("matrixRun with a page axis", () => {
+  const passing = (runId: string): GeoQaRunResult => ({ runId, verdict: "PASS" }) as GeoQaRunResult;
+
+  it("visits each page, not --url once per page", async () => {
+    // The axis landed with nothing reaching it, so every scenario got its own key
+    // and its own seed and all of them visited --url: a sweep reporting 430 clean
+    // pages having loaded one of them 430 times.
+    const targets: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      targets.push(o.spec.target);
+      return passing(o.spec.runId);
+    });
+    await matrixRun(deps({ runOnce }), {
+      url: "https://fallback.no",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+      targets: ["https://a.no/1", "https://a.no/2", "https://a.no/3"],
+    });
+    expect(targets.sort()).toEqual(["https://a.no/1", "https://a.no/2", "https://a.no/3"]);
+  });
+
+  it("falls back to --url for a scenario with no target of its own", async () => {
+    const targets: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      targets.push(o.spec.target);
+      return passing(o.spec.runId);
+    });
+    await matrixRun(deps({ runOnce }), {
+      url: "https://fallback.no",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+    });
+    expect(targets).toEqual(["https://fallback.no"]);
+  });
+
+  it("gives two PAGES distinct run ids in the same millisecond", async () => {
+    // Same collision as two journeys on one profile: `run_<ms>_<slug>` would hand
+    // both scenarios one evidence directory and the second would overwrite the
+    // first's manifest. The clock here is frozen, which is the collision.
+    const runIds: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      runIds.push(o.spec.runId);
+      return passing(o.spec.runId);
+    });
+    await matrixRun(deps({ runOnce }), {
+      url: "",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+      targets: ["https://a.no/1", "https://a.no/2"],
+      concurrency: 2,
+    });
+    expect(new Set(runIds).size).toBe(2);
+    // Never the URL itself: a run id becomes a directory name.
+    for (const id of runIds) expect(id).not.toContain("/");
+  });
+
+  it("keeps the run ids a plain matrix already had", async () => {
+    const runIds: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      runIds.push(o.spec.runId);
+      return passing(o.spec.runId);
+    });
+    await matrixRun(deps({ runOnce }), {
+      url: "https://x",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+    });
+    expect(runIds).toEqual(["run_1000_oslo-desktop-landing-page"]);
+  });
+
+  it("refuses a matrix with neither --url nor a page axis", async () => {
+    // An empty target reaches the browser as a navigation to nothing, once per
+    // scenario: N unmeasured scenarios instead of one refused argument.
+    await expect(
+      matrixRun(deps(), { url: "", markets: ["oslo"], journeys: ["landing-page"] }),
+    ).rejects.toThrow(/needs --url, or --urls-file/);
+  });
+
+  it("multiplies the page axis into every market and device", async () => {
+    const result = await matrixRun(deps(), {
+      url: "",
+      markets: ["oslo", "berlin"],
+      journeys: ["landing-page"],
+      targets: ["https://a.no/1", "https://a.no/2"],
+      dryRun: true,
+    });
+    expect(result.scenarios).toHaveLength(8);
+    expect(result.scenarios[0]?.key).toBe("berlin/desktop/landing-page/https://a.no/1");
+  });
+
+  it("says how many PAGES, because 43 scenarios could be 43 markets or 43 pages", async () => {
+    // The difference is a smoke test versus half a gigabyte of proxy traffic.
+    const result = await matrixRun(deps(), {
+      url: "",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+      targets: ["https://a.no/1", "https://a.no/2"],
+      dryRun: true,
+    });
+    expect(renderMatrixResult(result)).toContain("2 page(s) from the URL axis");
+  });
+
+  it("says nothing about pages when there is no page axis", async () => {
+    const result = await matrixRun(deps(), {
+      url: "https://x",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+      dryRun: true,
+    });
+    expect(renderMatrixResult(result)).not.toContain("URL axis");
   });
 });

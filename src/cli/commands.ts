@@ -7,8 +7,9 @@
  * That is what lets these be covered without launching Chrome, while keeping
  * `index.ts` thin enough to be honestly coverage-excluded.
  */
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { parseUrlList } from "./args.js";
 import { AgentBrowserRuntime, type RuntimeOptions } from "../browser/agent-browser.js";
 import type { BrowserRuntime, BrowserSessionConfig } from "../browser/types.js";
 import { DEFAULT_EVIDENCE_DIRNAME, DEFAULT_PROVIDER, type GeoQaConfig } from "../config/schema.js";
@@ -278,6 +279,67 @@ export function profileList(deps: CommandDeps): { profiles: { id: string; label:
   return { profiles };
 }
 
+/** The device a place-based selection assumes. Same reasoning as `DEFAULT_PROFILE_ID`. */
+export const DEFAULT_DEVICE = "desktop";
+
+export interface PlaceSelection {
+  /** A profile id, the direct way. */
+  geo?: string;
+  country?: string;
+  city?: string;
+  device?: string;
+}
+
+/**
+ * A profile id from `--country` / `--city`, or from `--geo` directly.
+ *
+ * The place form exists because a profile id is an implementation detail of this
+ * repo's `profiles/` directory, and the question anybody actually has is "what
+ * does a visitor in Oslo see". It RESOLVES rather than constructs: `oslo-desktop`
+ * is looked up among the profiles that exist, so `--city Osló` refuses instead of
+ * building a path to a file that is not there and failing per scenario.
+ *
+ * Giving both forms is refused rather than ranked. A `--geo bergen-desktop
+ * --city Oslo` has two answers and no correct one, and picking either silently
+ * means a run reporting a city it was not asked about — the single worst failure
+ * this engine can have.
+ */
+export function resolveProfileId(
+  deps: CommandDeps,
+  selection: PlaceSelection,
+): { ok: true; id: string } | { ok: false; errors: string[] } {
+  const place = selection.country !== undefined || selection.city !== undefined;
+  if (selection.geo !== undefined && place) {
+    return {
+      ok: false,
+      errors: [`--geo ${selection.geo} and --country/--city both name an identity — give one`],
+    };
+  }
+  if (!place) return { ok: true, id: selection.geo ?? DEFAULT_PROFILE_ID };
+
+  const device = selection.device ?? DEFAULT_DEVICE;
+  const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+  const matches = profileList(deps).profiles.filter(
+    (p) =>
+      p.device === device &&
+      (selection.country === undefined || same(p.country, selection.country)) &&
+      (selection.city === undefined || same(p.city, selection.city)),
+  );
+  const asked = [selection.country, selection.city].filter((v) => v !== undefined).join("/");
+  if (matches.length === 0) {
+    // The available places, because "no profile for NO/Ålesund" without them
+    // sends someone to read the directory, and the answer is a flag away.
+    const places = [...new Set(profileList(deps).profiles.filter((p) => p.device === device).map((p) => `${p.country}/${p.city}`))];
+    return { ok: false, errors: [`no ${device} profile for ${asked} — available: ${places.sort().join(", ")}`] };
+  }
+  // Ambiguity refuses too: two profiles for one place would be a run whose
+  // identity depends on directory order.
+  if (matches.length > 1) {
+    return { ok: false, errors: [`${asked} on ${device} matches ${matches.length} profiles (${matches.map((p) => p.id).join(", ")}) — name one with --geo`] };
+  }
+  return { ok: true, id: (matches[0] as { id: string }).id };
+}
+
 export function journeyList(deps: CommandDeps): { journeys: { id: string; title: string; steps: number }[] } {
   const journeys = yamlFiles(journeysDir(deps)).map((file) => {
     const loaded = loadJourney(path.join(journeysDir(deps), file));
@@ -542,11 +604,39 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
  */
 export const DEFAULT_MATRIX_DEVICES = ["mobile", "desktop"];
 
+/**
+ * Read a `--urls-file` into the matrix's target axis.
+ *
+ * Unreadable is an ERROR, never an empty list: a missing or unreadable file
+ * that degraded to "no targets" would run the matrix against the single `--url`
+ * and report a clean pass over one page while the operator believed they had
+ * swept a sitemap.
+ */
+export function loadUrlList(file: string): { ok: true; urls: string[] } | { ok: false; errors: string[] } {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (e: unknown) {
+    return { ok: false, errors: [`--urls-file ${file}: ${e instanceof Error ? e.message : String(e)}`] };
+  }
+  const parsed = parseUrlList(text);
+  return parsed.ok ? parsed : { ok: false, errors: parsed.errors.map((line) => `--urls-file ${file}: ${line}`) };
+}
+
 export interface MatrixRunOptions {
+  /**
+   * The target when the matrix carries no URL axis, and the fallback for a
+   * scenario whose own target is null.
+   */
   url: string;
   markets: string[];
   journeys: string[];
   devices?: string[];
+  /**
+   * Pages to visit, one scenario each per market/device/journey. Empty or absent
+   * keeps the single-`--url` shape.
+   */
+  targets?: string[];
   providerName?: string;
   engine?: RunEngine;
   vars?: Record<string, string>;
@@ -611,11 +701,18 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
   const errors: string[] = [];
   if (options.markets.length === 0) errors.push("matrix run needs at least one --market");
   if (options.journeys.length === 0) errors.push("matrix run needs at least one --journey");
+  const targets = options.targets ?? [];
+  // Checked here rather than left to `prepareRun`: an empty target reaches the
+  // browser as a navigation to nothing, once per scenario, and the matrix reports
+  // N unmeasured scenarios instead of one refused argument.
+  if (targets.length === 0 && options.url === "") {
+    errors.push("matrix run needs --url, or --urls-file to sweep a list of pages");
+  }
 
   // Expanded through the same function the runner uses, so what is validated and
   // printed here is exactly what will be executed — including its dedupe and its
   // ordering.
-  const axes = { markets: options.markets, devices, journeys: options.journeys };
+  const axes = { markets: options.markets, devices, journeys: options.journeys, targets };
   const scenarios = expandMatrix(axes);
 
   for (const profileId of [...new Set(scenarios.map((s) => `${s.market}-${s.device}`))]) {
@@ -669,13 +766,25 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
       // one profile prepared in the same millisecond would otherwise share an
       // evidence directory, and the second would overwrite the first's manifest
       // — a matrix losing runs while reporting a full count.
-      const runId = newRunId(`${profileId}-${scenario.journey}`, deps.now());
+      // The scenario's index disambiguates a URL axis, and only a URL axis: two
+      // pages share a profile, a journey and a millisecond under concurrency, and
+      // a run id is `run_<ms>_<slug>`, so they would share an evidence directory
+      // and the second would overwrite the first's manifest. The index rather
+      // than the URL itself — a URL contains `/` and `:`, and the run id becomes a
+      // directory name. Appended only when the axis is present, so a plain
+      // market × device × journey matrix keeps the run ids it had.
+      const slug = scenario.target === null ? `${profileId}-${scenario.journey}` : `${profileId}-${scenario.journey}-${scenario.index}`;
+      const runId = newRunId(slug, deps.now());
       const prepared = await prepareRun(
         {
           runId,
           engine,
           seed: scenarioSeed(baseSeed, scenario.key),
-          target: options.url,
+          // The scenario's own page when the matrix carries a URL axis. Without
+          // this the axis expanded, every scenario got its own key and seed, and
+          // all of them visited `--url` — a sweep reporting 430 clean pages
+          // having loaded one of them 430 times.
+          target: scenario.target ?? options.url,
           profilePath: profilePath(deps, profileId),
           journeyPath: journeyPath(deps, scenario.journey),
           evidenceRoot: deps.evidenceRoot,
@@ -709,6 +818,11 @@ function renderScenario(outcome: MatrixScenarioResult): string {
 
 export function renderMatrixResult(matrix: MatrixRunResult): string {
   const lines: string[] = [];
+  // Said out loud, because the difference between one page and 430 is the
+  // difference between a smoke test and half a gigabyte of proxy traffic, and the
+  // scenario count alone does not distinguish "43 markets" from "43 pages".
+  const pages = new Set(matrix.scenarios.map((s) => s.target).filter((t) => t !== null)).size;
+  const pagesNote = pages === 0 ? [] : [`  ${pages} page(s) from the URL axis`];
   // Tense matters here and is not cosmetic: after the fact the sentence is a
   // record of real forms submitted against a live product, and reading it as a
   // warning about something still to come would be the wrong action entirely.
@@ -725,6 +839,7 @@ export function renderMatrixResult(matrix: MatrixRunResult): string {
     lines.push(
       `matrix dry run — ${matrix.scenarios.length} scenario(s), nothing launched`,
       `  provider ${matrix.provider}, engine ${matrix.engine}, base seed ${matrix.baseSeed}`,
+      ...pagesNote,
       ...matrix.scenarios.map((s) => `  ${s.key}`),
       ...writesNote,
     );
@@ -734,6 +849,7 @@ export function renderMatrixResult(matrix: MatrixRunResult): string {
       `${matrix.result.verdict} — ${c.total} scenario(s): ${c.passed} passed, ${c.warned} warned, ${c.siteFailed} site-failed, ${c.unmeasured} unmeasured`,
       `  concurrency limit ${matrix.result.concurrency.limit}, peak in flight ${matrix.result.concurrency.peakInFlight}, ${matrix.result.durationMs}ms`,
       `  provider ${matrix.provider}, engine ${matrix.engine}, base seed ${matrix.baseSeed} (replays the whole matrix)`,
+      ...pagesNote,
       // Only the scenarios a human acts on are listed; the passing ones are a
       // count, because 96 lines of "passed" is how the four that matter get
       // missed. --json carries every scenario either way.

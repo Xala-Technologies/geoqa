@@ -130,6 +130,73 @@ export function flagVars(argv: string[]): Record<string, string> {
 }
 
 /**
+ * A duration flag: bare ms, or with an `ms` / `s` / `m` / `h` suffix.
+ *
+ * `null` for anything unreadable, so a caller can REFUSE rather than fall back.
+ * That distinction is the whole reason this returns a union: the value this
+ * parses is EXP-002's stability window, whose default is 24 seconds against a
+ * PRD asking for ten minutes. A `--stability-window 10min` that silently became
+ * the default would produce a summary measuring 24s — and, because the summary
+ * note names the window it actually used, a reader would see a coherent,
+ * confident, wrong answer to the question they thought they asked.
+ *
+ * Zero and negatives are unreadable too. A zero-length window reports perfect
+ * stability having waited for nothing.
+ */
+export function parseDurationMs(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|min|h)?$/.exec(value.trim());
+  if (!match) return null;
+  const scale = { ms: 1, s: 1_000, m: 60_000, min: 60_000, h: 3_600_000 }[match[2] ?? "ms"] as number;
+  const ms = Number(match[1]) * scale;
+  return ms > 0 ? ms : null;
+}
+
+/**
+ * A URL list, as a `--urls-file` body: one per line, `#` comments, blanks
+ * skipped.
+ *
+ * Every line is validated HERE, before anything launches, and one bad line
+ * refuses the whole file with its line number. The alternative was measured: 430
+ * URLs were driven from a shell loop, and a list whose entries are only checked
+ * as each one is opened turns a typo on line 217 into a scenario that reports
+ * `unmeasured` two hundred pages into an overnight matrix. Same rule as a
+ * mistyped `--market`: refuse the expansion, not the two-hundredth run of it.
+ *
+ * Order is PRESERVED and duplicates are KEPT. Sitemap order is meaningful to
+ * whoever reads the results, and repeating a URL is a legitimate way to ask for a
+ * second sample of one page.
+ */
+export function parseUrlList(text: string): { ok: true; urls: string[] } | { ok: false; errors: string[] } {
+  const urls: string[] = [];
+  const errors: string[] = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    // A trailing `#` comment is not stripped: `#` is legal in a URL fragment, so
+    // cutting at one would silently rewrite the target. Only a whole-line comment
+    // counts.
+    const line = (lines[i] as string).trim();
+    if (line === "" || line.startsWith("#")) continue;
+    let parsed: URL;
+    try {
+      parsed = new URL(line);
+    } catch {
+      errors.push(`line ${i + 1}: "${line}" is not a URL`);
+      continue;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      // Refused by name, because `file:` would make a matrix "pass" against local
+      // disk while claiming to have visited a site.
+      errors.push(`line ${i + 1}: "${line}" is ${parsed.protocol} — only http and https can be visited`);
+      continue;
+    }
+    urls.push(line);
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  if (urls.length === 0) return { ok: false, errors: ["no URLs — every line was blank or a comment"] };
+  return { ok: true, urls };
+}
+
+/**
  * `--engine`, or `null` for a name no adapter answers to.
  *
  * Returning `null` instead of falling back matters: the previous form read
@@ -195,7 +262,8 @@ Usage:
       registers, submits or books for real. The run says so before starting and
       records it in the evidence.
 
-  geoqa matrix run --url <url> --market <a,b,...> --journey <a,b,...>
+  geoqa matrix run (--url <url> | --urls-file <path>)
+                   --market <a,b,...> --journey <a,b,...>
                    [--device mobile,desktop] [--concurrency <n>]
                    [--provider direct|http-proxy]
                    [--engine agent-browser|playwright] [--seed <n>]
@@ -213,6 +281,18 @@ Usage:
       scenario that could not be executed at all is recorded as unmeasured
       rather than dropped, so a gap can never read as a market that was fine.
 
+      --urls-file adds a PAGE axis: one scenario per page per market/device/
+      journey, run inside the same bounded pool. One URL per line, # comments and
+      blank lines skipped, order and duplicates preserved because sitemap order is
+      meaningful and a repeated URL is a second sample. Every line is validated
+      before anything launches and one bad line refuses the whole matrix.
+
+      This axis exists because the first site-wide sweep had no bounded path
+      through the engine at all: 430 pages driven from a shell loop, alongside
+      three other browser fleets, made a selector-visible check report a missing
+      h1 on six pages that demonstrably had one. All six passed re-run alone. A
+      sweep that cannot be bounded eventually invents defects out of its own load.
+
       --dry-run prints the expansion and the scenario count and launches
       nothing. --allow-writes is REQUIRED when any selected journey declares
       writes:true, because at matrix scale that is one real form or registration
@@ -226,8 +306,25 @@ Usage:
       browser context and, on agent-browser, a whole Chrome. The result records
       both the bound and the peak actually reached.
 
-  geoqa experiment run <id> [--samples <n>] [--geo <profile>] [--url <url>] [--json]
+  geoqa experiment run <id> [--samples <n>] [--geo <profile>] [--url <url>]
+                            [--stability-window <duration>] [--stability-reads <n>]
+                            [--concurrency <n>] [--json]
       Take n samples and write results.jsonl + summary.json.
+
+      --stability-window (EXP-002) is how long one sample holds a single network
+      session open, as ms or with an s/m/h suffix. Default 24s, because ten
+      minutes x --samples 10 is 100 minutes and a feasibility check that takes an
+      hour and a half gets killed halfway. The PRD asks about ten minutes:
+      --stability-window 10m --samples 3. Every summary names the window it
+      actually measured, so a cheap run can never be read as the expensive claim.
+
+      --stability-reads (default 5) is how many egress readings are spread across
+      that window; raising the window costs wall clock, not probe rate, because
+      ipinfo rate-limiting a long run would turn a stickiness measurement into a
+      throttling measurement.
+
+      --concurrency (EXP-007, default 3) is how many full runs execute at once in
+      one sample — the number matrix run --concurrency is currently guessing.
 
   geoqa evidence inspect <runId> [--json]
       Show a run's evidence manifest, what is missing, and its completeness.
@@ -277,6 +374,16 @@ Configuration:
   falling back to defaults for a file somebody edited on purpose is the exact
   defect that config surface was built to close. Credentials are refused by
   name — proxy credentials come from GEOQA_PROXY_* environment variables only.
+
+Identity:
+  --geo <profile>            a profile id, e.g. oslo-desktop
+  --country <cc> --city <c>  the same thing by place, resolved against the
+                             profiles that exist. --device (default desktop)
+                             picks between them. Naming a place that has no
+                             profile REFUSES and lists the ones there are;
+                             giving both --geo and --country/--city refuses,
+                             because two identities have no correct answer.
+                             matrix run uses --market instead.
 
 Global:
   --json           machine-readable output (the integration contract)

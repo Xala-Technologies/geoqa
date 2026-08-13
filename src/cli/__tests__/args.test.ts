@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { flagBool, flagList, flagNumber, flagPairs, flagString, flagVars, parseArgs, parseEngine, USAGE } from "../args.js";
+import {
+  flagBool,
+  flagList,
+  flagNumber,
+  flagPairs,
+  flagString,
+  flagVars,
+  parseArgs,
+  parseDurationMs,
+  parseEngine,
+  parseUrlList,
+  USAGE,
+} from "../args.js";
 
 describe("parseArgs", () => {
   it("reads a two-word command", () => {
@@ -180,5 +192,108 @@ describe("USAGE for --repeat", () => {
     // A backtick here does not read as a typo — it ends the string and the file
     // stops compiling.
     expect(USAGE).not.toContain("`");
+  });
+});
+
+describe("parseDurationMs", () => {
+  it("reads bare ms and every suffix", () => {
+    expect(parseDurationMs("600000")).toBe(600_000);
+    expect(parseDurationMs("500ms")).toBe(500);
+    expect(parseDurationMs("24s")).toBe(24_000);
+    expect(parseDurationMs("10m")).toBe(600_000);
+    expect(parseDurationMs("10min")).toBe(600_000);
+    expect(parseDurationMs("1h")).toBe(3_600_000);
+    expect(parseDurationMs("1.5s")).toBe(1_500);
+    expect(parseDurationMs("  10m  ")).toBe(600_000);
+  });
+
+  it("returns null for a value it cannot read, so a caller can refuse instead of defaulting", () => {
+    // The point of the union. EXP-002's default window is 24s against a PRD
+    // asking for ten minutes, so a --stability-window that silently fell back
+    // would answer the cheap question while the caller read the expensive one.
+    expect(parseDurationMs("ten minutes")).toBeNull();
+    expect(parseDurationMs("10 m")).toBeNull();
+    expect(parseDurationMs("10sec")).toBeNull();
+    expect(parseDurationMs("")).toBeNull();
+    expect(parseDurationMs("-5s")).toBeNull();
+  });
+
+  it("refuses zero, because a zero-length window reports perfect stability having waited for nothing", () => {
+    expect(parseDurationMs("0")).toBeNull();
+    expect(parseDurationMs("0s")).toBeNull();
+  });
+});
+
+describe("parseUrlList", () => {
+  it("reads one URL per line and skips blanks and comments", () => {
+    const parsed = parseUrlList("# sitemap\n\nhttps://a.no/x\n  https://a.no/y  \n\n# end\n");
+    expect(parsed).toEqual({ ok: true, urls: ["https://a.no/x", "https://a.no/y"] });
+  });
+
+  it("PRESERVES order and KEEPS duplicates", () => {
+    // Sitemap order is meaningful to whoever reads the results, and a repeated
+    // URL is a legitimate way to ask for a second sample of one page.
+    const parsed = parseUrlList("https://a.no/b\nhttps://a.no/a\nhttps://a.no/b\n");
+    expect(parsed).toEqual({ ok: true, urls: ["https://a.no/b", "https://a.no/a", "https://a.no/b"] });
+  });
+
+  it("keeps a fragment rather than treating # as a trailing comment", () => {
+    // `#` is legal in a URL, so cutting at one would silently rewrite the target.
+    expect(parseUrlList("https://a.no/x#pricing")).toEqual({ ok: true, urls: ["https://a.no/x#pricing"] });
+  });
+
+  it("refuses the WHOLE file on a bad line, and names every bad line with its number", () => {
+    // Same rule as a mistyped --market: refuse the expansion, not the
+    // two-hundredth run of it.
+    const parsed = parseUrlList("https://a.no/x\n/relative/path\nhttps://a.no/y\nnot a url\n");
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) throw new Error("expected a refusal");
+    expect(parsed.errors).toHaveLength(2);
+    expect(parsed.errors[0]).toContain("line 2");
+    expect(parsed.errors[1]).toContain("line 4");
+  });
+
+  it("refuses a non-http scheme by name", () => {
+    // A file: URL would make a matrix pass against local disk while claiming to
+    // have visited a site.
+    const parsed = parseUrlList("file:///etc/hosts\n");
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) throw new Error("expected a refusal");
+    expect(parsed.errors[0]).toContain("only http and https");
+  });
+
+  it("refuses a file with no URLs at all rather than returning an empty sweep", () => {
+    const parsed = parseUrlList("# nothing here\n\n");
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) throw new Error("expected a refusal");
+    expect(parsed.errors[0]).toContain("every line was blank or a comment");
+  });
+
+  it("reads CRLF, because a URL list is the file most likely to arrive from a spreadsheet", () => {
+    expect(parseUrlList("https://a.no/x\r\nhttps://a.no/y\r\n")).toEqual({
+      ok: true,
+      urls: ["https://a.no/x", "https://a.no/y"],
+    });
+  });
+});
+
+describe("USAGE for the page axis and the experiment knobs", () => {
+  it("documents --urls-file and why the axis is inside the pool", () => {
+    expect(USAGE).toContain("--urls-file");
+    expect(USAGE).toContain("PAGE axis");
+    expect(USAGE).toContain("invents defects out of its own load");
+  });
+
+  it("documents the stability window, its default and the PRD's window", () => {
+    expect(USAGE).toContain("--stability-window");
+    expect(USAGE).toContain("Default 24s");
+    expect(USAGE).toContain("--stability-window 10m --samples 3");
+  });
+
+  it("documents identity by place, and that two identities refuse", () => {
+    expect(USAGE).toContain("--country");
+    expect(USAGE).toContain("--city");
+    expect(USAGE).toContain("REFUSES and lists the ones there are");
+    expect(USAGE).toContain("matrix run uses --market instead");
   });
 });

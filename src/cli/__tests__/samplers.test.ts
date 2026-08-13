@@ -8,6 +8,7 @@ import type { ExperimentSample } from "../../experiments/harness.js";
 import { EXP_007 } from "../../experiments/definitions.js";
 import { bad, fakeRuntime, ok } from "../../run/__tests__/fake-runtime.js";
 import { defaultDeps, profileList, type CommandDeps } from "../commands.js";
+import { parseArgs } from "../args.js";
 import {
   DEFAULT_CONCURRENCY,
   DEFAULT_STABILITY_READS,
@@ -18,6 +19,7 @@ import {
   SAMPLERS,
   concurrencyProfiles,
   concurrencyShapeNote,
+  experimentKnobs,
   resolveConcurrency,
   resolveStabilityWindow,
   sampleConcurrency,
@@ -744,5 +746,75 @@ describe("the sampler registry", () => {
   it("states plainly why the geographic targets cannot be evaluated yet", () => {
     expect(NO_VENDOR_NOTE).toContain("unmeasured");
     expect(NO_VENDOR_NOTE).toContain("not a pass");
+  });
+});
+
+describe("experimentKnobs", () => {
+  const knobs = (argv: string[]) => experimentKnobs(parseArgs(argv));
+
+  it("reaches EXP-002's stability window, which is the whole reason it exists", () => {
+    // The window is a parameter and nothing reached it, so the experiment measured
+    // 24 seconds while the PRD asked about ten minutes.
+    expect(knobs(["experiment", "run", "EXP-002", "--stability-window", "10m"])).toEqual({
+      ok: true,
+      knobs: { stabilityWindowMs: 600_000 },
+    });
+  });
+
+  it("reaches the read count and the concurrency, and passes nothing it was not given", () => {
+    expect(knobs(["experiment", "run", "EXP-002", "--stability-reads", "9"])).toEqual({
+      ok: true,
+      knobs: { stabilityReads: 9 },
+    });
+    expect(knobs(["experiment", "run", "EXP-007", "--concurrency", "5"])).toEqual({
+      ok: true,
+      knobs: { concurrency: 5 },
+    });
+    // Absent means absent: the sampler applies its own default, so an "unset" that
+    // arrived as a number would be a second source of truth for it.
+    expect(knobs(["experiment", "run", "EXP-001"])).toEqual({ ok: true, knobs: {} });
+  });
+
+  it("REFUSES an unreadable duration instead of falling back to the cheap default", () => {
+    const result = knobs(["experiment", "run", "EXP-002", "--stability-window", "ten-minutes"]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("is not a duration");
+  });
+
+  it("refuses a flag given with no value, which is where a fallback would be invisible", () => {
+    // `--stability-window --json` is a missing value, and 24s dressed as ten
+    // minutes is the exact failure this slice closes.
+    const window = knobs(["experiment", "run", "EXP-002", "--stability-window", "--json"]);
+    expect(window.ok).toBe(false);
+    const reads = knobs(["experiment", "run", "EXP-002", "--stability-reads", "--json"]);
+    expect(reads.ok).toBe(false);
+    const concurrency = knobs(["experiment", "run", "EXP-007", "--concurrency", "--json"]);
+    expect(concurrency.ok).toBe(false);
+  });
+
+  it("refuses a non-integer read count and a non-integer concurrency", () => {
+    const reads = knobs(["experiment", "run", "EXP-002", "--stability-reads", "2.5"]);
+    expect(reads.ok).toBe(false);
+    if (reads.ok) throw new Error("expected a refusal");
+    expect(reads.errors[0]).toContain("not a whole number");
+    expect(knobs(["experiment", "run", "EXP-007", "--concurrency", "two"]).ok).toBe(false);
+  });
+
+  it("reports every bad knob at once", () => {
+    const result = knobs(["experiment", "run", "EXP-002", "--stability-window", "soon", "--stability-reads", "x", "--concurrency", "y"]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors).toHaveLength(3);
+  });
+
+  it("hands resolveStabilityWindow a window it then applies", () => {
+    // End to end, because the two halves passing separately is exactly the state
+    // this slice found: a resolver that worked and a flag that never arrived.
+    const result = knobs(["experiment", "run", "EXP-002", "--stability-window", "10m", "--stability-reads", "3"]);
+    if (!result.ok) throw new Error("expected the knobs to parse");
+    const window = resolveStabilityWindow({ id: "EXP-002", samples: 3, profileId: "oslo-desktop", url: "https://x", ...result.knobs });
+    expect(window).toEqual({ windowMs: 600_000, reads: 3, intervalMs: 300_000 });
+    expect(stabilityWindowNote(window)).toContain("10min");
   });
 });

@@ -14,6 +14,7 @@ import { redactProxyUrl, selectProvider } from "../network/provider.js";
 import { EXP_000, EXP_001, EXP_002, EXP_003, EXP_004, EXP_005, EXP_006, EXP_007 } from "../experiments/definitions.js";
 import { DEFECTS, startFixtureServer } from "../fixtures/server.js";
 import { browserVerify, journeyRun, loadProfileOrThrow, profileList, type CommandDeps, type ExperimentOptions } from "./commands.js";
+import { parseDurationMs, type ParsedArgs } from "./args.js";
 
 const metric = (specs: MetricSpec[], key: string): MetricSpec => {
   const found = specs.find((m) => m.key === key);
@@ -183,7 +184,7 @@ export const PRD_STABILITY_WINDOW_MS = 600_000;
  * check that takes an hour and a half gets killed halfway — which leaves
  * results.jsonl half-written and no summary at all, the worst of both outcomes.
  * So the cheap window stays the default and the note says loudly which window
- * it measured; the PRD window is a deliberate `--stability-window-ms 600000`
+ * it measured; the PRD window is a deliberate `--stability-window 10m`
  * when somebody is willing to pay for it. A long default would not be more
  * honest, it would just be unrun.
  */
@@ -256,7 +257,7 @@ export function stabilityWindowNote(window: StabilityWindow): string {
   if (window.windowMs >= PRD_STABILITY_WINDOW_MS) {
     return `${shape} That covers the ${duration(PRD_STABILITY_WINDOW_MS)} window the PRD asks for. The reads are spaced, not continuous, so a rotation that healed between two of them is still invisible.`;
   }
-  return `${shape} The PRD asks for a ${duration(PRD_STABILITY_WINDOW_MS)} window; that is NOT what this measured — pass \`--stability-window-ms ${PRD_STABILITY_WINDOW_MS}\` to measure it. A short window can prove instability but cannot prove stability over a long journey.`;
+  return `${shape} The PRD asks for a ${duration(PRD_STABILITY_WINDOW_MS)} window; that is NOT what this measured — pass \`--stability-window 10m\` to measure it. A short window can prove instability but cannot prove stability over a long journey.`;
 }
 
 /**
@@ -738,6 +739,63 @@ export function summariseConcurrency(samples: ExperimentSample[], options: Concu
 export interface SamplerPair {
   sample: (deps: CommandDeps, options: ExperimentOptions, index: number) => Promise<Record<string, unknown>>;
   summarise: (samples: ExperimentSample[], options: ExperimentOptions) => { metrics: MetricResult[]; notes: string[] };
+}
+
+/**
+ * The per-experiment knobs, off the command line.
+ *
+ * Parsed here rather than in `args.ts` because the knob types live here: an
+ * experiment states what it reads, and `ExperimentOptions` does not grow a field
+ * per experiment. `args.ts` cannot import this file either way — `samplers` →
+ * `commands` → `args` already, and dependency-cruiser refuses the cycle.
+ *
+ * Unreadable REFUSES. The alternative is what shipped: nothing reached
+ * `stabilityWindowMs`, so EXP-002 measured 24 seconds while the PRD asked for
+ * ten minutes, and a `--stability-window 10m` that fell back to the default
+ * would have produced the same 24-second answer with a caller convinced they had
+ * asked for ten minutes. `resolveStabilityWindow` and `resolveConcurrency`
+ * already refuse impossible values; this refuses unparseable ones, which is the
+ * same rule one layer out.
+ */
+export function experimentKnobs(args: ParsedArgs): {
+  ok: true;
+  knobs: StabilityWindowOptions & ConcurrencyOptions;
+} | { ok: false; errors: string[] } {
+  const knobs: StabilityWindowOptions & ConcurrencyOptions = {};
+  const errors: string[] = [];
+
+  const window = args.flags["stability-window"];
+  if (typeof window === "string") {
+    const ms = parseDurationMs(window);
+    if (ms === null) errors.push(`--stability-window "${window}" is not a duration — try 600000, 600s or 10m`);
+    else knobs.stabilityWindowMs = ms;
+  } else if (window === true) {
+    errors.push("--stability-window needs a duration, e.g. --stability-window 10m");
+  }
+
+  const reads = args.flags["stability-reads"];
+  if (typeof reads === "string") {
+    const n = Number(reads);
+    if (!Number.isInteger(n)) errors.push(`--stability-reads "${reads}" is not a whole number`);
+    else knobs.stabilityReads = n;
+  } else if (reads === true) {
+    errors.push("--stability-reads needs a number");
+  }
+
+  // Shared spelling with `matrix run --concurrency`, and deliberately so: both
+  // mean "how many full runs at once". EXP-007 exists to tell the matrix what its
+  // bound should be, and two names for one quantity is how the answer stops
+  // being applied to the question.
+  const concurrency = args.flags["concurrency"];
+  if (typeof concurrency === "string") {
+    const n = Number(concurrency);
+    if (!Number.isInteger(n)) errors.push(`--concurrency "${concurrency}" is not a whole number`);
+    else knobs.concurrency = n;
+  } else if (concurrency === true) {
+    errors.push("--concurrency needs a number");
+  }
+
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, knobs };
 }
 
 export const SAMPLERS: Record<string, SamplerPair> = {

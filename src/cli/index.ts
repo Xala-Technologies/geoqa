@@ -28,10 +28,10 @@ import {
   browserVerify,
   defaultDeps,
   DEFAULT_ENGINE,
-  DEFAULT_PROFILE_ID,
   evidenceInspect,
   evidencePrune,
   experimentRun,
+  loadUrlList,
   journeyList,
   journeyRun,
   matrixRun,
@@ -42,11 +42,12 @@ import {
   renderPruneResult,
   renderRunResult,
   resolveEvidenceRoot,
+  resolveProfileId,
 } from "./commands.js";
 import { configPath, loadConfig } from "../config/load.js";
 import { findExperiment } from "../experiments/definitions.js";
 import { DEFAULT_MATRIX_CONCURRENCY } from "../run/matrix.js";
-import { SAMPLERS } from "./samplers.js";
+import { experimentKnobs, SAMPLERS } from "./samplers.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -126,6 +127,38 @@ async function main(argv: string[]): Promise<number> {
     return 2;
   }
 
+  /**
+   * `--country`/`--city` name ONE identity; a matrix's identities are its
+   * `--market` axis. Refused rather than ignored, and refused BEFORE resolution
+   * so the message names the right flag: resolving first would answer
+   * `matrix run --country NO` with "11 profiles match, name one with --geo",
+   * which is true and useless.
+   */
+  if (group === "matrix" && (args.flags.country !== undefined || args.flags.city !== undefined)) {
+    console.error("matrix run selects identities with --market, not --country/--city");
+    return 2;
+  }
+
+  /**
+   * The identity, from `--geo` or from `--country`/`--city`.
+   *
+   * Resolved ONCE for every command, so the three commands that take an identity
+   * cannot disagree about how a place becomes a profile. Refusing here rather
+   * than defaulting is the same rule as `--engine`: a run that quietly used Oslo
+   * because it could not resolve Bergen reports a market nobody asked about.
+   */
+  const selectedProfile = resolveProfileId(deps, {
+    ...(args.flags.geo !== undefined ? { geo: flagString(args, "geo", "") } : {}),
+    ...(args.flags.country !== undefined ? { country: flagString(args, "country", "") } : {}),
+    ...(args.flags.city !== undefined ? { city: flagString(args, "city", "") } : {}),
+    ...(args.flags.device !== undefined ? { device: flagString(args, "device", "") } : {}),
+  });
+  if (!selectedProfile.ok) {
+    console.error(selectedProfile.errors.join("\n"));
+    return 2;
+  }
+  const profileId = selectedProfile.id;
+
   const emit = (value: unknown, human: string): number => {
     console.log(json ? JSON.stringify(value, null, 2) : human);
     return 0;
@@ -144,7 +177,7 @@ async function main(argv: string[]): Promise<number> {
   if (group === "browser" && action === "verify") {
     const result = await browserVerify(deps, flagString(args, "url", "https://example.com"), {
       engine,
-      profileId: flagString(args, "geo", DEFAULT_PROFILE_ID),
+      profileId,
     });
     const human = [
       `${result.passed}/${result.total} primitives verified on ${result.engine}`,
@@ -155,7 +188,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (group === "proxy" && action === "verify") {
     const result = await proxyVerify(deps, {
-      profileId: flagString(args, "geo", DEFAULT_PROFILE_ID),
+      profileId,
       providerName,
       engine,
       verifyEndpoint,
@@ -174,7 +207,7 @@ async function main(argv: string[]): Promise<number> {
   if (group === "journey" && action === "run") {
     const result = await journeyRun(deps, {
       url: flagString(args, "url", ""),
-      profileId: flagString(args, "geo", DEFAULT_PROFILE_ID),
+      profileId,
       journeyId: flagString(args, "journey", "landing-page"),
       providerName,
       engine,
@@ -189,11 +222,19 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (group === "matrix" && action === "run") {
+    // Read and fully validated before anything launches. A bad line refuses the
+    // matrix; discovering it two hundred pages in is a bill, not a report.
+    const urls = args.flags["urls-file"] === undefined ? null : loadUrlList(flagString(args, "urls-file", ""));
+    if (urls !== null && !urls.ok) {
+      console.error(urls.errors.join("\n"));
+      return 2;
+    }
     const result = await matrixRun(deps, {
       url: flagString(args, "url", ""),
       markets: flagList(argv, "market"),
       journeys: flagList(argv, "journey"),
       devices: flagList(argv, "device"),
+      ...(urls !== null ? { targets: urls.urls } : {}),
       providerName,
       engine,
       verifyEndpoint,
@@ -271,18 +312,29 @@ async function main(argv: string[]): Promise<number> {
       console.error(`experiment "${spec.id}" has no sampler yet`);
       return 2;
     }
-    const result = await experimentRun(
-      deps,
-      {
-        id: spec.id,
-        samples: flagNumber(args, "samples", 10),
-        profileId: flagString(args, "geo", DEFAULT_PROFILE_ID),
-        url: flagString(args, "url", "https://example.com"),
-        providerName,
-      },
-      pair.sample,
-      pair.summarise,
-    );
+    const knobs = experimentKnobs(args);
+    if (!knobs.ok) {
+      console.error(knobs.errors.join("\n"));
+      return 2;
+    }
+    /**
+     * Declared as a variable, not passed as a literal, deliberately.
+     *
+     * `experimentRun` takes `ExperimentOptions`, and the per-experiment knobs are
+     * declared on the sampler that reads them — so a fresh object literal would
+     * trip an excess-property check while a widened shared type would grow a
+     * field per experiment. A variable is assignable and the samplers keep
+     * stating their own requirements.
+     */
+    const experimentOptions = {
+      id: spec.id,
+      samples: flagNumber(args, "samples", 10),
+      profileId,
+      url: flagString(args, "url", "https://example.com"),
+      providerName,
+      ...knobs.knobs,
+    };
+    const result = await experimentRun(deps, experimentOptions, pair.sample, pair.summarise);
     emit(result.summary, result.rendered);
     return result.summary.verdict === "fail" ? 1 : 0;
   }

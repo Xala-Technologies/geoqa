@@ -195,7 +195,7 @@ Three things remain true, and the first is the one that matters:
   `ExperimentOptions` itself (`cli/commands.ts`) carries no `concurrency` field
   and `cli/index.ts` passes none — **verified now** by reading the `experimentRun`
   call site. So the experiment can only ever run at `DEFAULT_CONCURRENCY = 3`. Same
-  wiring as [C-1](#c-1--the-stability-window-is-a-parameter-now-and-no-flag-reaches-it)
+  wiring as [C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it)
   and [D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers);
   all three are the same three lines.
 - **`peak-memory-per-session` is declared and permanently `unmeasured`**
@@ -538,7 +538,7 @@ two engines started writing different formats. It now calls
 `traceArtifactFormat("playwright")`, so the assertion cannot disagree with the
 collector again.
 
-### C-1 · The stability window is a parameter now, and no flag reaches it
+### C-1 · The stability window is a parameter, and a flag now reaches it
 
 **Closed as a hardcoded constant.** `STABILITY_READS` and
 `STABILITY_INTERVAL_MS` are gone. `resolveStabilityWindow` takes
@@ -557,18 +557,31 @@ old fixed 6s spacing would be 101 hits on the identity endpoint per sample, whic
 trips ipinfo's rate limit and converts a stickiness measurement into a throttling
 measurement.
 
-**Still open: nothing can ask for the longer window.** `ExperimentOptions`
-(`cli/commands.ts:908`) has no `stabilityWindowMs`/`stabilityReads` field and
-`cli/index.ts` passes none — **verified now** at the `experimentRun` call site. So
-in practice EXP-002 still measures **24 seconds**, which stays the default
-deliberately (ten minutes × 10 samples is 100 minutes; a feasibility check that
-long gets killed halfway, and a killed run leaves `results.jsonl` half-written
-with no summary). The gap is the flag, not the default. `--stability-window-ms
-600000` is documented behaviour that cannot currently be typed.
+**CLOSED.** `--stability-window <duration>` and `--stability-reads <n>` reach the
+resolver, via `experimentKnobs()` in `cli/samplers.ts`. The PRD's window is
+`--stability-window 10m --samples 3`, and 24s stays the default deliberately (ten
+minutes × 10 samples is 100 minutes; a feasibility check that long gets killed
+halfway, and a killed run leaves `results.jsonl` half-written with no summary).
 
-Where: `cli/samplers.ts` (`DEFAULT_STABILITY_WINDOW_MS`, `PRD_STABILITY_WINDOW_MS`,
-`resolveStabilityWindow`, `stabilityWindowNote`), `cli/commands.ts`
-(`ExperimentOptions`), `cli/index.ts`.
+Two details are the point rather than polish. The duration accepts an `ms`/`s`/
+`m`/`h` suffix and **refuses** what it cannot read: a `--stability-window 10min`
+that fell back to the default would have produced a summary measuring 24 seconds,
+and because `stabilityWindowNote` names the window it actually used, the reader
+would have seen a coherent, confident answer to a question they never asked. And
+the knobs are parsed in `samplers.ts`, not `args.ts` — the knob types belong to
+the sampler that reads them, `ExperimentOptions` does not grow a field per
+experiment, and `args.ts` could not import them anyway (`samplers` → `commands` →
+`args` already, and dependency-cruiser refuses the cycle).
+
+**What is still not done is the live run.** EXP-002 remains `unmeasured` because
+the samplers build agent-browser regardless of `--engine`
+([D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers)),
+so a ten-minute stickiness run through Decodo has to wait for that. The flag is
+no longer what is in the way.
+
+Where: `cli/samplers.ts` (`experimentKnobs`, `DEFAULT_STABILITY_WINDOW_MS`,
+`PRD_STABILITY_WINDOW_MS`, `resolveStabilityWindow`, `stabilityWindowNote`),
+`cli/args.ts` (`parseDurationMs`), `cli/index.ts`.
 
 ### C-2 · The agent-browser contract is still frozen at captured payloads
 
@@ -795,7 +808,7 @@ also carries no `engine` and no `verifyEndpoint`, and lines 99 and 280 use
 `DEFAULT_VERIFY_ENDPOINT` directly, so a configured verify endpoint does not reach
 an experiment either. The change is one field plus five call sites — and it is the
 same `ExperimentOptions` edit that
-[C-1](#c-1--the-stability-window-is-a-parameter-now-and-no-flag-reaches-it) and
+[C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it) and
 [A-3b](#a-3b--exp-007-exists-now-and-has-never-been-run) are waiting on. An option
 nothing reads is the defect [B-1](#b-1--the-config-file-is-read-now--except-for-two-keys)
 closed, so add the field and the call sites together or neither.
@@ -938,7 +951,7 @@ The first is not a priority call — it is a red suite. After that the order is
 3. **One `ExperimentOptions` edit closes three entries** — `engine`,
    `verifyEndpoint`, `stabilityWindowMs`, `stabilityReads`, `concurrency`, plus the
    five `makeRuntime` call sites in `samplers.ts` and the flags in `index.ts`. That
-   is [C-1](#c-1--the-stability-window-is-a-parameter-now-and-no-flag-reaches-it),
+   is [C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it),
    [A-3b](#a-3b--exp-007-exists-now-and-has-never-been-run) and the remaining third
    of [D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers).
    Do not substitute defaults at the CLI: `resolveStabilityWindow` and

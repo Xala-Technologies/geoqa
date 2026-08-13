@@ -401,6 +401,33 @@ unmeasured guess until EXP-007 runs.
   form, registration or booking per scenario, and the operator is told the number
   and must pass an explicit flag before anything launches. A dry run states the
   count for free.
+- **R-90** A site-wide sweep runs **inside the bounded pool**, as a page axis on the
+  matrix (`--urls-file`), never as a shell loop around the CLI. The first sweep was
+  430 pages driven from a loop alongside three other browser fleets, and it made a
+  `selector-visible` check report a missing `h1` on six pages that demonstrably had
+  one — all six passed re-run alone. An engine whose own load can manufacture a
+  site defect is worse than no engine, so the URL list belongs where the
+  concurrency bound, the per-scenario seed and the write consent already apply.
+- **R-91** A URL list is **fully validated before anything launches**, with the line
+  number of every bad entry, and one bad line refuses the whole matrix — the same
+  rule as a mistyped `--market` (R-84). A non-http scheme is refused by name: a
+  `file:` URL would let a matrix pass against local disk while claiming to have
+  visited a site. Order and duplicates are preserved, because sitemap order is
+  meaningful to whoever reads the results and a repeated URL is a legitimate second
+  sample.
+- **R-92** Two pages sharing a profile, a journey and a millisecond get **distinct
+  run ids**. A run id is `run_<ms>_<slug>` and becomes an evidence directory name,
+  so without this the second page overwrites the first page's manifest — a sweep
+  losing runs while reporting a full count. The scenario's index disambiguates, not
+  its URL: a URL contains `/` and `:`.
+- **R-93** An identity may be named by **place** (`--country`, `--city`, `--device`)
+  and not only by profile id, and the place is **resolved against the profiles that
+  exist** — a place with no profile refuses and lists the ones there are. Naming
+  both a profile and a place refuses rather than ranking them: two identities have
+  no correct answer, and silently picking either produces a run reporting a city
+  nobody asked about, which is the single worst failure this engine can have. A
+  matrix names its identities with `--market`, and refuses the place flags rather
+  than resolving one it would never read.
 
 ### Evidence has a shelf life
 
@@ -542,9 +569,13 @@ rather than a constant, with the reads spread across whatever window is asked fo
 of the vendor's stickiness), and the note the summary carries states the window
 actually used. 24 seconds remains the default on purpose — ten minutes × 10
 samples is 100 minutes, and a killed feasibility run leaves a half-written
-`results.jsonl` with no summary. No CLI flag reaches the parameter yet
-([gaps C-1](gaps.md#c-1--the-stability-window-is-a-parameter-now-and-no-flag-reaches-it)),
-so the measured number is still 24 seconds.
+`results.jsonl` with no summary. `--stability-window 10m --samples 3` now reaches
+it ([gaps C-1](gaps.md#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it)),
+and a duration it cannot parse is refused rather than defaulted — a summary
+measuring 24 seconds under a caller who believes they asked for ten minutes is
+worse than no measurement. The number in `experiments/` is still 24 seconds until
+the ten-minute run is taken, and that run waits on the samplers honouring
+`--engine` ([gaps D-1b](gaps.md#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers)).
 
 **EXP-007 is declared and has not been run**, and one of its targets cannot be
 evaluated at all: peak memory across the browser process tree is not observable

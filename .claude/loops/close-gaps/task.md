@@ -101,7 +101,7 @@ against, 90% is likely unreachable and the threshold is wrong.
       profiles · docs · infra · loop). **Human go-ahead required.**
 - [x] **1 · Truth up `docs/gaps.md`.** B-8 and B-10 are already fixed; there are
       two `### D-1c` headings. A gap list nobody trusts is worse than none.
-- [ ] **2 · CLI flags for plumbing that exists.** `--urls-file` for the matrix
+- [x] **2 · CLI flags for plumbing that exists.** `--urls-file` for the matrix
       target axis (the axis landed, nothing reaches it, so a sweep is still a
       shell loop) and `--stability-window` reaching EXP-002 (C-1, T03/T04) — the
       only reason stickiness is still measured over 24s instead of the PRD's ten
