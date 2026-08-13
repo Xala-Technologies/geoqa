@@ -99,116 +99,70 @@ const stubs = (order: string[], over: Record<string, (...args: never[]) => unkno
     order.push("prepare");
     return { spec: SPEC, warnings: ["egress is DIRECT"] };
   },
-  verifyGeoActivity: async () => {
-    order.push("verifyGeoActivity");
-    return { profileId: "oslo-mobile", network: { observed: { ip: "1.1.1.1" } }, country: { verdict: "match" } };
-  },
-  runJourneyActivity: async () => {
-    order.push("runJourneyActivity");
-    return { journey: { journeyId: "landing-page", verdict: "PASS", steps: [] }, attempts: 1, occurrences: {} };
-  },
-  verifyEgressHeldActivity: async () => {
-    order.push("verifyEgressHeldActivity");
-    return {
-      geo: { network: { observed: { ip: "1.1.1.1" }, country: { verdict: "match" } } },
-      journey: { journeyId: "landing-page", verdict: "PASS", steps: [] },
-      reproducibility: { attempts: 1, occurrences: {} },
-    };
-  },
-  recordOutcome: async () => {
-    order.push("recordOutcome");
-    return null;
-  },
-  collectEvidenceActivity: async () => {
-    order.push("collectEvidenceActivity");
-    return { evidenceId: "ev_1" };
-  },
-  assemble: async () => {
-    order.push("assemble");
+  /**
+   * The whole run, in one activity.
+   *
+   * This used to be five stubs — geo, journey, egress, evidence, assemble, close — because the
+   * workflow re-sequenced `executeRun` by hand. It no longer does: each of those steps built its
+   * OWN browser, so the run was split across four of them and its evidence described a context
+   * that had never visited the site (gaps D-6). The ordering those stubs pinned now lives in
+   * `execute.test.ts`, where it always belonged.
+   */
+  executeRunActivity: async () => {
+    order.push("executeRunActivity");
     return RESULT;
-  },
-  closeSession: async () => {
-    order.push("closeSession");
   },
   ...over,
 });
 
 describe("geoQaRunWorkflow", () => {
-  it("executes every stage in order and returns the assembled result", async () => {
+  it("prepares, then runs — two activities, and the run is one of them", async () => {
+    // One activity for the run because a browser session cannot cross an activity boundary: an
+    // activity may be retried on a different worker, and a retried step in a fresh browser is
+    // exactly the defect D-6 records. `prepare` stays separate because it touches no browser,
+    // which is what puts the proxy selection in the durable history rather than inside the run
+    // it configures.
     const order: string[] = [];
     const out = (await runWorkflow(stubs(order), order)) as { result: GeoQaRunResult; warnings: string[] };
-    // The order MIRRORS `executeRun`. Four of these steps did not exist here — the egress-held
-    // check, the cooldown write and history append inside `recordOutcome`, and the HAR prune
-    // inside `closeSession` — so a durable run silently did less than a local one (gaps D-5).
-    expect(order).toEqual([
-      "prepare",
-      "verifyGeoActivity",
-      "runJourneyActivity",
-      "verifyEgressHeldActivity",
-      "collectEvidenceActivity",
-      "assemble",
-      "recordOutcome",
-      "closeSession",
-    ]);
-    expect(out.result).toMatchObject({ runId: "run_1", verdict: "PASS" });
+    expect(order).toEqual(["prepare", "executeRunActivity"]);
+    expect(out.result.runId).toBe("run_1");
+    // `prepare`'s warnings survive to the caller — a direct-egress run must say so, and a
+    // warning swallowed by the orchestration is a run claiming more than it proved.
     expect(out.warnings).toEqual(["egress is DIRECT"]);
-  }, 60_000);
+  });
 
-  it("verifies geography BEFORE running the journey", async () => {
-    // Verifying afterwards would spend the whole run's wall clock before
-    // learning it was geographically wrong, and leave an authoritative-looking
-    // evidence package for a market it never reached.
+  it("does NOT retry the run — a silent second attempt would hide an intermittent failure", async () => {
+    // The rule that survives the collapse unchanged, and the one that matters most: flakiness is
+    // measured by running the journey N times ON PURPOSE and reporting the rate, never by
+    // retrying until green.
     const order: string[] = [];
-    await runWorkflow(stubs(order), order);
-    expect(order.indexOf("verifyGeoActivity")).toBeLessThan(order.indexOf("runJourneyActivity"));
-  }, 60_000);
-
-  it("closes the session even when the journey throws", async () => {
-    const order: string[] = [];
-    // Temporal wraps an activity failure in a WorkflowFailedError whose own
-    // message is generic; the original text lives on the cause chain. What
-    // matters here is that the run failed AND cleanup still ran.
+    let attempts = 0;
     await expect(
       runWorkflow(
         stubs(order, {
-          runJourneyActivity: async () => {
-            order.push("runJourneyActivity");
-            throw new Error("browser died");
+          executeRunActivity: async () => {
+            attempts++;
+            order.push("executeRunActivity");
+            throw new Error("the page never loaded");
           },
         }),
         order,
       ),
     ).rejects.toThrow();
-    // A leaked browser outlives the run, so cleanup must survive the failure.
-    expect(order).toContain("runJourneyActivity");
-    expect(order).toContain("closeSession");
-    expect(order).not.toContain("assemble");
-  }, 60_000);
-
-  it("does NOT retry the journey — a silent second attempt would hide a real intermittent failure", async () => {
-    const order: string[] = [];
-    await expect(
-      runWorkflow(
-        stubs(order, {
-          runJourneyActivity: async () => {
-            order.push("runJourneyActivity");
-            throw new Error("flaky");
-          },
-        }),
-        order,
-      ),
-    ).rejects.toThrow();
-    expect(order.filter((s) => s === "runJourneyActivity")).toHaveLength(1);
+    expect(attempts).toBe(1);
   }, 60_000);
 
   it("DOES retry prepare, because a refused proxy connection is transient", async () => {
+    // Unchanged: `prepare` opens no browser, so retrying it repeats a decision rather than a
+    // measurement.
     const order: string[] = [];
     let attempts = 0;
     const out = (await runWorkflow(
       stubs(order, {
         prepare: async () => {
+          attempts++;
           order.push("prepare");
-          if (++attempts < 3) throw new Error("proxy refused");
+          if (attempts < 3) throw new Error("proxy refused the connection");
           return { spec: SPEC, warnings: [] };
         },
       }),
@@ -238,10 +192,7 @@ describe("geoQaRunWorkflow", () => {
 });
 
 describe("geoQaMatrixWorkflow", () => {
-  const SEQUENTIAL_FIRST_RUN = [
-    "prepare", "verifyGeoActivity", "runJourneyActivity", "verifyEgressHeldActivity",
-    "collectEvidenceActivity", "assemble", "recordOutcome", "closeSession",
-  ];
+  const SEQUENTIAL_FIRST_RUN = ["prepare", "executeRunActivity"];
 
   it("returns one result per run, in INPUT order", async () => {
     // The pool hands results back in COMPLETION order, so the workflow sorts them. A matrix
@@ -252,7 +203,7 @@ describe("geoQaMatrixWorkflow", () => {
       runs: [INPUT, INPUT],
     })) as { result: GeoQaRunResult }[];
     expect(out).toHaveLength(2);
-    expect(order.filter((s) => s === "runJourneyActivity")).toHaveLength(2);
+    expect(order.filter((s) => s === "executeRunActivity")).toHaveLength(2);
   }, 90_000);
 
   it("runs children CONCURRENTLY by default, converging on the in-process runner", async () => {
@@ -318,7 +269,7 @@ describe("durableMatrix, against a REAL Temporal server", () => {
       }),
     );
     expect(out.results).toHaveLength(2);
-    expect(order.filter((s) => s === "runJourneyActivity")).toHaveLength(2);
+    expect(order.filter((s) => s === "executeRunActivity")).toHaveLength(2);
     // The id comes back off the handle, so a caller can find the sweep again after the terminal
     // has gone — `temporal workflow show -w <id>`.
     expect(out.workflowId).toContain("durable-matrix");

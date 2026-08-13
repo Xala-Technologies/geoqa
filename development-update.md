@@ -19,6 +19,60 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — A durable run was split across four browsers, and its evidence described none of them
+
+Last entry ended with *"no durable sweep has run against a real browser and a real site."*
+So I wrote that test. It found this within minutes.
+
+`playwrightOpener` launches a **new browser on every use**, and the workflow built one
+runtime per activity — so geo verification, the journey, the egress check and evidence
+collection each got a *different* browser. Measured against a real Chromium:
+
+| Reading | Durable (before) | Local | Why |
+|---|---|---|---|
+| `egressHeld` | `unverified` | `match` | the closing probe ran in a context that never visited the site |
+| `vitals.lcp` | **null** | a real number | evidence was collected from a blank context |
+
+The second is the serious one. **A durable run wrote an evidence package describing a
+browser that had never been anywhere — and reported `PASS` while doing it.** That is the
+exact shape of claim this engine exists to refuse, produced by the engine itself.
+
+### The cause was a comment, and it was accurate when written
+
+`activities.ts` said: *rebuilding the runtime per activity is not a workaround, it is the
+correct model here — agent-browser is a daemon, so the browser survives between activities
+and is addressed by its launch flags rather than held as a handle.*
+
+True of agent-browser. **False of Playwright**, which launches a browser per opener call.
+The browser seam makes the two look identical from above — that is its entire purpose — so
+a fact about one engine was recorded as a fact about the model, and the engine it was
+false for is the one that serves every experiment.
+
+### Closed by making the run one activity, and that activity is `executeRun`
+
+Not a re-sequencing of it: the same function the CLI calls. This also makes yesterday's
+six-way drift structurally impossible — there is no second copy of the run left to
+diverge. The six retired activities were **deleted** rather than left exported, because
+re-wiring them would rebuild the defect.
+
+The cost is per-step retry granularity: a flaky geo read used to retry alone and now
+restarts the run. That granularity was never sound — a retried step ran in a fresh
+browser, which *is* this defect — so what looked like fine-grained durability was
+fine-grained incorrectness.
+
+### What this says about the last two days
+
+Neither a unit test nor the structural parity guard could see this. The guard compares
+which *functions* each mode calls, and both called the same ones; what differed was what
+the runtime handed to them had **seen**.
+
+Every finding today came from something written down — a stale comment, a stale default, a
+constraint that outlived its evidence. This one came from a *test that did not exist*, and
+the sentence that prompted writing it was one I had written the entry before, admitting
+what was unproven.
+
+---
+
 ## 2026-08-13 — The durable path was doing six fewer things, and one of them was my fault
 
 Closing D-2 made a durable run startable for the first time. The immediate next question

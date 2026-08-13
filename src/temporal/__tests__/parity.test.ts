@@ -30,44 +30,32 @@ const read = (rel: string): string => readFileSync(path.join(here, "..", "..", r
  * that adding a behaviour to `executeRun` without a home in `stages.ts` or an activity means
  * the durable path silently does less, and the run that notices is somebody's overnight sweep.
  */
-const SHARED = [
-  { what: "runs the journey N times and merges the attempts", fn: "repeatJourney" },
-  { what: "confirms the egress held for the whole run", fn: "closeEgress" },
-  { what: "writes the evidence package", fn: "collectEvidence" },
-  { what: "assembles the run result", fn: "assembleResult" },
-  { what: "deletes a HAR the manifest does not retain", fn: "pruneUnlistedHar" },
-];
-
-describe("the two execution modes call the same implementations", () => {
-  const local = read("run/execute.ts");
+describe("there is only ONE run implementation", () => {
   const durable = read("temporal/activities.ts");
+  const workflow = read("temporal/workflows.ts");
 
-  it.each(SHARED)("both reach $fn — $what", ({ fn }) => {
-    expect(local, `executeRun does not call ${fn}`).toContain(fn);
-    expect(durable, `no activity calls ${fn}, so a durable run skips it`).toContain(fn);
+  it("the durable path calls executeRun itself, not a re-sequencing of it", () => {
+    // The guard that replaced a list of shared functions. Six behaviours had drifted apart while
+    // the durable path re-sequenced `executeRun` by hand (D-5), and the re-sequencing was ALSO
+    // wrong in a way no list could catch: each step built its own browser, so the run was split
+    // across four of them (D-6). Both classes disappear when there is one implementation.
+    expect(durable).toContain("executeRun(");
   });
 
-  it("the durable path records the provider outcome and the run history", () => {
-    // Neither existed on the durable side: a vendor that failed a durable sweep was never
-    // frozen, and the run never entered runs.jsonl — invisible to `geoqa runs`, to the trends
-    // and to regression detection.
-    expect(durable).toContain("noteProviderOutcome");
-    expect(durable).toContain("appendRun");
-    expect(local).toContain("noteProviderOutcome");
-    expect(local).toContain("appendRun");
+  it("the workflow orchestrates and does not reimplement", () => {
+    // A workflow that grew a second browser-touching activity would be re-splitting the session
+    // a browser cannot survive being split across. `prepare` is the one exception and touches no
+    // browser.
+    const activities = [...workflow.matchAll(/const \{ ([^}]+) \} = proxyActivities/g)]
+      .flatMap((m) => (m[1] ?? "").split(",").map((n) => n.trim()))
+      .filter((n) => n !== "");
+    expect(activities.toSorted()).toEqual(["executeRunActivity", "prepare"]);
   });
 
-  it("the durable path records what kind of visitor it actually tested", () => {
-    // Without it, durable evidence carried `visitorType: returning` off the profile whether or
-    // not a session was restored — the declaration, not the observation.
-    expect(durable).toContain("resolveVisitorState");
-    expect(local).toContain("resolveVisitorState");
-  });
-
-  it("neither mode reimplements the journey repeat loop", () => {
-    // `mergeAttempts` belongs to `repeatJourney` now. A caller doing its own merge is the exact
-    // shape of the drift this file guards: two copies that agree until one is improved.
-    expect(local, "executeRun merges attempts itself again").not.toContain("mergeAttempts(");
+  it("neither path reimplements the journey repeat loop", () => {
+    // `mergeAttempts` belongs to `repeatJourney`, which `executeRun` calls. A caller merging
+    // attempts itself is the shape of drift this file exists for.
+    expect(read("run/execute.ts"), "executeRun merges attempts itself again").not.toContain("mergeAttempts(");
     expect(durable, "an activity merges attempts itself again").not.toContain("mergeAttempts(");
   });
 });
