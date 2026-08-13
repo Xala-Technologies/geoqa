@@ -1575,6 +1575,14 @@ clean — never blank, and never a dash that could be mistaken for "fine".
 The gap count also reaches the sidebar, because a number nobody can see is a number
 nobody acts on.
 
+**Guarded, because the type mirror already passed while this was broken.**
+`view.test.ts` checked that `types.ts` DECLARES every field the view model produces —
+and declaring is not rendering, which is the whole of this defect. It now also reads the
+UI source and requires each field to be named by some component. Verified by mutation:
+removing `coverageGaps` from the UI fails with *"site.coverageGaps is declared but no
+component reads it"*. A behavioural test cannot catch this class — every component test
+asserts what its component does, and a component that does not exist has no test to fail.
+
 ### C-13 · CLOSED — an empty text read is confirmed, then refused rather than blamed on the page
 
 **Found by pointing the engine at a second real site**, which is exactly what
