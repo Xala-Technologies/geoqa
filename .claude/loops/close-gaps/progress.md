@@ -1309,6 +1309,55 @@ invariant **29**.
 
 Gate: lint clean · boundaries clean · **1361 tests at 100%** · e2e 30/30.
 
+## Slice 22 — B-3: the HAR, listed, flagged, and deleted when it is not retained
+
+Three defects around one artifact, and the middle one is a privacy leak rather than a
+completeness number.
+
+**`harStop` now CLOSES the context, because on Playwright that IS the flush.** It used to
+refuse, accurately — there is no flush-on-demand, so `ok` would have described a file nothing
+had written. Refusing accurately turned out not to be the same as being right: `missing` listed
+`har` on every fail-tier run and completeness sat at 88% for a recording that landed on disk
+seconds later, when the run's own `finally` closed the same context. Fail-tier completeness is
+100 now, asserted end to end against a real Chromium.
+
+Two consequences, both handled where they are paid. The `har` block moved to **last**, after
+vitals, console, network, snapshot, trace and a11y — its position is load-bearing, since a HAR
+collected before the trace would take the trace's context with it. And `close()` is idempotent
+on both engines: the flush closes and the `finally` closes again, and a second
+`saveStorageState` through a dead context would have reported a failed save for a session saved
+correctly — the exact false alarm B-7 exists to prevent.
+
+**A passing run no longer leaves an unlisted network log on disk.** `harPath` is armed on every
+run (it cannot be started retroactively for the run that turns out to need one) and Playwright
+flushes at close whether anything asked or not, so the asymmetric retention policy was bypassed
+for exactly the artifact carrying the most personal data. *Unlisted* is the worse half: pruning
+walks the manifest, so nothing would ever have removed it. "Never call stop" sufficed for the
+trace and does not here, because the flush is not ours to skip. `pruneUnlistedHar` runs after
+the close, deletes it, and says so in the log — a deleted file is the one thing a reader cannot
+go back and check. A failed delete is a retention problem, never a failed run.
+
+**The HAR carries the same risk flag as a screenshot, and needs it more.** `screenshotRisk` is
+now `artifactRisk`. Bodies are omitted at creation but REQUEST bodies and `Cookie` headers are
+not, so a login journey's HAR can hold a filled credential — and unlike an image, which needs a
+human to read it, a HAR is grep-able. `privacyNote` widened from "screenshot(s)" to
+"artifact(s)": a reader trusting the old wording would have shared a file holding a request body
+because the sentence only warned about images.
+
+The e2e caught the fix working — an assertion expecting `missing` to contain `har` failed
+because it no longer does. Rewritten to assert the new truth, plus a new case proving a passing
+run leaves no `network.har` behind.
+
+Docs: gaps **B-3** closed; PRD **R-160 / R-161**, R-27 widened; AGENTS invariants **30 / 31**.
+
+**One conflict the self-review surfaced.** `keepOpen` says "do not close the session"; a har
+tier now says "close it to flush the HAR". A `keepOpen` run collects no HAR — the manifest
+reports it missing, which is true, and the run logs the reason. Handing a caller that said it
+still needed the session a dead one is the worse half; describing a file nothing wrote is worse
+than both.
+
+Gate: lint clean · boundaries clean · **1371 tests at 100%** · e2e **31/31**.
+
 ## Next
 
 Slice 19 only, and it is **blocked on a decision rather than on work**: a static UI has no auth

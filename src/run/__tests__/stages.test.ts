@@ -1,8 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { EvidenceManifest } from "../../evidence/manifest.js";
 import { loadGeoProfile } from "../../geo/profile.js";
 import type { GeoProfile, GeoVerification } from "../../geo/types.js";
 import { loadJourney } from "../../journeys/spec.js";
@@ -18,6 +19,7 @@ import {
   executeJourney,
   loadInputs,
   traceArtifactFormat,
+  pruneUnlistedHar,
   verifyEgressHeld,
   verifyEnvironment,
 } from "../stages.js";
@@ -287,6 +289,59 @@ describe("verifyEgressHeld", () => {
   });
 });
 
+describe("pruneUnlistedHar", () => {
+  const spec2 = () => ({ evidenceRoot: root, runId: "run_1" });
+  const harFile = () => path.join(root, "run_1", "network.har");
+  const armHar = () => {
+    mkdirSync(path.join(root, "run_1"), { recursive: true });
+    writeFileSync(harFile(), "{}");
+  };
+  /** Only the two fields `pruneUnlistedHar` reads. */
+  const manifestWith = (artifacts: { kind: string }[]): EvidenceManifest =>
+    ({ tier: "pass", artifacts } as unknown as EvidenceManifest);
+
+  it("DELETES a HAR the manifest does not list", () => {
+    // The recording is armed on every run — it cannot be started retroactively for the run that
+    // turns out to need it — and Playwright flushes it at close whether anything asked or not.
+    // So a passing run, whose whole point is to keep almost nothing, left a full network
+    // recording on disk. Nothing else would ever have removed it: pruning walks the manifest.
+    armHar();
+    const note = pruneUnlistedHar(spec2(), manifestWith([]));
+    expect(existsSync(harFile())).toBe(false);
+    expect(note).toContain("removed an unlisted network.har");
+  });
+
+  it("KEEPS a HAR the manifest lists", () => {
+    armHar();
+    const note = pruneUnlistedHar(spec2(), manifestWith([{ kind: "har" }]));
+    expect(existsSync(harFile())).toBe(true);
+    expect(note).toBeNull();
+  });
+
+  it("treats a run that produced no manifest as keeping nothing", () => {
+    // An armed recording flushed by a run that produced no evidence is the same unlisted file,
+    // and a crashed run is not a reason to leave one behind.
+    armHar();
+    expect(pruneUnlistedHar(spec2(), null)).toContain("removed");
+    expect(existsSync(harFile())).toBe(false);
+  });
+
+  it("says nothing when there is no HAR — the normal case", () => {
+    // agent-browser writes one only when asked, so absence is not an error.
+    expect(pruneUnlistedHar(spec2(), manifestWith([]))).toBeNull();
+  });
+
+  it("reports a failed delete as a RETENTION problem, not a run failure", () => {
+    // The run verified the site. Losing the ability to tidy up afterwards does not undo that,
+    // and it must still be said out loud rather than swallowed. Provoked with a non-empty
+    // DIRECTORY at the HAR's path, which a non-recursive `rmSync` refuses.
+    mkdirSync(path.join(harFile(), "inside"), { recursive: true });
+    const note = pruneUnlistedHar(spec2(), manifestWith([]));
+    expect(note).toContain("could not remove");
+    expect(existsSync(harFile())).toBe(true);
+  });
+});
+
 describe("collectEvidence", () => {
   const input = async (journey: JourneyResult) => ({
     spec: spec(),
@@ -319,6 +374,20 @@ describe("collectEvidence", () => {
       journey: Record<string, unknown>;
     };
     expect("reproducibility" in written.journey).toBe(false);
+  });
+
+  it("flags the HAR for review like a screenshot, because it holds MORE than one", async () => {
+    // A HAR omits response bodies at creation but not request bodies or Cookie headers, so a
+    // login journey's HAR can hold a filled credential — and unlike an image, it is grep-able.
+    const manifest = await collectEvidence(
+      fakeRuntime(),
+      await input(journeyResult({ verdict: "FAIL", writes: true })),
+    );
+    expect(manifest.artifacts.find((a) => a.kind === "har")?.risk).toBe("review");
+    expect(manifest.privacyNote).toContain("network.har");
+    // Widened past "screenshot(s)": a reader who trusted the old wording would have shared a
+    // file holding a request body because the sentence only warned about images.
+    expect(manifest.privacyNote).toContain("artifact(s)");
   });
 
   it("writes only the PASS tier for a passing run", async () => {

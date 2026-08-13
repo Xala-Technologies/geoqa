@@ -436,9 +436,23 @@ unmeasured guess until EXP-007 runs.
 - **R-26** Proxy credentials are resolved from environment variables only, never
   from a config file, and are masked anywhere they could reach a human — log, run
   summary, or manifest.
+- **R-160** An artifact that can only be flushed by ending the session is collected
+  **last**, and the primitive that flushes it does the ending rather than refusing.
+  Refusing accurately is not the same as being right: the manifest reported a HAR
+  missing on every fail-tier run, for a file that appeared seconds later when the run
+  closed the same context. `close` is idempotent so the flush and the run's own
+  teardown do not double-save a visitor session.
+- **R-161** An artifact armed on every run but retained by only some tiers is
+  **deleted** after the flush when the manifest does not list it, and the deletion is
+  logged. Pruning walks the manifest, so an unlisted file is one nothing would ever
+  remove — the asymmetric retention policy bypassed for exactly the artifact carrying
+  the most personal data.
 - **R-27** Screenshot personal data is **not** claimed to be solved. It is
   *bounded*: any page with a form or an authenticated session is flagged
-  `review`, and the manifest carries a privacy note naming those artifacts.
+  `review`, and the manifest carries a privacy note naming those artifacts. The flag
+  is per ARTIFACT, not per screenshot: a HAR omits response bodies at creation but not
+  request bodies or `Cookie` headers, so it can hold a filled credential — and unlike
+  an image it is grep-able. The note says "artifact(s)" for that reason.
 
 ### Findings
 

@@ -74,12 +74,20 @@ export const HAR_NOT_ARMED =
   "HAR must be requested when the context is created; this context was created without it";
 
 /**
- * What `harStop` can honestly say about a recording it cannot flush.
+ * What `harStop` used to say, and why it no longer needs to.
  *
- * Playwright writes the HAR when the context CLOSES. Evidence is collected
- * before that, so at `harStop` time the file genuinely does not exist yet, and
- * saying otherwise would put a `har` artifact in the manifest that nothing had
- * written — the 221-byte-file failure the agent-browser path already made once.
+ * Playwright writes the HAR when the context CLOSES, so a `harStop` that merely asked nicely
+ * genuinely could not produce the file, and this message said so rather than describing a
+ * `har` artifact nothing had written — the 221-byte-file failure the agent-browser path had
+ * already made once.
+ *
+ * The message was honest and the situation it described was still a defect: the manifest
+ * reported `har` MISSING on every fail-tier run, holding completeness at 88% for an artifact
+ * that was sitting on disk moments later. Refusing accurately is not the same as being right.
+ *
+ * `harStop` now CLOSES the context, because on this engine that IS the flush — see the comment
+ * on the method. Kept exported because the wording is still the clearest statement of why the
+ * ordering in `collectEvidence` is what it is, and a test pins it.
  */
 export const harPendingDetail = (path: string): string =>
   `HAR is recording to ${path} and Playwright writes it when the context CLOSES; it cannot be flushed on demand, so the file does not exist yet`;
@@ -355,6 +363,8 @@ export class PlaywrightRuntime implements BrowserRuntime {
   private readonly now: () => number;
   private readonly absenceSettleMs: number;
   private opened: Promise<PwSession> | null = null;
+  /** Set by the first successful `close`, so a second one is a no-op rather than a false alarm. */
+  private closed = false;
 
   constructor(sessionId: string, launch: PwOpen, options: PlaywrightRuntimeOptions = {}) {
     this.sessionId = sessionId;
@@ -632,15 +642,25 @@ export class PlaywrightRuntime implements BrowserRuntime {
   }
 
   /**
-   * Refuse in every case, and say WHICH truth applies.
+   * Flush the HAR — which on this engine means CLOSING the context.
    *
-   * Playwright flushes the HAR when the context closes, and evidence is collected
-   * before that — so there is no reading of "stop" this adapter can satisfy. The
-   * three refusals are different facts a human needs: nothing was recorded; the
-   * recording exists but goes to a different path than the one asked for; or the
-   * recording is fine and the file simply is not there YET. Returning `ok` for
-   * the last one would be the most tempting lie available here, and it would make
-   * `collectEvidence` describe a `har` artifact that nothing had written.
+   * Playwright writes the HAR at `context.close()` and offers no flush-on-demand, so an
+   * adapter has two choices: refuse accurately, or perform the only operation that satisfies
+   * what the caller asked for. It refused for a while, and refusing accurately turned out not
+   * to be the same as being right — the manifest reported `har` MISSING on every fail-tier run
+   * and completeness sat at 88% for a file that appeared on disk seconds later, when the run's
+   * `finally` closed the same context.
+   *
+   * So `harStop(path)` means what its name says: after it returns ok, the HAR at `path` is
+   * complete and readable. The two refusals that describe a real mismatch survive, because
+   * neither can be fixed by closing anything — nothing was recorded, or the recording is armed
+   * to a DIFFERENT path and closing would leave the caller looking for a file nothing will ever
+   * write while the real one sits unlisted beside it.
+   *
+   * **The cost, stated where it is paid:** the context is dead afterwards. `collectEvidence`
+   * collects the HAR last for exactly this reason, after every live read — vitals, console,
+   * snapshot, trace, a11y — and the ordering there carries the same warning. A HAR collected
+   * before the trace would have taken the trace's context with it.
    */
   async harStop(path: string): Promise<BrowserResult<unknown>> {
     const command = `playwright:harStop ${path}`;
@@ -648,7 +668,7 @@ export class PlaywrightRuntime implements BrowserRuntime {
     if (!armed.ok) return armed;
     if (armed.data === null) return this.refuse(command, HAR_NOT_ARMED);
     if (armed.data !== path) return this.refuse(command, harElsewhereDetail(armed.data, path));
-    return this.refuse(command, harPendingDetail(armed.data));
+    return this.close();
   }
 
   /** Tracing IS start/stop in Playwright — the reason the fail tier can finally hold one. */
@@ -695,10 +715,21 @@ export class PlaywrightRuntime implements BrowserRuntime {
    * substitution this wiring exists to prevent — and a green close would be the
    * only trace of it.
    */
+  /**
+   * Close once, and say ok if asked again.
+   *
+   * The second call is not hypothetical: `harStop` closes the context to flush the HAR, and
+   * `executeRun`'s `finally` closes it again on the way out. Playwright tolerates a repeated
+   * `context.close()`, but `saveVisitorSession` does NOT — it would try to write storage state
+   * through a dead context and report a failed save for a session that was saved correctly the
+   * first time, which is exactly the false alarm B-7 exists to prevent.
+   */
   async close(): Promise<BrowserResult<unknown>> {
     if (this.opened === null) {
       return this.attempt("playwright:close (never opened)", () => Promise.resolve(null));
     }
+    if (this.closed) return this.attempt("playwright:close (already closed)", () => Promise.resolve(null));
+    this.closed = true;
     const saved = await this.saveVisitorSession();
     const closed = await this.withSession("playwright:close", (s) => s.context.close());
     return saved.ok ? closed : saved;

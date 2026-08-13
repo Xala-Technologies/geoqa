@@ -9,7 +9,7 @@
  *
  * Screenshots are a different problem and are NOT solved here: an image of a
  * filled-in form is personal data and no regex will find it. What we can do
- * honestly is bound it — see `screenshotRisk` — and record the risk in the
+ * honestly is bound it — see `artifactRisk` — and record the risk in the
  * manifest so a human knows which artifacts need care.
  */
 
@@ -178,16 +178,23 @@ export function redactDeep(value: unknown): unknown {
   return value;
 }
 
-export type ScreenshotRisk = "low" | "review";
+export type ArtifactRisk = "low" | "review";
 
 /**
- * Whether a screenshot needs a human's eye before it leaves the machine.
+ * Whether an artifact needs a human's eye before it leaves the machine.
  *
  * Deliberately crude and deliberately over-cautious: any page that had a form
  * on it, or any authenticated visit, is `review`. This does not detect personal
  * data — nothing here can — it flags the artifacts where personal data is
  * plausible so retention and sharing rules can attach to them.
+ *
+ * Named for artifacts rather than screenshots because it stopped being about
+ * screenshots. A HAR has the same problem and a worse version of it: bodies are
+ * omitted at creation, but a request body and a `Cookie` header are not, so a
+ * login journey's HAR can hold a filled credential — the one thing R-63 says
+ * must never reach disk. A screenshot at least needs a human to read an image;
+ * a HAR is grep-able. Both get the same flag from the same two facts.
  */
-export function screenshotRisk(context: { hadForm: boolean; authenticated: boolean }): ScreenshotRisk {
+export function artifactRisk(context: { hadForm: boolean; authenticated: boolean }): ArtifactRisk {
   return context.hadForm || context.authenticated ? "review" : "low";
 }

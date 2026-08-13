@@ -10,6 +10,8 @@
  * Every stage takes its dependencies as arguments rather than importing them,
  * so each is testable without a browser, a proxy or a workflow engine.
  */
+import { existsSync, rmSync } from "node:fs";
+import path from "node:path";
 import { observeBrowser, observeEgressIp, observeNetwork, observeNetworkVia, GEOJS_SOURCE } from "../geo/observe.js";
 import { loadGeoProfile } from "../geo/profile.js";
 import type { AxisResult, GeoProfile, GeoVerification } from "../geo/types.js";
@@ -20,7 +22,7 @@ import { runJourney, type JourneyResult, type StepResult } from "../journeys/eng
 import { loadJourney, resolveSteps, type Journey } from "../journeys/spec.js";
 import { buildManifest, GEOQA_SCHEMA_VERSION, type Artifact, type EvidenceManifest } from "../evidence/manifest.js";
 import { describeExisting, ensureRunDirectory, writeJsonArtifact, writeManifest, writeTextArtifact } from "../evidence/store.js";
-import { screenshotRisk } from "../evidence/redact.js";
+import { artifactRisk } from "../evidence/redact.js";
 import { findingsFromSteps, rankFindings } from "../findings/classify.js";
 import type { GeoQaRunResult } from "../findings/types.js";
 import { scoreRun } from "../confidence/score.js";
@@ -240,6 +242,17 @@ export interface CollectInput {
    * deliberate choice not to repeat.
    */
   reproducibility?: { attempts: number; occurrences: Record<string, number> };
+  /**
+   * The caller intends to keep using this session, so the HAR must NOT be flushed.
+   *
+   * Flushing means closing the context on Playwright — that is the only flush the engine has —
+   * which would leave a caller that asked to reuse the session holding a dead one. So a har
+   * tier collects no HAR here, and the manifest reports it MISSING, which is true: the file
+   * does not exist. That is the system's standing rule for a required artifact that could not
+   * be produced, and it is strictly better than the alternatives — describing a file nothing
+   * wrote, or closing a session somebody said they still needed.
+   */
+  keepSessionOpen?: boolean;
 }
 
 /**
@@ -314,7 +327,7 @@ export async function collectEvidence(
   // one could register an account or send a contact form: a screenshot taken
   // mid-form plausibly contains a name, an email or a password, and no regex will
   // ever find it in an image. Flagging it is all we can honestly do.
-  const risk = screenshotRisk({ hadForm: journey.touchedForm, authenticated: journey.writes });
+  const risk = artifactRisk({ hadForm: journey.touchedForm, authenticated: journey.writes });
   for (const label of journey.screenshots) {
     const artifact = describeExisting(dir, "screenshot", label, `${label}.png`);
     artifacts.push({ ...artifact, risk });
@@ -336,10 +349,6 @@ export async function collectEvidence(
     const tree = await runtime.snapshot({ interactiveOnly: false });
     artifacts.push(writeTextArtifact(dir, "snapshot", "tree", "snapshot.txt", tree.ok ? tree.data : ""));
   }
-  if (tier.includes("har")) {
-    await runtime.harStop(`${dir}/network.har`);
-    artifacts.push(describeExisting(dir, "har", "har", "network.har"));
-  }
   if (tier.includes("trace")) {
     const trace = traceArtifactFormat(spec.engine);
     await runtime.traceStop(`${dir}/${trace.file}`);
@@ -353,6 +362,34 @@ export async function collectEvidence(
     artifacts.push(writeJsonArtifact(dir, "a11y", "a11y", "a11y.json", violations.ok ? violations.data : null));
   }
 
+  /**
+   * The HAR, LAST, because flushing it ends the session on one engine.
+   *
+   * Playwright writes a HAR only when the context closes, so `harStop` closes it — that is the
+   * flush, not a side effect (see the comment on `PlaywrightRuntime.harStop`). Everything above
+   * needs a live page or a live context: vitals, console, the snapshot, the trace, the a11y
+   * scan. Collecting the HAR before the trace would have taken the trace's context with it, so
+   * this block's POSITION is load-bearing and not a matter of reading order.
+   *
+   * Described after the stop rather than before, so `describeExisting` measures a file that
+   * exists. This is what took fail-tier completeness off 88%: the artifact was recorded all
+   * along and the manifest reported it missing, because the manifest was built while Playwright
+   * still had it in memory.
+   *
+   * It carries the same risk flag as the screenshots, and needs it more. A HAR omits response
+   * bodies at creation but not REQUEST bodies or `Cookie` headers, so a login journey's HAR can
+   * hold a filled credential — and unlike a screenshot, which needs a human to read an image, a
+   * HAR is grep-able.
+   */
+  //
+  // Skipped entirely when the caller asked to keep the session: the flush IS the close, and a
+  // caller reusing the session would be handed a dead one. The manifest then reports `har`
+  // missing, which is true, and completeness says so rather than the package looking whole.
+  if (tier.includes("har") && input.keepSessionOpen !== true) {
+    await runtime.harStop(`${dir}/network.har`);
+    artifacts.push({ ...describeExisting(dir, "har", "har", "network.har"), risk });
+  }
+
   const manifest = buildManifest({
     evidenceId: newEvidenceId(spec.runId),
     runId: spec.runId,
@@ -362,6 +399,38 @@ export async function collectEvidence(
   });
   writeManifest(dir, manifest);
   return manifest;
+}
+
+/**
+ * Delete a HAR the manifest does not list. Returns what it did, for the log.
+ *
+ * **A retention hole, and the only artifact that had one.** `harPath` is armed on every run —
+ * it must be, because a HAR cannot be started retroactively for the run that turns out to need
+ * one — and Playwright flushes it when the context closes whether anything asked for it or not.
+ * So a PASSING run, whose whole point is to keep almost nothing, left a full network recording
+ * on disk that no manifest mentioned. The asymmetric retention policy was bypassed for exactly
+ * the artifact carrying the most personal data, and an unlisted file is worse than a listed one:
+ * pruning walks the manifest, so nothing would ever have removed it.
+ *
+ * "Never call stop" was sufficient for the trace and is not sufficient here, because the flush
+ * is not ours to skip. A delete is.
+ *
+ * Runs AFTER the close, since that is when the file appears. A missing file is the normal case
+ * — agent-browser writes a HAR only when asked — so absence is not an error.
+ */
+export function pruneUnlistedHar(spec: Pick<RunSpec, "evidenceRoot" | "runId">, manifest: EvidenceManifest | null): string | null {
+  const file = path.join(runEvidenceDir(spec), "network.har");
+  if (manifest?.artifacts.some((a) => a.kind === "har")) return null;
+  if (!existsSync(file)) return null;
+  try {
+    rmSync(file);
+    // Said out loud rather than done quietly: a deleted file is the one thing a reader cannot
+    // find later to check, and "the run kept nothing" is a claim the log should make explicitly.
+    return `removed an unlisted network.har — the ${manifest === null ? "run produced no manifest" : `${manifest.tier} tier`} does not retain one`;
+  } catch (error) {
+    // A failed delete is a retention problem, not a run problem. The run verified the site.
+    return `could not remove the unlisted network.har at ${file}: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 function verdictTier(verdict: JourneyResult["verdict"]): keyof typeof RETENTION {

@@ -10,7 +10,7 @@ import {
   redactEmails,
   redactNationalIds,
   redactQueryParams,
-  screenshotRisk,
+  artifactRisk,
 } from "../redact.js";
 
 describe("redactCredentials", () => {
@@ -169,13 +169,13 @@ describe("isSensitivePropertyName", () => {
   });
 });
 
-describe("screenshotRisk", () => {
+describe("artifactRisk", () => {
   it("flags a page with a form or an authenticated session for review", () => {
-    expect(screenshotRisk({ hadForm: true, authenticated: false })).toBe("review");
-    expect(screenshotRisk({ hadForm: false, authenticated: true })).toBe("review");
+    expect(artifactRisk({ hadForm: true, authenticated: false })).toBe("review");
+    expect(artifactRisk({ hadForm: false, authenticated: true })).toBe("review");
   });
 
   it("is low for an anonymous page with no form", () => {
-    expect(screenshotRisk({ hadForm: false, authenticated: false })).toBe("low");
+    expect(artifactRisk({ hadForm: false, authenticated: false })).toBe("low");
   });
 });

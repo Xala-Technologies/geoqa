@@ -233,6 +233,24 @@ describe("executeRun", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
+  it("keeps the session open by collecting NO har, rather than closing it to flush one", async () => {
+    // The flush is the close on Playwright, so these two requests genuinely conflict. Handing
+    // back a dead session to a caller that said it still needed one is the worse half, so the
+    // HAR is skipped and the manifest reports it missing — which is true, the file does not
+    // exist — with the reason said out loud rather than left to be inferred from a number.
+    const lines: string[] = [];
+    await withFakeBrowser({ isVisible: () => Promise.resolve(ok(false)) });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const result = await executeRun({
+      spec: prepared.spec,
+      provider: directProvider(),
+      keepOpen: true,
+      log: (line) => lines.push(line),
+    });
+    expect(result.evidenceId).not.toBeNull();
+    expect(lines.some((l) => l.includes("no HAR"))).toBe(true);
+  });
+
   it("throws before touching a browser when the journey is invalid", async () => {
     await withFakeBrowser();
     await expect(

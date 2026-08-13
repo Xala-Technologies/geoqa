@@ -445,16 +445,34 @@ describe("PlaywrightRuntime evidence", () => {
     expect(out.ok && out.data).toBe("/e/network.har");
   });
 
-  it("REFUSES to call a HAR stopped when Playwright only writes it on close", async () => {
-    // The tempting lie: the recording is real and the path is right, so `ok`
-    // looks harmless — and `collectEvidence` would then describe a `har`
-    // artifact that nothing has written yet.
-    const out = await runtimeOver(session({ harPath: "/e/network.har" })).harStop("/e/network.har");
-    expect(out.ok).toBe(false);
-    if (!out.ok) {
-      expect(out.failure.detail).toBe(harPendingDetail("/e/network.har"));
-      expect(out.failure.detail).toContain("does not exist yet");
-    }
+  it("CLOSES the context to flush the HAR, because on this engine that IS the flush", async () => {
+    // It used to refuse here, accurately: Playwright writes the HAR at close and there is no
+    // flush-on-demand, so `ok` would have described an artifact nothing had written. Refusing
+    // accurately turned out not to be the same as being right — the manifest reported `har`
+    // missing on every fail-tier run, for a file that appeared seconds later when the run's
+    // `finally` closed the same context. `harStop` now means what its name says.
+    const built = session({ harPath: "/e/network.har" });
+    const out = await runtimeOver(built).harStop("/e/network.har");
+    expect(out.ok).toBe(true);
+    expect(built.calls.closed).toBe(1);
+  });
+
+  it("still says plainly that a HAR cannot be flushed on demand", () => {
+    // Kept because it is the clearest statement of WHY the har block is collected last, and
+    // that ordering is load-bearing: a HAR taken before the trace takes the trace's context.
+    expect(harPendingDetail("/e/network.har")).toContain("does not exist yet");
+  });
+
+  it("saves the visitor session once, not once per close", async () => {
+    // `harStop` closes and `executeRun`'s finally closes again. Playwright tolerates a repeated
+    // context.close(); saveStorageState does not — it would write through a dead context and
+    // report a failed save for a session saved correctly the first time.
+    const built = session({ harPath: "/e/network.har", saveStatePath: "/e/state.json" });
+    const runtime = runtimeOver(built);
+    expect((await runtime.harStop("/e/network.har")).ok).toBe(true);
+    expect((await runtime.close()).ok).toBe(true);
+    expect(built.calls.statesSaved).toEqual(["/e/state.json"]);
+    expect(built.calls.closed).toBe(1);
   });
 
   it("names BOTH paths when asked to flush a HAR somewhere it is not recording", async () => {

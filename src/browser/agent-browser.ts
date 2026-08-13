@@ -102,6 +102,8 @@ export class AgentBrowserRuntime implements BrowserRuntime {
   private readonly exec: ExecFn;
   private readonly env: NodeJS.ProcessEnv;
   private readonly absenceSettleMs: number;
+  /** Set by the first `close`, so a second one is a no-op rather than a transport failure. */
+  private closed = false;
 
   constructor(config: BrowserSessionConfig, options: RuntimeOptions = {}) {
     this.config = config;
@@ -341,7 +343,19 @@ export class AgentBrowserRuntime implements BrowserRuntime {
     return mapOk(await this.run(["a11y"]), toA11yViolations);
   }
 
-  close(): Promise<BrowserResult<unknown>> {
+  /**
+   * Close once. A second call is a no-op, not a second `close` on the daemon.
+   *
+   * `harStop` does not close on this engine — the CLI writes the file on demand — so the double
+   * close arrives from the other direction: any caller that closes explicitly and then hits
+   * `executeRun`'s `finally`. Re-running `close` against a daemon that has already gone would
+   * report a transport failure for a close that succeeded.
+   */
+  async close(): Promise<BrowserResult<unknown>> {
+    if (this.closed) {
+      return { ok: true, data: null, stdout: "", stderr: "", durationMs: 0, command: "agent-browser:close (already closed)" };
+    }
+    this.closed = true;
     return this.run(["close"]);
   }
 }

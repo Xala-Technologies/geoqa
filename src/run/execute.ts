@@ -19,12 +19,14 @@ import type { GeoQaRunResult } from "../findings/types.js";
 import { buildRuntime, newRunId, resolveVisitorState, writeInitScript, type RunSpec } from "./context.js";
 import { appendRun } from "../history/store.js";
 import { toRunRecord } from "../history/records.js";
+import type { EvidenceManifest } from "../evidence/manifest.js";
 import {
   applyDeviceProfile,
   assembleResult,
   collectEvidence,
   executeJourney,
   loadInputs,
+  pruneUnlistedHar,
   StageError,
   verifyEgressHeld,
   verifyEnvironment,
@@ -146,6 +148,11 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
   const visitor = resolveVisitorState(options.spec, profile);
   if (visitor.unmet !== null) log(`warning: ${visitor.unmet}`);
 
+  // Declared out here so the `finally` can ask what the manifest kept. A run that threw before
+  // collecting has none, and `pruneUnlistedHar` treats that as "keeps no HAR" — which is right:
+  // an armed recording flushed by a run that produced no evidence is the same unlisted file.
+  let manifest: EvidenceManifest | null = null;
+
   try {
     // Before anything is observed: a profile that never applied its device
     // measures a different layout than the one it claims to.
@@ -243,7 +250,7 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
     if (held.step !== null) log(`egress: ${held.axis.reasons.join("; ")}`);
 
     log(`evidence: collecting for verdict ${result.verdict}`);
-    const manifest = await collectEvidence(runtime, {
+    manifest = await collectEvidence(runtime, {
       spec: options.spec,
       profile,
       geo: verifiedGeo,
@@ -253,7 +260,13 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
       // Only when there was something to repeat. A `1` on a single run would read as a
       // deliberate decision not to repeat rather than as the absence of one.
       ...(reproducibility.attempts > 1 ? { reproducibility } : {}),
+      // A HAR can only be flushed by closing the context, so a caller reusing the session
+      // cannot have one. Said out loud below rather than quietly reported as missing.
+      ...(options.keepOpen === true ? { keepSessionOpen: true } : {}),
     });
+    if (options.keepOpen === true && manifest.missing.includes("har")) {
+      log("evidence: no HAR — flushing one means closing the context, and this run was asked to keep the session open");
+    }
 
     const assembled = assembleResult({
       spec: options.spec,
@@ -296,7 +309,17 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
 
     return assembled;
   } finally {
-    if (!options.keepOpen) await runtime.close();
+    if (!options.keepOpen) {
+      await runtime.close();
+      // AFTER the close, because that is when Playwright flushes the HAR.
+      //
+      // The recording is armed on every run — it cannot be started retroactively for the run
+      // that turns out to need it — so a passing run, which keeps almost nothing, otherwise
+      // left a full network recording on disk that no manifest listed. Nothing would have
+      // removed it either: pruning walks the manifest.
+      const removed = pruneUnlistedHar(options.spec, manifest);
+      if (removed !== null) log(removed);
+    }
   }
 }
 
