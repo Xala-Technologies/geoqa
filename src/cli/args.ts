@@ -398,6 +398,24 @@ Multi-tenancy:
       --concurrency (EXP-007, default 3) is how many full runs execute at once in
       one sample — the number matrix run --concurrency is currently guessing.
 
+  geoqa keywords research --tenant <id> [--market <a,b,...>] [--budget <n>]
+                          [--limit <n>] [--json]
+      Where a tenant actually ranks, per term and per market, from its own
+      tenants/<id>/keywords.yaml. Every term x market costs ONE real search credit, so a
+      run that would exceed the budget — or the provider's remaining quota — is refused
+      before it spends anything, with the number it would have spent.
+
+      Three states per row, and they are not interchangeable. A query that could not run
+      is unmeasured and scores nothing. A populated SERP without this tenant on it is
+      absent and scores a real, low number. A ranking scores by position. The mean is
+      taken over the MEASURED rows only: averaging in the failures would let an exhausted
+      SERP account read as a tenant with poor visibility.
+
+      The provider's health is probed FIRST, so an exhausted account produces one honest
+      sentence instead of N unmeasured rows that look like a site nobody can find.
+
+      Exits 1 when queries were planned and none could be measured.
+
   geoqa runs list [--url <url>] [--geo <profile>] [--journey <id>]
                   [--verdict PASS|FAIL|ERROR|PASS_WITH_WARNINGS]
                   [--since <iso>] [--limit <n>] [--json]

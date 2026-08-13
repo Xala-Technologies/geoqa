@@ -61,6 +61,12 @@ import {
   type QuotaDecision,
 } from "../tenant/quota.js";
 import { decodoUsageProbe, type UsageProbe } from "../tenant/usage-probe.js";
+import { serpApiProvider } from "../search/serpapi.js";
+import type { SearchProvider } from "../search/types.js";
+import { loadKeywordSeeds } from "../keywords/seeds.js";
+import { opportunities, researchKeywords } from "../keywords/research.js";
+import type { KeywordReport } from "../keywords/types.js";
+import type { Market } from "../geo/types.js";
 import {
   filterHistory,
   findRegressions,
@@ -186,6 +192,12 @@ export interface CommandDeps {
   tenantId?: string;
   /** Injectable so history tests never touch a real tree. Same reason `pruneFs` exists. */
   historyFs?: HistoryFs;
+  /**
+   * Injectable so the unit suite never calls a SERP API. Same reason `probe` and
+   * `usageProbe` exist, with an extra edge: a search costs real money, so a test that
+   * spent one would be a test nobody runs twice.
+   */
+  searchProvider?: SearchProvider;
 }
 
 /**
@@ -1377,6 +1389,98 @@ export function renderPruneResult(result: EvidencePruneResult): string {
       : `  applied: deleted ${execution.deletedRunIds.length} run(s), reclaimed ${formatBytes(execution.reclaimedBytes)}`,
   );
   for (const failure of execution.failed) lines.push(`  FAILED ${failure.runId}: ${failure.error}`);
+  return lines.join("\n");
+}
+
+// ── keywords ─────────────────────────────────────────────────────────────
+
+export interface KeywordsResearchOptions {
+  /** Cap this run's spend. Absent means the provider's remaining quota is the ceiling. */
+  budget?: number;
+  limit?: number;
+  /** Restrict to these market ids. Absent means every market the tenant declared. */
+  markets?: string[];
+}
+
+/**
+ * Research a tenant's keywords, per market, through the SERP provider.
+ *
+ * Requires a tenant, and that is not ceremony: the seeds, the markets and the site to
+ * look for all come from the tenant, and there is no sensible default for any of them.
+ * The alternative would be a command that researched *something* against *somewhere*.
+ *
+ * The markets come from the tenant's own list, resolved to real `Market` objects through
+ * the profiles — so a tenant declaring a market with no profile is refused here rather
+ * than producing a query with no geography.
+ */
+// `async`, so every failure arrives as a REJECTION. Declared as returning a promise
+// while throwing synchronously would hand a caller using `.catch()` an uncaught
+// exception instead — the refusals here are the whole value of the function, so they
+// must arrive the way a caller is waiting for them.
+export async function keywordsResearch(
+  deps: CommandDeps,
+  tenant: Tenant,
+  options: KeywordsResearchOptions,
+): Promise<KeywordReport> {
+  const seeds = loadKeywordSeeds(path.join(tenantsDir(deps), tenant.id, "keywords.yaml"));
+  if (!seeds.ok) throw new Error(seeds.errors.join("\n"));
+
+  const wanted = options.markets?.length ? options.markets : tenant.markets;
+  const markets: Market[] = [];
+  const missing: string[] = [];
+  for (const id of wanted) {
+    // A market is a property of a PROFILE, so the profile is the source of truth for its
+    // country, city and language. A tenant naming a market with no profile has a config
+    // error, and querying it with invented geography would be worse than refusing.
+    const resolved = resolveDataPath(deps, "profiles", `${id}-${DEFAULT_DEVICE}`);
+    if (!resolved.ok) {
+      missing.push(id);
+      continue;
+    }
+    const loaded = loadGeoProfile(resolved.value);
+    if (!loaded.ok) missing.push(id);
+    else markets.push(loaded.value.market);
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `tenant "${tenant.id}" declares market(s) ${missing.join(", ")} with no ${DEFAULT_DEVICE} profile — a market's country, city and language come from its profile, and querying with invented geography would be worse than refusing`,
+    );
+  }
+
+  return researchKeywords({
+    tenantId: tenant.id,
+    // The tenant's FIRST declared target. Ownership is already enforced, so this is the
+    // site whose rankings the report is about.
+    ownUrl: tenant.targets[0] as string,
+    seeds: seeds.value,
+    markets,
+    provider: deps.searchProvider ?? serpApiProvider({ apiKey: deps.env.SERPAPI_KEY }),
+    ...(options.budget !== undefined ? { budget: options.budget } : {}),
+    ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    log: deps.log,
+  });
+}
+
+export function renderKeywordReport(report: KeywordReport): string {
+  const lines: string[] = [];
+  lines.push(
+    report.queried === 0
+      ? `no keyword queries ran for tenant "${report.tenantId}"`
+      : `${report.measured} of ${report.queried} query(ies) measured for tenant "${report.tenantId}"`,
+  );
+  // Null, not 0, when nothing was measured — "no readings" and "readings that scored
+  // zero" are different facts and only one of them is about the site.
+  if (report.meanScore !== null) lines.push(`  mean visibility ${report.meanScore} over the measured queries`);
+  for (const w of report.warnings) lines.push(`  ! ${w}`);
+  for (const o of report.observations) {
+    const where = o.score === null ? "unmeasured" : o.position === null ? "absent" : `#${o.position}`;
+    lines.push(`  ${where.padEnd(11)} ${o.marketId.padEnd(12)} ${o.term.padEnd(34)} ${o.topCompetitor ?? ""}`);
+  }
+  const gaps = opportunities(report);
+  if (gaps.length > 0) {
+    lines.push(`  ${gaps.length} measured gap(s) — the term was searched, the SERP was populated, this tenant was not on it:`);
+    for (const o of gaps.slice(0, 10)) lines.push(`    ${o.marketId.padEnd(12)} ${o.term.padEnd(34)} top: ${o.topCompetitor ?? "?"}`);
+  }
   return lines.join("\n");
 }
 

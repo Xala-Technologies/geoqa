@@ -909,9 +909,61 @@ entirely.
 never affected. Not having run the 100-session milestone is now clearly right rather than
 cautious.
 
+## Slice 13 · The keyword agent, generalised — DONE
+
+Copied in from `xala-agent-fleet` and stripped of everything company-specific. What arrived
+was ~60 hardcoded Norwegian phrases in a TypeScript array and an intent taxonomy whose
+values were **one tenant's market segments** (`municipal`, `private`, with a comment about
+kommune framing). None of that survives into the engine:
+
+- Seed terms, audiences and per-term markets are **tenant data** (`tenants/<id>/keywords.yaml`).
+- `intent` is a generic five-value vocabulary — properties of a QUERY, not of a market.
+- `audience` is free text the engine carries through and never interprets. That is where
+  "municipal" and "private" belong; a tenant selling to hospitals would have had to pick
+  the wrong intent.
+
+**Agents produce, geoqa verifies.** This module measures nothing itself — it asks the SERP
+and the answer comes from `search/`, with the same three states as every other reading.
+
+Three refusals, all before spending a credit: an unusable provider refuses the run (else an
+exhausted account yields N unmeasured rows that read like a tenant nobody can find); a run
+exceeding the budget or remaining quota is refused with the number it would have spent; and
+a duplicate seed is refused rather than de-duplicated, because each query is a real credit.
+
+`meanScore` averages the **measured** rows only. Averaging in the failures would let a
+broken account read as poor visibility.
+
+### Live, 8 real queries
+
+```
+absent      oslo   leie lokaler                  booking.oslo.kommune.no
+absent      oslo   leie selskapslokaler          selskapslokaler.no
+#7          oslo   booking av idrettshall        www.bookup.no
+#3          oslo   kommunale lokaler             booking.oslo.kommune.no
+#2          oslo   bookingsystem kommune         www.multisoft.se
+absent      oslo   utleiesystem                  infobric.com
+#4          oslo   hva koster det å leie lokale  eventum.no
+#1          oslo   digilist                      digilist.no
+mean visibility 56 over the measured queries
+```
+
+The `tromso` warning fired correctly — that term names a market this tenant does not
+declare, and it was skipped and said so rather than silently dropped.
+
+Also fixed on the way: `keywordsResearch` was declared as returning a promise while throwing
+synchronously, so a caller using `.catch()` would have got an uncaught exception. The
+refusals are the whole value of the function, so they must arrive the way a caller waits for
+them.
+
+Docs: PRD **R-137 … R-140**.
+
+Gate: lint clean · boundaries clean (111 modules / 441 deps) · **1228 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
 ## Next
 
-Slices 13–15 (the agents, generalised) and 16–19 (frontend). The milestone is unblocked and
+Slice 14 (the content agent, publish gated on a geoqa verdict), 15 (AEO/GEO/SEO analysis),
+then 16–19 (frontend). The milestone is unblocked and
 worth running now that per-session identity actually works. Then slices 13–15 (the agents, generalised) and
 16–19 (frontend), neither of which depends on it.
 
