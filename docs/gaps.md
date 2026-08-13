@@ -29,7 +29,7 @@ from the README.
 
 **One entry is red right now** and will fail on the next run of the suite it
 belongs to:
-[B-10](#b-10--the-e2e-suite-still-asserts-tracejson-on-the-playwright-engine).
+[B-10](#b-10--closed--the-e2e-derives-the-trace-filename).
 It is one filename. Start there.
 
 Sections: [capability](#a-capability-gaps) · [defects](#b-defects-verified-now) ·
@@ -108,12 +108,12 @@ Still true, and worth knowing before spending:
 - **A URL with a placeholder in it still cannot start a `journey run`** — the
   health gate reads any `{` as "unconfigured" and `prepareRun` refuses. A sticky
   URL contains `{session}` by construction, so this is on the critical path. See
-  [B-8](#b-8--a-proxy-url-with-any-placeholder-in-it-cannot-start-a-journey-run).
+  [B-8](#b-8--closed--a-template-can-start-a-run).
 - **Bergen, Trondheim and Gothenburg city-level exits are not sold at any price.**
   Those three markets stay differentiated on the browser axis only, with the
   network axis reporting country-level, unless somebody runs a small always-on box
   on a home connection there. `geoqa` says which is which rather than claiming a
-  city it cannot prove ([C-4](#c-4--a-wrong-city-cannot-be-distinguished-from-a-naming-artifact)).
+  city it cannot prove ([C-4](#c-4--closed--a-wrong-city-is-now-distinguishable-from-a-naming-artifact)).
 - The sticky window must exceed the journey's wall clock. `runJourneyActivity`
   allows 10 minutes and a residential vendor session commonly defaults to about
   10 — an edge, not a margin. `--repeat N` narrows it further, because all N
@@ -507,7 +507,7 @@ by reading the code and its output rather than by a failing test — the suite i
 green on them. Two were not, and that is progress:
 [B-9](#b-9--closed-the-boundary-lints-first-catch) was caught by the boundary lint
 on its first run against the real tree, and
-[B-10](#b-10--the-e2e-suite-still-asserts-tracejson-on-the-playwright-engine) fails
+[B-10](#b-10--closed--the-e2e-derives-the-trace-filename) fails
 the e2e suite out loud. A defect a tool shouts about is a better defect than one a
 document has to remember.
 
@@ -832,6 +832,13 @@ two engines started writing different formats. It now calls
 `traceArtifactFormat("playwright")`, so the assertion cannot disagree with the
 collector again.
 
+## C. Measurement gaps
+
+What this engine can and cannot currently measure, and why. Several of these are
+**not code-closable**: they are properties of a vendor, a browser or a contract, and
+recording the limit is the whole point — an unmeasurable thing reported as measured
+is the failure this project exists to prevent.
+
 ### C-1 · The stability window is a parameter, and a flag now reaches it
 
 **Closed as a hardcoded constant.** `STABILITY_READS` and
@@ -912,7 +919,7 @@ denial, a timeout, or a prompt. `observeBrowser` reports what the page actually
 saw, so the stub is honest — it is just not the real flow, and the engine offers
 no way to make it one.
 
-### C-4 · A wrong city cannot be distinguished from a naming artifact
+### C-4 · CLOSED — a wrong city is now distinguishable from a naming artifact
 
 `compareCity` returns `unverified`, never `mismatch`, for a non-matching city —
 correct, because egress databases name the exchange's suburb (the real Norway
@@ -920,11 +927,28 @@ baseline reads "Lysaker"). The consequence is that a genuinely wrong city (a
 Frankfurt exit sold as Oslo) and a correctly-routed session with an oddly-named
 exchange produce **the same verdict**.
 
-**Cannot be closed.** It is the design: a city can be proven right, never proven
-wrong. City is a bonus signal and country carries the geographic claim alone. It
-matters more now than it did, because three of the eight markets have no
-purchasable city-level exit at all
-([A-1](#a-1--the-core-claim-is-one-purchase-and-one-health-check-fix-away)).
+**CLOSED — and the sentence this entry rested on turned out to be false.** "A city
+can be proven right, never proven wrong" was true of a STRING comparison and of
+nothing else. `compareCity` now measures great-circle distance against the
+profile's own coordinates, so `mismatch` is reachable: a proxy that sold Stockholm
+and delivered Uppsala has failed, and calling that unproven protected the vendor
+rather than the measurement.
+
+What forced it was the 102-session milestone, where the old axis produced two
+numbers that were both true and neither usable — 72.5% city match counting exact
+names, 100% counting everything not proven wrong. It reported `unverified` for Skui
+(15km from Oslo) and for Gällivare (1100km from Stockholm) alike. Measured by
+distance the answer is **84.3%**, with **zero** `unverified`, and the failures are
+named: Uppsala, Munich, Trondheim. See [milestone.md](milestone.md).
+
+The name comparison survives as the FALLBACK for when either side has no
+coordinates, and there it keeps the original asymmetry — without a distance we
+still cannot prove a city wrong. The original reasoning was right about suburbs and
+over-applied to everything else.
+
+Still true and unchanged: three of the eight markets have no purchasable
+city-level exit at all
+([A-1](#a-1--closed--proven-against-a-live-residential-vendor)).
 
 **Two independent databases now put a number on how weak the city signal is, and
 it is weaker than this entry assumed.** Across six live Decodo residential exits,
@@ -1489,7 +1513,7 @@ leaks below `run/` — `evidence/` never learns one. `path` and `mime` are the
 authority on the format, and `Artifact`'s doc comment says so.
 
 Residue: the e2e assertion was not updated, see
-[B-10](#b-10--the-e2e-suite-still-asserts-tracejson-on-the-playwright-engine).
+[B-10](#b-10--closed--the-e2e-derives-the-trace-filename).
 `evidence/store.ts`'s `MIME` record keeps `trace: "application/json"` as the
 per-kind default; the engine-specific value is applied at the `stages.ts` call
 site, which is what keeps engine knowledge out of `evidence/`.

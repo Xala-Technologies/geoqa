@@ -148,7 +148,6 @@ exists, and **construction lives inside `browser/` too** (`engines.ts`): a calle
 above the seam names an engine, never a launcher. `pnpm boundaries` enforces that,
 and it has already caught it being broken. Adding a runtime method means touching
 the interface, **both** adapters, and `fake-runtime.ts`.
-
 **2. Transport garbage must never be parseable as a result.** Every browser call
 returns `{ok: true, data}` or `{ok: false, failure: {kind, detail, …}}`. There is
 no path returning success with absent data. `null` in a `PageReading` means "not
@@ -160,31 +159,26 @@ the existing `ExecFailureKind` values. Letting a `TimeoutError` escape a check
 would collapse invariant 3 — the engine would file its own blindness as a site
 defect. The failure kinds are never extended per engine; that would leak the
 engine upward.
-
 **3. A failed assertion and a broken tool are different events.** An assert that
 read the page and found it wrong is `failed` → a site finding. An assert whose
 reading never arrived is `errored` → category `instrumentation`, severity forced
 to `high`, and **never filed against the site**. Counted separately
 (`counts.failed` vs `counts.errored`). `ERROR` outranks `FAIL`, because "we do
 not know" and "the page is broken" lead a human to different actions.
-
 **4. Three-valued geo verdicts, per axis, never merged.** `match` / `mismatch` /
 `unverified`. `unverified` means the probe produced no reading — neither a pass
 nor a failure, and collapsing it into either neighbour is the exact failure the
 design exists to prevent. Geography is **two axes**: network identity (the IP the
 server sees) and browser environment (what the page's JS believes). Verified
 separately, both through the browser.
-
 **5. A threshold that could not be measured is never a pass.** In experiments
 `unmeasured` outranks `fail`, which outranks `pass`. `rate()` returns `null` for
 an empty denominator, never 0 or 100.
-
 **6. No silent geographic downgrade.** If a provider cannot serve a market,
 `prepareRun` throws. Falling back to direct egress would produce a run that
 looks like a Berlin run, carries a full evidence package, and was executed from
 Norway. `direct` egress always carries an explicit warning that geographic
 claims are unproven.
-
 **7. The journey never retries; `--repeat N` measures instead.** A silent second
 attempt converts a real intermittent site failure into a pass, so repetition is
 always explicit: N attempts inside ONE browser and ONE network session (invariant
@@ -198,11 +192,9 @@ much lower confidence than 3-of-3, which is `reproduced`. Counting is per attemp
 so occurrences can never exceed attempts. Per-activity retry policies and their
 reasoning are in `temporal/workflows.ts`; the durable path has no repeat of its own
 yet ([gaps B-4](docs/gaps.md)).
-
 **8. Confidence axes stay separate.** `overall` is weighted *and then capped by
 the weakest axis*. `searchObservation` is `null` and stays `null` until a SERP
 source exists — never invent a number for something unmeasured.
-
 **9. Ordering in `run/stages.ts`.** `applyDeviceProfile` → `verifyEnvironment` →
 journey → evidence. The device must be applied before anything is observed (a
 mobile profile silently rendered at 1280px once, and every check passed), and geo
@@ -213,7 +205,6 @@ reads the viewport *back* rather than assuming the request took. Within
 scale factor and touch) goes first and the profile's own viewport goes second, so
 the declared box always wins over the descriptor's — the viewport is a verified
 axis and must mean what the profile says.
-
 **10. Confirm a negative before reporting it.** `isVisible` and the vitals read
 both re-check after a settle when the first reading is negative/null — an element
 mid-animation and an async-emitted LCP each produce false defects otherwise. A
@@ -221,35 +212,6 @@ null that survives the settle is a real null. The corollary is that **absence of
 evidence must not be confused with evidence of absence in either direction**: no
 layout-shift entries means CLS is *zero*, not unmeasured, and getting that
 backwards made `cls-below` unreadable on a perfectly stable page.
-
-**14. A filled value is a secret; a written record is announced.** Journeys
-register, log in, send contact forms and perform CRUD, so `fill`/`select` values
-arrive through `--var` and must never reach disk. Both adapters mask the value in
-`ExecMeta.command`, and `describeAction` renders `fill #password ok (value not
-recorded)` — a step result says which selector was filled, never what went into
-it. Separately, a journey that changes state declares `writes: true`: the run
-announces it before starting, records it in `run.json`, and flags every
-screenshot `review`, because a frame taken mid-form plausibly holds a name or an
-email and no redaction pass can find that in an image.
-
-**15. Human-like variation must stay replayable.** `pause` draws a length from a
-range and `probability` decides whether an optional step happens — both from a
-SEEDED generator (`journeys/random.ts`), with the seed on `RunSpec`, recorded in
-`run.json`, and settable via `--seed`. Unseeded variation would mean "it failed
-and I cannot tell you what it did". A step that does not happen is reported
-`skipped`, never dropped: the step list keeps its length and indices, so "we never
-looked" stays distinguishable from "it was fine". `probability: 1` and `0` do not
-draw at all, so adding a certain step cannot shift every later decision.
-
-**16. One journey is one network session, and that is verified.** A rotating exit
-mid-journey does not merely look inauthentic — it takes LCP from one visitor and
-CLS from another, so nothing measured can be attributed. `executeRun` re-reads the
-egress IP after the journey (via an in-page `fetch`, so the check cannot disturb
-the page the evidence describes) and a proven rotation becomes an `errored`,
-`critical`, `instrumentation` step, taking the run to `ERROR`. An unreadable
-closing probe is `unverified` and produces no step — we are not entitled to a
-verdict we could not read.
-
 **11. Redaction happens at write time**, not as an export pass
 (`evidence/redact.ts`). Proxy URLs go through `redactProxyUrl` anywhere they
 could reach a human — log, summary, manifest. Proxy credentials come from
@@ -266,7 +228,6 @@ substring matching masked `MetricSpec.key` and destroyed the identity of every
 metric in every committed experiment summary, and going further would mask
 `className` (contains `ssn`). A HAR is written by the browser and never passes
 through this layer at all — see [gaps B-3](docs/gaps.md#b-3--har-is-recorded-now-and-still-absent-from-every-manifest).
-
 **12. Two execution modes, one implementation.** The CLI calls the
 `run/stages.ts` functions in sequence in one process; each Temporal Activity
 calls exactly one of them. A stage may never import from `temporal/` — that
@@ -275,10 +236,33 @@ arguments. `RunSpec` must be fully JSON-serialisable *and* carry everything
 needed to rebuild the exact browser launch flags: agent-browser is a daemon keyed
 by session name + launch flags, so a wrong flag silently hands back a *different*
 browser rather than an error.
-
 **13. Never import `temporal/worker.ts`** to read a value from it — it has an
 unguarded top-level `main()`. Shared constants live in `temporal/constants.ts`.
-
+**14. A filled value is a secret; a written record is announced.** Journeys
+register, log in, send contact forms and perform CRUD, so `fill`/`select` values
+arrive through `--var` and must never reach disk. Both adapters mask the value in
+`ExecMeta.command`, and `describeAction` renders `fill #password ok (value not
+recorded)` — a step result says which selector was filled, never what went into
+it. Separately, a journey that changes state declares `writes: true`: the run
+announces it before starting, records it in `run.json`, and flags every
+screenshot `review`, because a frame taken mid-form plausibly holds a name or an
+email and no redaction pass can find that in an image.
+**15. Human-like variation must stay replayable.** `pause` draws a length from a
+range and `probability` decides whether an optional step happens — both from a
+SEEDED generator (`journeys/random.ts`), with the seed on `RunSpec`, recorded in
+`run.json`, and settable via `--seed`. Unseeded variation would mean "it failed
+and I cannot tell you what it did". A step that does not happen is reported
+`skipped`, never dropped: the step list keeps its length and indices, so "we never
+looked" stays distinguishable from "it was fine". `probability: 1` and `0` do not
+draw at all, so adding a certain step cannot shift every later decision.
+**16. One journey is one network session, and that is verified.** A rotating exit
+mid-journey does not merely look inauthentic — it takes LCP from one visitor and
+CLS from another, so nothing measured can be attributed. `executeRun` re-reads the
+egress IP after the journey (via an in-page `fetch`, so the check cannot disturb
+the page the evidence describes) and a proven rotation becomes an `errored`,
+`critical`, `instrumentation` step, taking the run to `ERROR`. An unreadable
+closing probe is `unverified` and produces no step — we are not entitled to a
+verdict we could not read.
 **17. A setting that nothing reads is worse than a hardcoded constant.** The whole
 config surface exists because it used to be inert: every documented key was
 actually decided by a constant or a flag, and anyone who edited the file got
@@ -290,7 +274,6 @@ already uses, never retyped, or left unset to mean "that module decides"; an abs
 file is fine and the run **says which it used**; a broken file is fatal rather than
 a quiet fall back to defaults. Two keys are currently inert and it is a tracked
 defect, not a precedent ([gaps B-1](docs/gaps.md#b-1--the-config-file-is-read-now--except-for-two-keys)).
-
 **18. The layer map is a tool, not a memory.** `pnpm boundaries` is a CI gate of
 its own, before the tests. Adding a rule means adding a `comment` naming the
 failure it prevents, and **proving it fires** against a deliberate violation — a
@@ -298,7 +281,6 @@ rule with a mistyped pattern is a silent no-op, which is invariant 17's failure
 wearing a different hat. Type-only edges count: switching to `import type` must not
 be a way across a boundary. Never weaken a rule to make the tree pass; the tree is
 what is wrong.
-
 **19. A matrix must not be able to hide a hole.** A scenario that could not be
 executed — a throw, an `ERROR` verdict, or a *preparation* that refused rather than
 downgrading a market (invariant 6) — is recorded as `unmeasured` with its reason,
@@ -308,7 +290,6 @@ markets that were fine. An empty executed matrix is `ERROR`, because zero scenar
 is zero evidence. And every profile and journey name is validated **before anything
 launches** — finding a typo ninety browser launches in is not a report, it is a
 bill.
-
 **20. Retention decides capture; pruning decides lifetime; neither substitutes for
 the other.** `evidence prune` plans without deleting and deletes only on `--apply`,
 and there is deliberately no `--dry-run` flag to forget. Privacy flags only ever
@@ -317,7 +298,6 @@ that could not be met is reported as a shortfall rather than met by spending a
 failure, and a run whose identity cannot be established is reported and **left in
 place**. Not knowing what something was is a reason to look, not a licence to
 delete.
-
 **21. Anything that can only be armed at the start is armed for EVERY run, and
 kept selectively.** The retention tier is not known until the journey ends, so the
 trace, the HAR, the console listener and the interaction observer are all
@@ -329,6 +309,41 @@ interacted with. Where arming means the artifact exists on every run, the tier i
 honoured by **deleting** rather than by not starting — which HAR does not do yet,
 and is why a passing run currently leaves an unlisted `network.har` behind
 ([gaps B-3](docs/gaps.md#b-3--har-is-recorded-now-and-still-absent-from-every-manifest)).
+
+**22. A session key inside a vendor username contains no separator the vendor
+parses.** A residential proxy username is a `-`-delimited parameter list, so a
+hyphenated session value is silently truncated at its first hyphen. That collapsed
+EVERY run in a market onto one sticky exit — sequential as well as concurrent —
+while `egressHeld` reported `match`, because the IP genuinely did hold: it was the
+same one every time. `defaultSessionId` is alphanumeric and
+`substituteProxyPlaceholders` strips hyphens again, so an injected id cannot
+reintroduce it.
+
+**23. A city verdict is a DISTANCE, not a string comparison.** Egress databases
+name the exchange's suburb, so comparing names reported `unverified` for Skui
+(15km from Oslo) and for Gällivare (1100km from Stockholm) alike — which made a
+city-match rate mean anything you wanted. `compareCity` measures great-circle
+distance against `CITY_RADIUS_KM` when coordinates exist, which makes `mismatch`
+reachable. Without coordinates it falls back to names and keeps the old asymmetry:
+no distance, no proof of wrongness.
+
+**24. A path that escapes its tenant's root is a security defect, not a bug.**
+Tenant ids are pattern-constrained AND every resolved path is re-checked with
+`containedPath`. Containment is `path.relative`, never `startsWith` —
+`/evidence/acme` starts with `/evidence/ac`. An absolute segment is refused too,
+because `path.resolve("/evidence", "/etc")` is `/etc`.
+
+**25. The publish gate is DEFAULT DENY.** No run, a thrown error, an errored run
+or one unread step all block, and the exit code is 0 only for `allow`. `unknown`
+(our defect) is a different SENTENCE from `block` (the page's problem) but the same
+outcome — a gate that opens when it cannot see is not a gate.
+
+**26. Every value a UI displays is a `Measured<T>`.** A reading with its text, or
+an explicit absence carrying the reason. A renderer cannot show a missing metric as
+a value because an absence is a different TYPE — and a dashboard is where a number
+gets believed, so `0` for a null LCP would undo the whole verdict model at the last
+step. Zero stays a REAL reading where zero is meaningful: a CLS of 0 means nothing
+moved.
 
 ## Testing conventions
 
