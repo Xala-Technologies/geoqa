@@ -26,6 +26,15 @@ export default defineConfig({
         //
         // Arg parsing + dispatch into command modules that are each at 100%.
         "src/cli/index.ts",
+        // Binds a port, reads a body, copies headers. Every DECISION the server makes lives
+        // in `server/router.ts` as a pure function over plain objects and is covered there —
+        // including the ones a click-through never reaches: an expired session, a token signed
+        // with the previous secret, a path with `..` in it. Exercising this file means opening
+        // a socket, which proves nothing the router tests do not.
+        "src/server/listen.ts",
+        // Wiring: reads the filesystem, binds a port, prints. Its one decision — refusing to
+        // start without a configured password — is `readAuthConfig`, which is pure and covered.
+        "src/server/start.ts",
         // Connects to Temporal and polls forever. Nothing to assert.
         "src/temporal/worker.ts",
         // Launches a real Chromium and maps Playwright's API onto the
@@ -58,7 +67,25 @@ export default defineConfig({
         // Pure type declarations.
         "**/types.ts",
       ],
-      thresholds: { lines: 100, statements: 100, functions: 100 },
+      /**
+       * Lines, statements and functions at 100 — and BRANCHES ratcheted.
+       *
+       * The first three have been enforced since the gate existed. Branches were not in this
+       * object at all, so "100% coverage" was quietly true of three metrics and quietly untrue
+       * of the fourth: 95.25% across 167 uncovered branch sites, none of which ever failed a
+       * build.
+       *
+       * The number here is a RATCHET, not a target. It is set just below the current figure so
+       * the gate fails the moment branch coverage drops, and it is raised as the remaining sites
+       * are closed — many of which are defensive `??` fallbacks that this codebase's own doctrine
+       * says should be deleted rather than tested, because a guard with no reachable failure is
+       * a claim that the invariant above it might not hold.
+       *
+       * A threshold set AT the current value would fail on the first honest refactor that
+       * removes a tested branch. One set below it fails only on regression, which is what a
+       * ratchet is for.
+       */
+      thresholds: { lines: 100, statements: 100, functions: 100, branches: 95 },
     },
     testTimeout: 15_000,
   },

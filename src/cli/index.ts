@@ -63,6 +63,7 @@ import {
 } from "./commands.js";
 import { configPath, loadConfig } from "../config/load.js";
 import { cooldownStorePath } from "../network/cooldown.js";
+import { renderHash, startServer } from "../server/start.js";
 import { durableMatrix } from "../temporal/client.js";
 import { nativeConnector } from "../temporal/connect.js";
 import { findExperiment } from "../experiments/definitions.js";
@@ -384,6 +385,44 @@ async function main(argv: string[]): Promise<number> {
     // scenarios is zero evidence.
     if (result.result === null) return 0;
     return result.result.verdict === "FAIL" || result.result.verdict === "ERROR" ? 1 : 0;
+  }
+
+  /**
+   * `geoqa server` — the one command that keeps running.
+   *
+   * Separate from every other command on purpose. The dashboard is a static build that needs no
+   * server (R-147), and it still is: this ADDS authentication and, later, the ability to trigger
+   * a run, without taking away the read-only path. A team that only wants the report keeps
+   * copying a directory.
+   */
+  if (group === "server") {
+    if (action === "hash") {
+      const password = argv[2];
+      if (password === undefined || password === "") {
+        console.error("geoqa server hash <password> — prints the environment variables to set");
+        return 2;
+      }
+      console.log(renderHash(password));
+      return 0;
+    }
+    const started = startServer({
+      repoRoot,
+      evidenceRoot: deps.evidenceRoot,
+      uiRoot: flagString(args, "ui-root", path.join(repoRoot, "ui", "dist")),
+      port: flagNumber(args, "port", 4180),
+      env: process.env,
+      // Off unless asked for: a `Secure` cookie on plain http is a cookie the browser silently
+      // drops, and a login that appears to work and does not is worse than one that refuses.
+      secure: flagBool(args, "secure"),
+      log: (line) => console.error(line),
+    });
+    if (!started.ok) {
+      console.error(started.error);
+      return 2;
+    }
+    // Resolves only when the process is killed. Returning here would close the port.
+    await new Promise<void>(() => undefined);
+    return 0;
   }
 
   if (group === "dashboard" && (action === "build" || action === undefined)) {
