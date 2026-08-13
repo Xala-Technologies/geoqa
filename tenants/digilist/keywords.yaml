@@ -1,0 +1,26 @@
+# Tenant zero's keyword seeds.
+#
+# This file is why the keyword capability is generic: the phrases, the audiences and the
+# per-term markets are all HERE, and nothing in src/ knows a word of Norwegian. The
+# version this was generalised from kept ~60 of these in a TypeScript array, so every
+# change to one company's vocabulary was a code change to the engine.
+#
+# `intent` is a property of the QUERY and comes from a fixed vocabulary. `audience` is
+# the tenant's own segmentation, free text, and the engine has no opinion about it — the
+# original had "municipal" and "private" as first-class intents, which are segments of
+# one market rather than kinds of search.
+#
+# Each term × market costs one real search credit, so keep this deliberate. Terms are
+# checked in every declared market unless they name their own.
+terms:
+  - { term: "leie lokaler", intent: local, audience: private }
+  - { term: "leie selskapslokaler", intent: local, audience: private }
+  - { term: "booking av idrettshall", intent: local, audience: public-sector }
+  - { term: "kommunale lokaler", intent: local, audience: public-sector }
+  - { term: "bookingsystem kommune", intent: commercial, audience: public-sector }
+  - { term: "utleiesystem", intent: commercial, audience: public-sector }
+  - { term: "hva koster det å leie lokale", intent: informational, audience: private }
+  - { term: "digilist", intent: navigational }
+  # Winter access is a real question in the north and noise further south, so this one
+  # names its own market rather than spending a credit everywhere.
+  - { term: "leie lokaler vinterstid", intent: local, audience: private, markets: [tromso] }

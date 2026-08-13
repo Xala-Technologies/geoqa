@@ -157,7 +157,7 @@ against, 90% is likely unreachable and the threshold is wrong.
 
 ### The agents, generalised
 
-- [ ] **13 · Copy the keyword-research agent.** Market and language from tenant
+- [x] **13 · Copy the keyword-research agent.** Market and language from tenant
       config. Serper is the data source.
 - [ ] **14 · Copy the content agent.** Tenant product and voice as inputs.
       **Publish gated on a geoqa verdict** — the producer never grades itself.

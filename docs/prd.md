@@ -172,6 +172,23 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-137** Keyword research is a **capability, not a company's spreadsheet**. Seed terms,
+  their audiences and their per-term markets are tenant data; the engine holds a generic
+  intent vocabulary and knows only a market's country, city and language. An intent
+  taxonomy naming one tenant's market segments would be wrong for the second tenant.
+- **R-138** The keyword agent **produces; geoqa verifies**. It asks the SERP where a tenant
+  stands and the answer comes from the measuring side, with the same three states as every
+  other reading. An agent that scored its own output would be the failure this system
+  exists to catch.
+- **R-139** A research run is **refused before it spends anything** when it would exceed
+  the search budget or the provider's remaining quota, and the provider's health is probed
+  FIRST. An account exhausted halfway through leaves the second half of a report silently
+  unmeasured, and a report with a hole in it that averages the rest is worse than no
+  report. A duplicate seed is refused for the same reason: each query is a real credit, so
+  a repeat is a doubled bill rather than a harmless typo.
+- **R-140** A "things to fix" list contains only **measured** absences. Including queries
+  nobody managed to run would send somebody to rewrite a page over a billing problem — and
+  it is exactly the kind of list that gets acted on without being read closely.
 - **R-136** A session key placed inside a vendor's username contains **no separator the
   vendor parses**. A residential proxy username is a `-`-delimited parameter list, so a
   hyphenated session value is silently truncated at its first hyphen — which collapsed every

@@ -32,7 +32,9 @@ import {
   evidencePrune,
   experimentRun,
   enforceQuota,
+  keywordsResearch,
   loadUrlList,
+  renderKeywordReport,
   resolveTenant,
   tenantList,
   checkTenantScope,
@@ -349,6 +351,26 @@ async function main(argv: string[]): Promise<number> {
     // scenarios is zero evidence.
     if (result.result === null) return 0;
     return result.result.verdict === "FAIL" || result.result.verdict === "ERROR" ? 1 : 0;
+  }
+
+  if (group === "keywords" && (action === "research" || action === undefined)) {
+    // Requires a tenant: the seeds, the markets and the site to look for all come from
+    // one, and there is no sensible default for any of them. Without this the command
+    // would research something against somewhere.
+    if (tenant === null) {
+      console.error("keywords research needs --tenant: the seeds, the markets and the site to look for all come from a tenant");
+      return 2;
+    }
+    const result = await keywordsResearch(deps, tenant, {
+      markets: flagList(argv, "market"),
+      ...(args.flags.budget !== undefined ? { budget: flagNumber(args, "budget", 0) } : {}),
+      ...(args.flags.limit !== undefined ? { limit: flagNumber(args, "limit", 10) } : {}),
+    });
+    emit(result, renderKeywordReport(result));
+    // Red when nothing could be measured but queries were planned — a report of all
+    // unmeasured rows reads like a tenant with no search presence, and it is a provider
+    // problem.
+    return result.queried > 0 && result.measured === 0 ? 1 : 0;
   }
 
   if (group === "runs" && (action === "list" || action === undefined)) {

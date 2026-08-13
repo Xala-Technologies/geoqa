@@ -8,6 +8,7 @@ import type { EvidenceManifest } from "../../evidence/manifest.js";
 import { DEFAULT_POLICY, type DirSize, type PruneFs } from "../../evidence/prune.js";
 import type { GeoQaRunResult } from "../../findings/types.js";
 import type { Tenant } from "../../tenant/types.js";
+import type { SearchProvider } from "../../search/types.js";
 import type { ExecuteOptions } from "../../run/execute.js";
 import { fakeRuntime, bad, ok, IPINFO_OSLO } from "../../run/__tests__/fake-runtime.js";
 import {
@@ -35,6 +36,8 @@ import {
   runsRebuild,
   checkTenantScope,
   enforceQuota,
+  keywordsResearch,
+  renderKeywordReport,
   resolveEvidenceRoot,
   resolveProfileId,
   resolveTenant,
@@ -1634,5 +1637,78 @@ describe("runs history", () => {
     const scoped = withIndex("", { [evidenceRoot]: ["run_1700000000000_x"] }, { [path.join(evidenceRoot, "run_1700000000000_x", "run.json")]: runJson });
     runsRebuild(scoped);
     expect(runsList(scoped).runs[0]?.startedAt).toBe(new Date(1_700_000_000_000).toISOString());
+  });
+})
+
+describe("keywordsResearch", () => {
+  const digilist = (): Tenant => {
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    return loaded.tenant;
+  };
+
+  const fakeSearch = (results: string[]): SearchProvider => ({
+    name: "fake",
+    health: () => Promise.resolve({ state: "usable", detail: "ok", searchesLeft: 1000 }),
+    search: () =>
+      Promise.resolve({ ok: true, totalResults: 10, results: results.map((url, i) => ({ position: i + 1, url, title: "t" })) }),
+  });
+
+  it("resolves each market's geography from its PROFILE, and reports rankings", async () => {
+    const report = await keywordsResearch(deps({ searchProvider: fakeSearch(["https://rival.test/", "https://digilist.no/x"]) }), digilist(), {
+      markets: ["oslo"],
+    });
+    expect(report.tenantId).toBe("digilist");
+    expect(report.observations[0]?.marketId).toBe("oslo");
+    expect(report.observations[0]?.position).toBe(2);
+    expect(report.observations[0]?.topCompetitor).toBe("rival.test");
+  });
+
+  it("REFUSES a market with no profile rather than querying invented geography", async () => {
+    // A market's country, city and language come from its profile. Querying without them
+    // would produce a worldwide SERP labelled as a city.
+    const tenant = { ...digilist(), markets: ["atlantis"] };
+    await expect(keywordsResearch(deps({ searchProvider: fakeSearch([]) }), tenant, {})).rejects.toThrow(/no desktop profile|invented geography/);
+  });
+
+  it("looks for the tenant's own declared target, not a guess", async () => {
+    const report = await keywordsResearch(deps({ searchProvider: fakeSearch(["https://digilist.no/priser"]) }), digilist(), {
+      markets: ["oslo"],
+    });
+    expect(report.observations[0]?.position).toBe(1);
+  });
+
+  it("renders unmeasured, absent and ranked rows distinguishably", () => {
+    const rendered = renderKeywordReport({
+      tenantId: "acme",
+      queried: 3,
+      measured: 2,
+      meanScore: 51,
+      warnings: ["a warning"],
+      observations: [
+        { term: "ranked", intent: "local", audience: null, marketId: "oslo", score: 100, position: 1, examined: 9, reason: "", topCompetitor: "acme.test" },
+        { term: "gone", intent: "local", audience: null, marketId: "oslo", score: 2, position: null, examined: 9, reason: "", topCompetitor: "rival.test" },
+        { term: "blind", intent: "local", audience: null, marketId: "oslo", score: null, position: null, examined: null, reason: "", topCompetitor: null },
+      ],
+    });
+    expect(rendered).toContain("#1");
+    expect(rendered).toContain("absent");
+    expect(rendered).toContain("unmeasured");
+    expect(rendered).toContain("mean visibility 51");
+    expect(rendered).toContain("! a warning");
+    // The gap list names the competitor, which is the actionable half of "you are not there".
+    expect(rendered).toContain("top: rival.test");
+  });
+
+  it("does not print a mean when nothing was measured", () => {
+    // Null, not 0: "no readings" and "readings that scored zero" are different facts.
+    const rendered = renderKeywordReport({ tenantId: "acme", queried: 1, measured: 0, meanScore: null, warnings: [], observations: [] });
+    expect(rendered).not.toContain("mean visibility");
+  });
+
+  it("says so plainly when no queries ran at all", () => {
+    expect(renderKeywordReport({ tenantId: "acme", queried: 0, measured: 0, meanScore: null, warnings: [], observations: [] })).toContain(
+      "no keyword queries ran",
+    );
   });
 })
