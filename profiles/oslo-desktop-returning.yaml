@@ -1,0 +1,35 @@
+# The one profile that declares a RETURNING visitor.
+#
+# It exists because the restore path was implemented, unit-tested against injected
+# fakes, and had never restored a real cookie — all 16 other profiles declare
+# `anonymous`, so `resolveVisitorState`'s returning branches were dead in every real
+# run. A mechanism nothing exercises is a mechanism nobody knows is broken.
+#
+# Separate from `oslo-desktop` rather than flipping its flag, for two reasons. A
+# returning visitor is a DIFFERENT test subject, not a variation on the anonymous one
+# — a site's cookie banner, its "welcome back" copy and its geo-redirect all behave
+# differently on a second visit, and both cases need covering. And the state file is
+# keyed by profile id (`<evidenceRoot>/visitors/<profileId>.json`), so a shared id
+# would mean the anonymous runs and the returning runs fought over one session file.
+#
+# Desktop, matching `oslo-desktop`'s reasoning: no device descriptor, so the rendered
+# viewport is not a property of the page's markup.
+#
+# Named `oslo-desktop-returning` rather than `oslo-returning` so the device stays
+# legible in the id: the matrix builds a profile id as `<market>-<device>`, and
+# `oslo-returning` reads as a market called oslo on a device called returning.
+id: oslo-desktop-returning
+label: Oslo, desktop, returning visitor
+market:
+  id: oslo
+  country: NO
+  city: Oslo
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.9139, 10.7522]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: returning

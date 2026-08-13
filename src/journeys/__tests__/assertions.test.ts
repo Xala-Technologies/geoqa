@@ -154,6 +154,30 @@ describe("vitals and accessibility", () => {
     expect(verdict({ check: "cls-below", value: 0.1 }, { vitals: vitals({ cls: 0.4 }) })).toBe("failed");
   });
 
+  it("compares INP against the budget", () => {
+    expect(verdict({ check: "inp-below", value: 200 }, { vitals: vitals({ inp: 120 }) })).toBe("passed");
+    expect(verdict({ check: "inp-below", value: 200 }, { vitals: vitals({ inp: 340 }) })).toBe("failed");
+  });
+
+  it("reports an unmeasured INP as unreadable, and says the journey probably never interacted", () => {
+    // Not a pass: a responsiveness budget met by never touching anything is the
+    // emptiest green tick available. Not a fail either — that blames the site for
+    // the journey's step ordering. Unlike LCP, a null INP is usually the journey's
+    // fault, so the reason names the fix.
+    const result = evaluateCheck({ check: "inp-below", value: 200 }, reading({ vitals: vitals({}) }));
+    expect(result.verdict).toBe("unreadable");
+    // The reason names BOTH causes, because they need different actions: move the
+    // check after an interaction, or accept that the page responds too fast to
+    // measure. Only the first is the journey's fault.
+    expect(result.observed).toContain("no interaction entry was reported");
+    expect(result.observed).toContain("AFTER a click, press, fill or scroll");
+    expect(result.observed).toContain("a fact about the page, not a failed read");
+  });
+
+  it("asks only for vitals", () => {
+    expect(checkNeeds({ check: "inp-below", value: 200 })).toEqual(["vitals"]);
+  });
+
   it("treats an unmeasured metric as unreadable even when the vitals object exists", () => {
     // The trap: `vitals` came back, but `lcp` inside it is null. Reading that
     // as 0 would score an unmeasured page as the fastest possible.

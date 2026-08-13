@@ -4,9 +4,13 @@ import {
   BROWSER_ENV_EXPRESSION,
   UNKNOWN_BROWSER,
   UNKNOWN_NETWORK,
+  GEOJS_SOURCE,
+  IPINFO_SOURCE,
   observeBrowser,
   observeNetwork,
+  observeNetworkVia,
   parseBrowserObservation,
+  parseGeoJsObservation,
   parseNetworkObservation,
 } from "../observe.js";
 
@@ -177,5 +181,104 @@ describe("observeBrowser", () => {
     expect(await observeBrowser(junk)).toEqual(UNKNOWN_BROWSER);
     const failed = fakeRuntime({ evaluate: <T,>() => Promise.resolve(bad<T>()) });
     expect(await observeBrowser(failed)).toEqual(UNKNOWN_BROWSER);
+  });
+});
+
+/** A real geojs body, captured live from this machine over IPv4. */
+const GEOJS_REAL = JSON.stringify({
+  accuracy: 5,
+  asn: 2119,
+  city: "Rykkin",
+  continent_code: "EU",
+  country: "Norway",
+  country_code: "NO",
+  country_code3: "NOR",
+  ip: "88.88.18.137",
+  latitude: "59.9281",
+  longitude: "10.4965",
+  organization: "AS2119 Telenor Norge AS",
+  organization_name: "Telenor Norge AS",
+  region: "Viken",
+  timezone: "Europe/Oslo",
+});
+
+describe("parseGeoJsObservation", () => {
+  it("maps a real payload onto the same shape as the primary source", () => {
+    // Same shape is the point: two sources are only comparable if they answer in
+    // the same units, including ipinfo's `AS<n> <org>` rendering.
+    expect(parseGeoJsObservation(GEOJS_REAL, 55)).toEqual({
+      ip: "88.88.18.137",
+      country: "NO",
+      city: "Rykkin",
+      region: "Viken",
+      org: "AS2119 Telenor Norge AS",
+      timezone: "Europe/Oslo",
+      latencyMs: 55,
+    });
+  });
+
+  it("reads `organization`, not the bare `organization_name`", () => {
+    const both = JSON.stringify({ organization: "AS1 Telco", organization_name: "Telco" });
+    expect(parseGeoJsObservation(both, null).org).toBe("AS1 Telco");
+  });
+
+  it("returns everything-null for the HTML 404 this endpoint answers a bad path with", () => {
+    // geojs has no JSON error shape — a failure is openresty HTML. Unlike
+    // `ipwho.is`, which answers a spent quota with HTTP 200 and success:false, and
+    // which a naive parser would read as a real "no country" reading that then
+    // disagrees with every primary observation forever.
+    expect(parseGeoJsObservation("<html><title>404 Not Found</title></html>", 3)).toEqual({ ...UNKNOWN_NETWORK, latencyMs: 3 });
+    expect(parseGeoJsObservation("[1,2]", 3)).toEqual({ ...UNKNOWN_NETWORK, latencyMs: 3 });
+  });
+
+  it("never invents a value for a missing field", () => {
+    expect(parseGeoJsObservation("{}", null)).toEqual({ ...UNKNOWN_NETWORK, latencyMs: null });
+  });
+
+  it("upper-cases the country code", () => {
+    expect(parseGeoJsObservation('{"country_code":"no"}', null).country).toBe("NO");
+  });
+});
+
+describe("observeNetworkVia", () => {
+  it("navigates to the source's own endpoint and parses with the source's own parser", async () => {
+    // The pairing is the guard: a configurable URL with a hardcoded parser reads
+    // every field as null, which looks like a network problem rather than a
+    // mismatched parser.
+    const opened: string[] = [];
+    const runtime = fakeRuntime({
+      open: async (url: string) => {
+        opened.push(url);
+        return ok({ status: 200, url });
+      },
+      getText: async () => ok(GEOJS_REAL),
+    } as Partial<BrowserRuntime>);
+    const observation = await observeNetworkVia(runtime, GEOJS_SOURCE, () => 0);
+    expect(opened).toEqual(["https://ipv4.geojs.io/v1/ip/geo.json"]);
+    expect(observation.country).toBe("NO");
+    expect(observation.org).toBe("AS2119 Telenor Norge AS");
+  });
+
+  it("carries the primary source's endpoint and parser too", async () => {
+    const runtime = fakeRuntime({
+      open: async (url: string) => ok({ status: 200, url }),
+      getText: async () => ok(IPINFO_REAL),
+    } as Partial<BrowserRuntime>);
+    expect(IPINFO_SOURCE.endpoint).toBe("https://ipinfo.io/json");
+    expect((await observeNetworkVia(runtime, IPINFO_SOURCE, () => 0)).city).toBe("Lysaker");
+  });
+
+  it("uses two DIFFERENT vendors, because two mirrors of one database would agree about being wrong", () => {
+    expect(new URL(IPINFO_SOURCE.endpoint).hostname).not.toBe(new URL(GEOJS_SOURCE.endpoint).hostname);
+    // HTTPS both, because the browser NAVIGATES to them.
+    expect(new URL(GEOJS_SOURCE.endpoint).protocol).toBe("https:");
+  });
+
+  it("pins the corroborating source to IPv4, or it could never corroborate anything", () => {
+    // Measured, not assumed. ipinfo.io publishes no AAAA record, so a dual-stack
+    // corroborating host gets read over IPv6 and the two sources see two different
+    // addresses — permanently `unverified`. A real Playwright run reported
+    // 88.88.18.137 from ipinfo and 2001:4656:e2f2:... from the dual-stack candidate.
+    expect(new URL(GEOJS_SOURCE.endpoint).hostname.startsWith("ipv4.")).toBe(true);
   });
 });

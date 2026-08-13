@@ -1,0 +1,66 @@
+{
+  "id": "EXP-007-concurrency",
+  "hypothesis": "N journeys can run at the same time and each one still measures what it measured alone: no instrumentation errors, the same verdict as a solo run, an egress identity that holds for the whole run, and a per-session cost that stays sub-linear.",
+  "samples": 1,
+  "succeeded": 1,
+  "failed": 0,
+  "startedAt": "2026-08-13T09:50:34.002Z",
+  "finishedAt": "2026-08-13T09:50:42.420Z",
+  "metrics": [
+    {
+      "key": "concurrent-completion",
+      "description": "Concurrent sessions that completed without an instrumentation error",
+      "target": 95,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 95%"
+    },
+    {
+      "key": "verdict-agreement",
+      "description": "Concurrent sessions whose verdict matched the same journey run solo",
+      "target": 95,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 95%"
+    },
+    {
+      "key": "egress-identity-held",
+      "description": "Concurrent sessions whose egress identity was verified to hold for the whole run",
+      "target": 100,
+      "unit": "percent",
+      "direction": "min",
+      "value": 100,
+      "verdict": "pass",
+      "reason": "100.0% vs ≥ 100%"
+    },
+    {
+      "key": "wall-clock-factor",
+      "description": "Mean wall clock per concurrent session, as a multiple of the same journey run solo",
+      "target": 2,
+      "unit": "count",
+      "direction": "max",
+      "value": 0.9210264075734927,
+      "verdict": "pass",
+      "reason": "0.9210264075734927 vs ≤ 2"
+    },
+    {
+      "key": "peak-memory-per-session",
+      "description": "Peak resident MB across the browser process tree, per concurrent session",
+      "target": 500,
+      "unit": "count",
+      "direction": "max",
+      "value": null,
+      "verdict": "unmeasured",
+      "reason": "Peak resident memory across the browser process tree is not observable from this process: agent-browser is a separate daemon and Playwright's Chrome is an unsampled child, so `process.memoryUsage()` measures the runner, not the browsers. The target is declared because OOM is the reason concurrency is 1 — it is `unmeasured`, not a pass."
+    }
+  ],
+  "verdict": "unmeasured",
+  "notes": [
+    "Measured 4 FULL RUNS at once — each with its own browser session, profile and evidence package, which is the shape a matrix scheduler would use. It does NOT measure N contexts inside one browser: the Playwright engine gives each context its own proxy, which is what makes concurrency newly possible, but nothing above browser/ opens more than one context per run.",
+    "Peak resident memory across the browser process tree is not observable from this process: agent-browser is a separate daemon and Playwright's Chrome is an unsampled child, so `process.memoryUsage()` measures the runner, not the browsers. The target is declared because OOM is the reason concurrency is 1 — it is `unmeasured`, not a pass."
+  ]
+}

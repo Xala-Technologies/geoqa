@@ -82,6 +82,11 @@ export interface EngineOptions {
 const VITAL_FOR_CHECK: Record<string, keyof import("../browser/types.js").Vitals> = {
   "lcp-below": "lcp",
   "cls-below": "cls",
+  // INP gets the same confirm-the-null re-read. An interaction's entry is emitted
+  // asynchronously like LCP's, so a read taken immediately after a click can miss
+  // one that arrives a frame later — and "not measured" for a page that WAS
+  // interacted with is the same false blindness the LCP retry was added for.
+  "inp-below": "inp",
 };
 
 const labelFor = (step: Step, index: number): string => {
@@ -171,6 +176,22 @@ const selectorOf = (check: Check): string | null => ("selector" in check ? check
 const outcomeOf = (result: CheckResult): StepOutcome =>
   result.verdict === "passed" ? "passed" : result.verdict === "failed" ? "failed" : "errored";
 
+/**
+ * The actions that can change what page we are on.
+ *
+ * A `press` is in here because Enter submits a form, which is exactly how the
+ * search journey navigates — leaving it out would lose the URL for the one
+ * navigation nobody thinks of as a click.
+ */
+const NAVIGATING_ACTIONS = new Set(["click", "press", "open", "reload"]);
+
+/** The current URL, or null when it could not be read. Never throws into a step. */
+async function currentUrl(runtime: BrowserRuntime): Promise<string | null> {
+  const out = await runtime.getUrl();
+  return out.ok ? out.data : null;
+}
+
+
 export async function runJourney(
   runtime: BrowserRuntime,
   journey: Journey,
@@ -237,11 +258,21 @@ export async function runJourney(
     if (step.action === "fill" || step.action === "select" || step.action === "check") touchedForm = true;
 
     if (out.ok) {
+      // Where a NAVIGATING action left us, recorded as the step's observation.
+      //
+      // Without this a click records nothing, and a check that fails after it is
+      // unattributable: a live J06 run failed on "the chosen language survived"
+      // and the evidence could not say which page the click had reached, so the
+      // failure could not be told apart from a badly chosen marker. Half an hour
+      // went into answering a question the run should have answered itself. Only
+      // for actions that can navigate — a `fill` reading back a URL would be noise,
+      // and a `fill` must never render its own value.
+      const landedOn = NAVIGATING_ACTIONS.has(step.action) ? await currentUrl(runtime) : null;
       steps.push({
         index, action: step.action, label, outcome: "passed", severity: "info",
         category: null, check: null,
         // `describeAction` exists so a `fill` can never render its own value.
-        detail: describeAction(step), expected: null, observed: null, durationMs: now() - stepStarted,
+        detail: describeAction(step), expected: null, observed: landedOn, durationMs: now() - stepStarted,
       });
       log(`  ✓ ${label}`);
       continue;

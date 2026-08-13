@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,8 +7,9 @@ import type { BrowserSessionConfig } from "../../browser/types.js";
 import type { EvidenceManifest } from "../../evidence/manifest.js";
 import { DEFAULT_POLICY, type DirSize, type PruneFs } from "../../evidence/prune.js";
 import type { GeoQaRunResult } from "../../findings/types.js";
+import type { Tenant } from "../../tenant/types.js";
 import type { ExecuteOptions } from "../../run/execute.js";
-import { fakeRuntime, bad, ok } from "../../run/__tests__/fake-runtime.js";
+import { fakeRuntime, bad, ok, IPINFO_OSLO } from "../../run/__tests__/fake-runtime.js";
 import {
   browserVerify,
   defaultDeps,
@@ -19,15 +20,25 @@ import {
   journeyPath,
   journeyRun,
   loadProfileOrThrow,
+  loadUrlList,
   matrixRun,
   parsePrunePolicy,
   profileList,
   profilePath,
   proxyVerify,
+  resolveDataPath,
   renderMatrixResult,
   renderPruneResult,
   renderRunResult,
+  renderRunsList,
+  runsList,
+  runsRebuild,
+  checkTenantScope,
+  enforceQuota,
   resolveEvidenceRoot,
+  resolveProfileId,
+  resolveTenant,
+  tenantList,
   runtimeOptions,
   scenarioSeed,
   verificationSpec,
@@ -165,7 +176,10 @@ describe("path helpers", () => {
   });
 
   it("throws a named error for a missing profile", () => {
-    expect(() => loadProfileOrThrow(deps(), "atlantis")).toThrow(/profile "atlantis"/);
+    // Names the profile AND where it looked. The old message was the loader's ENOENT,
+    // which tells a reader about the filesystem rather than about their typo.
+    expect(() => loadProfileOrThrow(deps(), "atlantis")).toThrow(/no profile named "atlantis"/);
+    expect(() => loadProfileOrThrow(deps(), "atlantis")).toThrow(/looked in/);
   });
 });
 
@@ -176,8 +190,28 @@ describe("list commands", () => {
     // one is visible at a glance. Counts are derived, not hardcoded: the literal
     // roster broke twice in a day as markets were added.
     expect(profiles.length).toBeGreaterThanOrEqual(16);
-    expect(profiles.length % 2).toBe(0);
-    expect(profiles.map((p) => p.id)).toEqual([...profiles.map((p) => p.id)].sort());
+    // The real invariant is R-67 — every market is declared on BOTH device kinds —
+    // and it is asserted directly rather than through an even count. `% 2 === 0`
+    // stood in for it until a third KIND of profile existed (the returning visitor),
+    // at which point an odd total was correct and the test was wrong. An assertion
+    // that only holds while a coincidence holds is a trap for whoever trips it.
+    const anonymous = profiles.filter((p) => p.visitorType === "anonymous");
+    const marketsWithDesktop = anonymous.filter((p) => p.device === "desktop").map((p) => `${p.country}/${p.city}`);
+    const marketsWithMobile = new Set(anonymous.filter((p) => p.device === "mobile").map((p) => `${p.country}/${p.city}`));
+    for (const market of marketsWithDesktop) expect([...marketsWithMobile], market).toContain(market);
+    // The claim in the comment above is ADJACENCY, so adjacency is what is asserted.
+    // "ids are sorted" stood in for it and held only by coincidence: filenames sort
+    // by `-` before `.`, so `oslo-desktop-returning` precedes `oslo-desktop` in the
+    // directory while sorting after it by id. The listing was right and the proxy
+    // assertion was wrong.
+    const positions = new Map<string, number[]>();
+    profiles.forEach((p, i) => {
+      const market = `${p.country}/${p.city}`;
+      positions.set(market, [...(positions.get(market) ?? []), i]);
+    });
+    for (const [market, seen] of positions) {
+      expect(Math.max(...seen) - Math.min(...seen), market).toBe(seen.length - 1);
+    }
     expect(profiles.find((p) => p.id === "oslo-mobile")).toMatchObject({ country: "NO", city: "Oslo", device: "mobile" });
     expect(profiles.find((p) => p.id === "london-desktop")).toMatchObject({ country: "GB", city: "London", device: "desktop" });
   });
@@ -290,7 +324,7 @@ describe("browserVerify", () => {
   it("refuses a --geo that names no profile, on either engine", async () => {
     // The flag must mean something even where only one engine reads it, or a
     // typo would be silently ignored on agent-browser and fatal on Playwright.
-    await expect(browserVerify(deps(), "https://x", { profileId: "atlantis" })).rejects.toThrow(/profile "atlantis"/);
+    await expect(browserVerify(deps(), "https://x", { profileId: "atlantis" })).rejects.toThrow(/no profile named "atlantis"/);
   });
 });
 
@@ -1000,3 +1034,605 @@ describe("renderRunResult", () => {
     expect(renderRunResult(result({ evidenceId: null }))).not.toContain("evidence:");
   });
 });
+
+describe("loadUrlList", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), "geoqa-urls-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reads a file into the target axis", () => {
+    const file = path.join(dir, "sitemap.txt");
+    writeFileSync(file, "# pages\nhttps://digilist.no/faq\nhttps://digilist.no/priser\n");
+    expect(loadUrlList(file)).toEqual({ ok: true, urls: ["https://digilist.no/faq", "https://digilist.no/priser"] });
+  });
+
+  it("reports an unreadable file as an ERROR, never as an empty list", () => {
+    // An empty list would run the matrix against the single --url and report a
+    // clean pass over one page while the operator believed they had swept a
+    // sitemap.
+    const result = loadUrlList(path.join(dir, "absent.txt"));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("--urls-file");
+  });
+
+  it("attributes a bad line to the file it came from", () => {
+    const file = path.join(dir, "bad.txt");
+    writeFileSync(file, "https://ok.no\nnope\n");
+    const result = loadUrlList(file);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain(file);
+    expect(result.errors[0]).toContain("line 2");
+  });
+});
+
+describe("resolveProfileId", () => {
+  it("resolves a place to the profile that exists", () => {
+    expect(resolveProfileId(deps(), { country: "NO", city: "Oslo" })).toEqual({ ok: true, id: "oslo-desktop" });
+  });
+
+  it("is case-insensitive about both, because a country code is not a spelling test", () => {
+    expect(resolveProfileId(deps(), { country: "no", city: "oslo" })).toEqual({ ok: true, id: "oslo-desktop" });
+  });
+
+  it("takes the device from --device and defaults to desktop", () => {
+    expect(resolveProfileId(deps(), { city: "Oslo", device: "mobile" })).toEqual({ ok: true, id: "oslo-mobile" });
+    expect(resolveProfileId(deps(), { city: "Oslo" })).toEqual({ ok: true, id: "oslo-desktop" });
+  });
+
+  it("passes --geo straight through, and defaults when nothing names an identity", () => {
+    expect(resolveProfileId(deps(), { geo: "bergen-mobile" })).toEqual({ ok: true, id: "bergen-mobile" });
+    expect(resolveProfileId(deps(), {})).toEqual({ ok: true, id: "oslo-desktop" });
+  });
+
+  it("REFUSES both forms at once rather than ranking them", () => {
+    // Two identities have no correct answer, and picking either silently means a
+    // run reporting a city it was not asked about.
+    const result = resolveProfileId(deps(), { geo: "bergen-desktop", city: "Oslo" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("give one");
+  });
+
+  it("refuses a place with no profile and LISTS the places there are", () => {
+    // Without the list, "no profile for NO/Atlantis" sends someone to read the
+    // profiles directory; the answer is a flag away.
+    const result = resolveProfileId(deps(), { country: "NO", city: "Atlantis" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("available:");
+    expect(result.errors[0]).toContain("NO/Oslo");
+  });
+
+  it("refuses an ambiguous country rather than letting directory order pick the identity", () => {
+    // A bare --country NO matches every Norwegian city.
+    const result = resolveProfileId(deps(), { country: "NO" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("--geo");
+  });
+
+  it("resolves a place to the FIRST-TIME visitor by default, and to the returning one on request", () => {
+    // Oslo has both an anonymous and a returning desktop profile. Without a default
+    // every `--country NO --city Oslo` became ambiguous the moment the second one
+    // existed — the refusal working correctly and the feature becoming useless. A
+    // first-time visitor is the neutral subject: it carries nothing in and keeps
+    // nothing out.
+    expect(resolveProfileId(deps(), { country: "NO", city: "Oslo" })).toEqual({ ok: true, id: "oslo-desktop" });
+    expect(resolveProfileId(deps(), { country: "NO", city: "Oslo", visitor: "returning" })).toEqual({
+      ok: true,
+      id: "oslo-desktop-returning",
+    });
+  });
+
+  it("names the visitor kind when no profile matches, so the reason is not mysterious", () => {
+    const result = resolveProfileId(deps(), { country: "SE", city: "Stockholm", visitor: "returning" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("returning");
+    // And the list offered is the returning ones, not every profile.
+    expect(result.errors[0]).toContain("NO/Oslo");
+  });
+});
+
+describe("matrixRun with a page axis", () => {
+  const passing = (runId: string): GeoQaRunResult => ({ runId, verdict: "PASS" }) as GeoQaRunResult;
+
+  it("visits each page, not --url once per page", async () => {
+    // The axis landed with nothing reaching it, so every scenario got its own key
+    // and its own seed and all of them visited --url: a sweep reporting 430 clean
+    // pages having loaded one of them 430 times.
+    const targets: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      targets.push(o.spec.target);
+      return passing(o.spec.runId);
+    });
+    await matrixRun(deps({ runOnce }), {
+      url: "https://fallback.no",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+      targets: ["https://a.no/1", "https://a.no/2", "https://a.no/3"],
+    });
+    expect(targets.sort()).toEqual(["https://a.no/1", "https://a.no/2", "https://a.no/3"]);
+  });
+
+  it("falls back to --url for a scenario with no target of its own", async () => {
+    const targets: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      targets.push(o.spec.target);
+      return passing(o.spec.runId);
+    });
+    await matrixRun(deps({ runOnce }), {
+      url: "https://fallback.no",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+    });
+    expect(targets).toEqual(["https://fallback.no"]);
+  });
+
+  it("gives two PAGES distinct run ids in the same millisecond", async () => {
+    // Same collision as two journeys on one profile: `run_<ms>_<slug>` would hand
+    // both scenarios one evidence directory and the second would overwrite the
+    // first's manifest. The clock here is frozen, which is the collision.
+    const runIds: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      runIds.push(o.spec.runId);
+      return passing(o.spec.runId);
+    });
+    await matrixRun(deps({ runOnce }), {
+      url: "",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+      targets: ["https://a.no/1", "https://a.no/2"],
+      concurrency: 2,
+    });
+    expect(new Set(runIds).size).toBe(2);
+    // Never the URL itself: a run id becomes a directory name.
+    for (const id of runIds) expect(id).not.toContain("/");
+  });
+
+  it("keeps the run ids a plain matrix already had", async () => {
+    const runIds: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      runIds.push(o.spec.runId);
+      return passing(o.spec.runId);
+    });
+    await matrixRun(deps({ runOnce }), {
+      url: "https://x",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+    });
+    expect(runIds).toEqual(["run_1000_oslo-desktop-landing-page"]);
+  });
+
+  it("refuses a matrix with neither --url nor a page axis", async () => {
+    // An empty target reaches the browser as a navigation to nothing, once per
+    // scenario: N unmeasured scenarios instead of one refused argument.
+    await expect(
+      matrixRun(deps(), { url: "", markets: ["oslo"], journeys: ["landing-page"] }),
+    ).rejects.toThrow(/needs --url, or --urls-file/);
+  });
+
+  it("multiplies the page axis into every market and device", async () => {
+    const result = await matrixRun(deps(), {
+      url: "",
+      markets: ["oslo", "berlin"],
+      journeys: ["landing-page"],
+      targets: ["https://a.no/1", "https://a.no/2"],
+      dryRun: true,
+    });
+    expect(result.scenarios).toHaveLength(8);
+    expect(result.scenarios[0]?.key).toBe("berlin/desktop/landing-page/https://a.no/1");
+  });
+
+  it("says how many PAGES, because 43 scenarios could be 43 markets or 43 pages", async () => {
+    // The difference is a smoke test versus half a gigabyte of proxy traffic.
+    const result = await matrixRun(deps(), {
+      url: "",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+      targets: ["https://a.no/1", "https://a.no/2"],
+      dryRun: true,
+    });
+    expect(renderMatrixResult(result)).toContain("2 page(s) from the URL axis");
+  });
+
+  it("says nothing about pages when there is no page axis", async () => {
+    const result = await matrixRun(deps(), {
+      url: "https://x",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+      dryRun: true,
+    });
+    expect(renderMatrixResult(result)).not.toContain("URL axis");
+  });
+});
+
+describe("proxyVerify corroboration", () => {
+  const twoSources = (second: string) => {
+    const bodies = [IPINFO_OSLO, second];
+    let call = 0;
+    return () => fakeRuntime({ getText: () => Promise.resolve(ok(bodies[call++] ?? "")) });
+  };
+
+  it("reads a second IP-geo source BY DEFAULT — this command's whole question is where the session is", async () => {
+    const agreeing = JSON.stringify({ ip: "213.52.15.251", country_code: "NO", city: "Oslo" });
+    const result = await proxyVerify(deps({ makeRuntime: twoSources(agreeing) }), { profileId: "oslo-mobile" });
+    expect(result.verification.network.agreement.verdict).toBe("match");
+    expect(result.verification.network.corroborating?.city).toBe("Oslo");
+  });
+
+  it("skips it when told to, and then says nothing checked rather than nothing disagreed", async () => {
+    const result = await proxyVerify(deps(), { profileId: "oslo-mobile", corroborate: false });
+    expect(result.verification.network.corroborating).toBeNull();
+    expect(result.verification.network.agreement.verdict).toBe("unverified");
+  });
+
+  it("surfaces the São Paulo / New York shape of failure", async () => {
+    // The live finding: one IP, two databases, two countries. Either reading alone
+    // is confident and coherent.
+    const contradicting = JSON.stringify({ ip: "213.52.15.251", country_code: "US", city: "New York" });
+    const result = await proxyVerify(deps({ makeRuntime: twoSources(contradicting) }), { profileId: "oslo-mobile" });
+    expect(result.verification.network.agreement.verdict).toBe("mismatch");
+    expect(result.verification.trustworthy).toBe(false);
+  });
+});
+
+describe("tenant scoping", () => {
+  it("lists the tenants that ship", () => {
+    const { tenants } = tenantList(deps());
+    expect(tenants.map((t) => t.id)).toContain("digilist");
+    const zero = tenants.find((t) => t.id === "digilist");
+    expect(zero?.markets).toBeGreaterThan(0);
+    expect(zero?.targets).toBeGreaterThan(0);
+  });
+
+  it("REPLACES the evidence root with the tenant's own, rather than leaving it to callers", () => {
+    // Every path below this derives from the root. A caller that forgot to nest would
+    // write one tenant's run into the shared tree, which is the cross-tenant read the
+    // whole slice exists to prevent.
+    const resolved = resolveTenant(deps(), "digilist");
+    if (!resolved.ok) throw new Error(resolved.errors.join("\n"));
+    expect(resolved.tenant?.id).toBe("digilist");
+    expect(resolved.evidenceRoot).toBe(path.join(evidenceRoot, "digilist"));
+  });
+
+  it("leaves the shared root alone and returns a NULL tenant when none was named", () => {
+    // Not an error and not a default tenant: single-target use is still the common
+    // case, and no tenant rule applies then — which is the honest consequence.
+    const resolved = resolveTenant(deps(), undefined);
+    if (!resolved.ok) throw new Error(resolved.errors.join("\n"));
+    expect(resolved.tenant).toBeNull();
+    expect(resolved.evidenceRoot).toBe(evidenceRoot);
+  });
+
+  it("refuses a mistyped tenant rather than creating a directory for one that does not exist", () => {
+    // A run whose evidence lands under `evidence/digilst/` is lost, and lost quietly.
+    const resolved = resolveTenant(deps(), "digilst");
+    expect(resolved.ok).toBe(false);
+  });
+
+  it("refuses a target the tenant does not own, and names the declared ones", () => {
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    const errors = checkTenantScope(loaded.tenant, { url: "https://example.com" });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("does not own");
+    expect(errors[0]).toContain("https://digilist.no");
+  });
+
+  it("refuses a LOOKALIKE host, which a prefix test would have authorised", () => {
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    expect(checkTenantScope(loaded.tenant, { url: "https://digilist.no.evil.test/" })).toHaveLength(1);
+    expect(checkTenantScope(loaded.tenant, { url: "https://digilist.no/faq" })).toEqual([]);
+  });
+
+  it("refuses a market the tenant never asked for, and reports EVERY problem at once", () => {
+    // Fixing one refusal per invocation is how a tool stops being used.
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    const errors = checkTenantScope(loaded.tenant, { url: "https://example.com", markets: ["oslo", "berlin", "tokyo"] });
+    expect(errors).toHaveLength(3);
+    expect(errors.filter((e) => e.includes("has not asked for market"))).toHaveLength(2);
+  });
+
+  it("says nothing about an empty url, so a matrix using --urls-file is not refused for it", () => {
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    expect(checkTenantScope(loaded.tenant, { url: "" })).toEqual([]);
+  });
+})
+
+describe("enforceQuota", () => {
+  const digilist = (): Tenant => {
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    return loaded.tenant;
+  };
+
+  const withUsage = (over: Partial<CommandDeps>, traffic: number | null, subUserName = "sub-1"): CommandDeps =>
+    deps({
+      env: { DECODO_API_KEY: "key", GEOQA_SUBUSER_DIGILIST: subUserName },
+      usageProbe: () => Promise.resolve(traffic === null ? null : [{ username: "sub-1", trafficMb: traffic, trafficLimitMb: null, status: "active" }]),
+      ...over,
+    });
+
+  it("allows a run that fits inside the tenant's budget", async () => {
+    const decision = await enforceQuota(withUsage({}, 10), digilist(), 5);
+    expect(decision.state).toBe("within");
+    expect(decision.estimateMb).toBe(5);
+  });
+
+  it("REFUSES a sweep that would not fit, with the real page count", async () => {
+    // Tenant zero's budget is 5000 MB. Already spent 4900, and 430 pages is ~430 MB.
+    const decision = await enforceQuota(withUsage({}, 4900), digilist(), 430);
+    expect(decision.state).toBe("refused");
+    expect(decision.errors[0]).toContain("430 MB");
+  });
+
+  it("treats an unreadable vendor as UNMEASURED and says the guard is not in force", async () => {
+    // Never zero. An unread figure read as nothing spent authorises exactly the
+    // unbounded sweep this exists to prevent.
+    const decision = await enforceQuota(withUsage({}, null), digilist(), 100);
+    expect(decision.state).toBe("unknown");
+    expect(decision.warnings.join(" ")).toContain("NOT being enforced");
+  });
+
+  it("is unmeasurable when the sub-account variable is not set, rather than unlimited", async () => {
+    // The tenant names a variable; an unset variable is the same state as naming none
+    // — and both are distinct from measuring zero.
+    const probe = vi.fn(() => Promise.resolve([]));
+    const decision = await enforceQuota(deps({ env: { DECODO_API_KEY: "key" }, usageProbe: probe }), digilist(), 1);
+    expect(decision.state).toBe("unknown");
+    // Not even asked: there is nothing to attribute a figure to.
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("does not call the vendor without an API key", async () => {
+    const probe = vi.fn(() => Promise.resolve([]));
+    const decision = await enforceQuota(deps({ env: { GEOQA_SUBUSER_DIGILIST: "sub-1" }, usageProbe: probe }), digilist(), 1);
+    expect(decision.state).toBe("unknown");
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("counts the tenant's own runs today toward its run ceiling", async () => {
+    // Derived from the evidence tree rather than a ledger: a counter file drifts, and
+    // every way it drifts lets work through.
+    const root = path.join(evidenceRoot, "digilist");
+    mkdirSync(root, { recursive: true });
+    const now = 1_800_000_000_000;
+    for (let i = 0; i < 3; i++) mkdirSync(path.join(root, `run_${now - i * 1000}_oslo-desktop`), { recursive: true });
+    // A directory that is not a run must not count.
+    mkdirSync(path.join(root, "visitors"), { recursive: true });
+    const scoped = withUsage({ evidenceRoot: root, now: () => now }, 10);
+    const decision = await enforceQuota(scoped, digilist(), 1);
+    expect(decision.state).toBe("within");
+
+    const capped = { ...digilist(), quota: { trafficMb: 5000, runsPerDay: 3 } };
+    const refused = await enforceQuota(scoped, capped, 1);
+    expect(refused.state).toBe("refused");
+    expect(refused.errors[0]).toContain("3 run(s) today");
+  });
+
+  it("treats a tenant's first run as zero runs rather than an error", async () => {
+    // The tenant's directory does not exist yet. Refusing here would make the quota
+    // check the thing that stops a tenant ever starting.
+    const decision = await enforceQuota(withUsage({ evidenceRoot: path.join(evidenceRoot, "never-written") }, 10), digilist(), 1);
+    expect(decision.state).toBe("within");
+  });
+})
+
+describe("tenant-scoped profiles and journeys", () => {
+  it("REFUSES an id that is a path — a traversal that predates multi-tenancy", () => {
+    // Verified against the old code before the fix: `--geo ../../../../etc/hosts`
+    // resolved to /Volumes/etc/hosts.yaml and tried to read it. Only .yaml files were
+    // reachable and a parse failure was the usual outcome, but the id came from the
+    // command line, the resolved path was echoed back, and a YAML parse error can quote
+    // the line it failed on. An attacker-controlled read attempt with a disclosure
+    // channel is enough.
+    for (const id of ["../../../../etc/hosts", "../oslo-desktop", "a/b", "..", "oslo/../../x", "/etc/passwd"]) {
+      const result = resolveDataPath(deps(), "profiles", id);
+      expect(result.ok, id).toBe(false);
+      if (!result.ok) expect(result.errors[0]).toContain("refused");
+    }
+    expect(() => profilePath(deps(), "../../etc/hosts")).toThrow(/refused/);
+    expect(() => journeyPath(deps(), "../../etc/hosts")).toThrow(/refused/);
+  });
+
+  it("resolves a shared profile and journey, with or without the .yaml suffix", () => {
+    const withSuffix = resolveDataPath(deps(), "profiles", "oslo-desktop.yaml");
+    const without = resolveDataPath(deps(), "profiles", "oslo-desktop");
+    expect(withSuffix).toEqual(without);
+    expect(resolveDataPath(deps(), "journeys", "landing-page").ok).toBe(true);
+  });
+
+  it("says WHERE it looked when a name matches nothing", () => {
+    // The old behaviour returned a path that did not exist and let the loader report
+    // ENOENT, which tells a reader about the filesystem rather than about their typo.
+    const result = resolveDataPath(deps(), "profiles", "oslo-desktopp");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("looked in");
+  });
+
+  it("prefers the TENANT's file over the shared one, and falls back for everything else", () => {
+    // The point of the feature: a tenant customises one journey without forking the
+    // engine, and still gets the other seven.
+    const scoped = deps({ tenantId: "digilist" });
+    const own = resolveDataPath(scoped, "journeys", "landing-page");
+    if (!own.ok) throw new Error(own.errors.join("\n"));
+    expect(own.value).toContain(path.join("tenants", "digilist", "journeys"));
+
+    const shared = resolveDataPath(scoped, "journeys", "browse");
+    if (!shared.ok) throw new Error(shared.errors.join("\n"));
+    expect(shared.value).toContain(path.join(repoRoot, "journeys"));
+  });
+
+  it("lists the tenant's overriding file INSTEAD of the shared one, never both", () => {
+    // A listing that disagreed with the resolver would be worse than no listing.
+    const scoped = journeyList(deps({ tenantId: "digilist" })).journeys.filter((j) => j.id === "landing-page");
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]?.title).toContain("digilist");
+    const shared = journeyList(deps()).journeys.filter((j) => j.id === "landing-page");
+    expect(shared[0]?.title).not.toContain("digilist");
+  });
+
+  it("treats a tenant with no data directory as using the shared set", () => {
+    // Normal, not an error: most tenants customise nothing.
+    const scoped = deps({ tenantId: "acme" });
+    const result = resolveDataPath(scoped, "profiles", "oslo-desktop");
+    if (!result.ok) throw new Error(result.errors.join("\n"));
+    expect(result.value).toContain(path.join(repoRoot, "profiles"));
+    expect(profileList(scoped).profiles.length).toBeGreaterThan(0);
+  });
+
+  it("refuses a traversing id even WITH a tenant scoped, before trying either root", () => {
+    // A refusal is not "try the next root": it means the id got past the pattern and is
+    // trying to leave.
+    expect(resolveDataPath(deps({ tenantId: "digilist" }), "profiles", "../../../etc/hosts").ok).toBe(false);
+  });
+})
+
+describe("runs history", () => {
+  const line = (over: Record<string, unknown>): string =>
+    JSON.stringify({
+      schemaVersion: 1,
+      runId: "run_1000_oslo-desktop",
+      tenantId: null,
+      target: "https://a.test/",
+      profileId: "oslo-desktop",
+      journeyId: "landing-page",
+      verdict: "PASS",
+      startedAt: "2026-08-13T10:00:00.000Z",
+      durationMs: 5,
+      seed: 7,
+      engine: "playwright",
+      evidenceId: "ev_1",
+      findings: { total: 0, bySeverity: {}, byCategory: {}, labels: [] },
+      confidence: { overall: 100, geo: 100, browser: 100, journey: 100, evidence: 100 },
+      geo: { requestedCountry: "NO", requestedCity: "Oslo", observedCountry: "NO", observedCity: "Oslo", country: "match", city: "match", egressHeld: "match", agreement: "unverified" },
+      latencyMs: 100,
+      vitals: { lcp: null, cls: null, ttfb: null, inp: null },
+      ...over,
+    });
+
+  const withIndex = (text: string, dirs: Record<string, string[]> = {}, files: Record<string, string> = {}): CommandDeps => {
+    const store: Record<string, string> = { [path.join(evidenceRoot, "runs.jsonl")]: text, ...files };
+    return deps({
+      historyFs: {
+        exists: (p) => p in store,
+        read: (p) => {
+          if (!(p in store)) throw new Error(`ENOENT ${p}`);
+          return store[p] as string;
+        },
+        append: (p, t) => { store[p] = (store[p] ?? "") + t; },
+        write: (p, t) => { store[p] = t; },
+        mkdir: () => {},
+        listDirs: (p) => dirs[p] ?? [],
+      },
+    });
+  };
+
+  it("summarises and lists, newest first", () => {
+    const result = runsList(withIndex(`${line({ runId: "r1" })}\n${line({ runId: "r2", startedAt: "2026-08-13T11:00:00.000Z", verdict: "FAIL" })}\n`));
+    expect(result.summary.runs).toBe(2);
+    expect(result.summary.byVerdict).toEqual({ PASS: 1, FAIL: 1 });
+    expect(result.runs.map((r) => r.runId)).toEqual(["r2", "r1"]);
+  });
+
+  it("applies the limit to the LIST and never to the summary or regressions", () => {
+    // "The last 20 runs" is a display preference; "how many runs have there been" and
+    // "what broke" are questions about all of them. Truncating the answer to match the
+    // display would be a quieter version of reporting an unmeasured metric as fine.
+    const lines = Array.from({ length: 5 }, (_, i) => line({ runId: `r${i}`, startedAt: `2026-08-13T1${i}:00:00.000Z` })).join("\n");
+    const result = runsList(withIndex(`${lines}\n`), { limit: 2 });
+    expect(result.runs).toHaveLength(2);
+    expect(result.summary.runs).toBe(5);
+  });
+
+  it("filters, and the summary describes the FILTERED set", () => {
+    const result = runsList(withIndex(`${line({ runId: "r1", journeyId: "landing-page" })}\n${line({ runId: "r2", journeyId: "browse" })}\n`), {
+      journeyId: "browse",
+    });
+    expect(result.summary.runs).toBe(1);
+    expect(result.runs[0]?.runId).toBe("r2");
+  });
+
+  it("reports skipped lines and points at the rebuild, without failing", () => {
+    // A half-written final line is normal after an interrupted run, and the evidence is
+    // still on disk.
+    const result = runsList(withIndex(`${line({ runId: "r1" })}\n{"half\n`));
+    expect(result.summary.runs).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain("runs rebuild");
+  });
+
+  it("surfaces a regression, and renders it", () => {
+    const good = line({ runId: "r1", startedAt: "2026-08-13T10:00:00.000Z" });
+    const bad = line({
+      runId: "r2",
+      startedAt: "2026-08-13T11:00:00.000Z",
+      verdict: "FAIL",
+      findings: { total: 1, bySeverity: { critical: 1 }, byCategory: { functional: 1 }, labels: ["has a primary heading"] },
+    });
+    const result = runsList(withIndex(`${good}\n${bad}\n`));
+    expect(result.regressions).toHaveLength(1);
+    const rendered = renderRunsList(result);
+    expect(rendered).toContain("1 regression(s)");
+    expect(rendered).toContain("has a primary heading");
+    expect(rendered).toContain("last good");
+  });
+
+  it("renders an empty history without inventing a confidence number", () => {
+    const rendered = renderRunsList(runsList(withIndex("")));
+    expect(rendered).toContain("no runs recorded yet");
+    expect(rendered).not.toContain("mean overall confidence");
+  });
+
+  it("rebuilds the index from the runs on disk", () => {
+    // What makes the index safe to treat as a cache: run.json is the authority on its
+    // own run, so a corrupt or deleted index costs nothing permanent.
+    const runJson = JSON.stringify({ runId: "run_1000_oslo-desktop", target: "https://a.test/", profile: { id: "oslo-desktop" }, journey: { id: "landing-page", verdict: "PASS", seed: 3 } });
+    const scoped = withIndex("garbage\n", { [evidenceRoot]: ["run_1000_oslo-desktop"] }, { [path.join(evidenceRoot, "run_1000_oslo-desktop", "run.json")]: runJson });
+    const rebuilt = runsRebuild(scoped);
+    expect(rebuilt.written).toBe(1);
+    expect(rebuilt.unreadable).toEqual([]);
+    // And the corrupt line is gone, because rebuild OVERWRITES.
+    const after = runsList(scoped);
+    expect(after.skipped).toBe(0);
+    expect(after.runs[0]?.seed).toBe(3);
+  });
+
+  it("reports a run.json it could not read rather than dropping the run silently", () => {
+    const scoped = withIndex("", { [evidenceRoot]: ["run_1_a"] });
+    const rebuilt = runsRebuild(scoped);
+    expect(rebuilt.written).toBe(0);
+    expect(rebuilt.unreadable[0]).toContain("no run.json");
+  });
+
+  it("reports a run.json with no runId as not describing a run", () => {
+    const scoped = withIndex("", { [evidenceRoot]: ["run_1_a"] }, { [path.join(evidenceRoot, "run_1_a", "run.json")]: "{}" });
+    expect(runsRebuild(scoped).unreadable[0]).toContain("did not describe a run");
+  });
+
+  it("derives a rebuilt run's start time from its run id", () => {
+    // A run id is `run_<epochMs>_<slug>`, which is also why the history sorts
+    // chronologically by id.
+    const runJson = JSON.stringify({ runId: "run_1700000000000_x", journey: { verdict: "FAIL" } });
+    const scoped = withIndex("", { [evidenceRoot]: ["run_1700000000000_x"] }, { [path.join(evidenceRoot, "run_1700000000000_x", "run.json")]: runJson });
+    runsRebuild(scoped);
+    expect(runsList(scoped).runs[0]?.startedAt).toBe(new Date(1_700_000_000_000).toISOString());
+  });
+})

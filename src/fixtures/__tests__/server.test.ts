@@ -53,6 +53,115 @@ describe("fixtureBody", () => {
   it("returns null for an unknown path", () => {
     expect(fixtureBody("/nope")).toBeNull();
   });
+
+  describe("the language override", () => {
+    it("serves the local language by default and the chosen one on a cookie", () => {
+      // Path-based and cookie-based, because sites do one or the other and a journey
+      // that only knew one would report a working site as broken.
+      expect(fixtureBody("/lang")?.html).toContain("nb-NO");
+      expect(fixtureBody("/lang", "lang=en")?.html).toContain("en-GB");
+      expect(fixtureBody("/en/lang")?.html).toContain("en-GB");
+    });
+
+    it("SETS the choice as a cookie, or the next unprefixed page geo-redirects back", () => {
+      expect(fixtureBody("/en/lang")?.headers?.["set-cookie"]).toContain("lang=en");
+      // And the broken variant deliberately does not.
+      expect(fixtureBody("/en/lang-ignored")?.headers).toBeUndefined();
+    });
+
+    it("carries the choice onto an UNPREFIXED page — the returning-visitor half", () => {
+      expect(fixtureBody("/lang-deeper")?.html).toContain("nb-NO");
+      expect(fixtureBody("/lang-deeper", "lang=en")?.html).toContain("en-GB");
+      expect(fixtureBody("/en/lang-deeper")?.html).toContain("en-GB");
+    });
+
+    it("reads the cookie exactly, so a lookalike value is not a choice", () => {
+      // `lang=en-GB` and `mylang=en` are not `lang=en`. A loose match here would make
+      // the fixture answer English for a visitor who never chose it, and then the
+      // journey would be testing the fixture's bug rather than the site's.
+      expect(fixtureBody("/lang", "lang=nb")?.html).toContain("nb-NO");
+      expect(fixtureBody("/lang", "other=1; lang=en")?.html).toContain("en-GB");
+      expect(fixtureBody("/lang", "mylang=en")?.html).toContain("nb-NO");
+    });
+
+    it("puts language-specific words in the chrome of EVERY page of that language", () => {
+      // The measured reason: a marker that exists only on the landing page makes a
+      // `text-absent` persistence check vacuous one click later, and a broken
+      // override then reports PASS.
+      for (const path of ["/lang", "/lang-deeper", "/lang-broken"]) {
+        expect(fixtureBody(path)?.html, path).toContain("Om oss");
+      }
+      for (const path of ["/en/lang", "/en/lang-deeper", "/en/lang-ignored"]) {
+        expect(fixtureBody(path)?.html, path).toContain("About us");
+      }
+    });
+
+    it("keeps the onward content link inside <main>, so a click can be content-scoped", () => {
+      // A CSS comma resolves in DOM order, so an unscoped click selector reaches the
+      // nav first. Gaps C-11: that made a broken override report PASS.
+      expect(fixtureBody("/lang")?.html).toContain("<main>");
+      expect(fixtureBody("/en/lang-ignored")?.html).toContain("<main>");
+    });
+  });
+
+  it("serves a page whose click handler BLOCKS, because INP is otherwise unmeasurable", () => {
+    // Measured: every other fixture produces `inp: null` even after a real click.
+    // Chromium reports event-timing entries only above a threshold, so a page with no
+    // expensive handler responds too fast to generate one — `inp: null` is a fact
+    // about the page, not a failed read. Proving `inp-below` therefore needs a page
+    // that genuinely blocks.
+    const html = fixtureBody("/slow-interaction")?.html ?? "";
+    expect(html).toContain('id="slow"');
+    // Blocking, not a timeout: INP measures the delay before the next paint, and an
+    // async wait would leave the frame free.
+    expect(html).toContain("while (performance.now()");
+    expect(html).toContain("+ 120");
+    // Not a defect fixture: a slow handler is the subject of a measurement here, not
+    // something a journey should report as broken.
+    expect(DEFECTS.some((d) => d.path === "/slow-interaction")).toBe(false);
+  });
+
+  describe("the search flow", () => {
+    it("submits to a DIFFERENT path, so the results page is a real navigation", () => {
+      // In-place DOM mutation would let a journey "search" without the browser ever
+      // navigating, which is precisely the capability these fixtures exist to prove.
+      expect(fixtureBody("/search")?.html).toContain('action="/search-results"');
+      expect(fixtureBody("/search")?.html).toContain('type="search"');
+    });
+
+    it("offers clickable results whose links leave the results page", () => {
+      const html = fixtureBody("/search-results")?.html ?? "";
+      expect(html).toContain('class="result"');
+      expect(html).toContain('href="/search-result"');
+      expect(fixtureBody("/search-result")?.status).toBe(200);
+      expect(fixtureBody("/search-result")?.html).toContain("<h1>");
+    });
+
+    it("has an empty state whose results REGION is present and whose list is empty", () => {
+      // An empty result set is a correct answer to a query, not a defect. A journey
+      // must be able to visit this page and find nothing wrong with it.
+      const html = fixtureBody("/search-empty")?.html ?? "";
+      expect(html).toContain('id="results"></ul>');
+      expect(html).toContain('id="empty-state"');
+      expect(html).toContain("<h1>");
+    });
+
+    it("has a dead-results variant, which is the only positive proof a click navigated", () => {
+      // The 4xx finding sits on a step that runs AFTER the click, so it cannot
+      // appear unless the browser really followed the link.
+      expect(fixtureBody("/search-dead")?.html).toContain('action="/search-dead-results"');
+      expect(fixtureBody("/search-dead-results")?.html).toContain('href="/status-404"');
+    });
+
+    it("keeps every search route OUT of DEFECTS — only the dead links are a defect", () => {
+      // DEFECTS is the list EXP-006 iterates, and each entry must break exactly one
+      // thing. A search page that works is not a defect, and listing it would make
+      // the experiment expect a finding that should never appear.
+      for (const p of ["/search", "/search-results", "/search-result", "/search-empty", "/search-dead", "/search-dead-results"]) {
+        expect(DEFECTS.some((d) => d.path === p), p).toBe(false);
+      }
+    });
+  });
 });
 
 describe("startFixtureServer", () => {

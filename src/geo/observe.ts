@@ -54,6 +54,104 @@ export function parseNetworkObservation(raw: string, latencyMs: number | null): 
 }
 
 /**
+ * Parse a `geojs.io` payload. Captured live from this machine:
+ * `{"asn":2119,"city":"Rykkin","country_code":"NO","ip":"88.88.18.137",
+ *   "organization":"AS2119 Telenor Norge AS","region":"Viken",
+ *   "timezone":"Europe/Oslo"}`
+ *
+ * A failure here is an HTML 404 from openresty, not a JSON body with an error
+ * flag, so an unparseable response is the only failure shape and it already reads
+ * as `UNKNOWN_NETWORK`. That is worth knowing rather than assuming: the sibling
+ * candidate for this slot, `ipwho.is`, answers a spent quota with **HTTP 200 and
+ * `success: false`**, which a naive parser reads as "no country" — and a
+ * corroborating source that reports no country disagrees with every primary
+ * reading and manufactures a finding out of its own rate limit.
+ */
+export function parseGeoJsObservation(raw: string, latencyMs: number | null): NetworkObservation {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ...UNKNOWN_NETWORK, latencyMs };
+  }
+  const r = asRecord(parsed);
+  if (!r) return { ...UNKNOWN_NETWORK, latencyMs };
+  const country = asString(r.country_code);
+  return {
+    ip: asString(r.ip),
+    country: country ? country.toUpperCase() : null,
+    city: asString(r.city),
+    region: asString(r.region),
+    // Already in ipinfo's `AS2119 Telenor Norge AS` shape, so two sources' org
+    // strings are comparable by eye in a report. `organization_name` is the bare
+    // name and is deliberately not the one read.
+    org: asString(r.organization),
+    timezone: asString(r.timezone),
+    latencyMs,
+  };
+}
+
+/**
+ * An egress-identity endpoint AND the parser for its payload, as one unit.
+ *
+ * They travel together deliberately. `network.verifyEndpoint` is configurable
+ * while `parseNetworkObservation` is ipinfo-shaped, so pointing the config at a
+ * different vendor today yields every field `null` — an "unverified" that looks
+ * like a network problem. A source is a pair, and a second vendor means a second
+ * parser, not a second URL.
+ */
+export interface NetworkSource {
+  id: string;
+  endpoint: string;
+  parse: (raw: string, latencyMs: number | null) => NetworkObservation;
+}
+
+export const IPINFO_SOURCE: NetworkSource = {
+  id: "ipinfo",
+  endpoint: DEFAULT_VERIFY_ENDPOINT,
+  parse: parseNetworkObservation,
+};
+
+/**
+ * The corroborating source, and why it is this one.
+ *
+ * Measured, and this is the finding that produced the slice: one Decodo ISP exit
+ * resolved to **São Paulo** per Decodo's own endpoint and **New York** per
+ * ipinfo, for the same IP. An engine whose entire job is proving where a visitor
+ * is cannot treat a single lookup as ground truth — a wrong database reads
+ * exactly like a wrong proxy, and the two need opposite fixes.
+ *
+ * A DIFFERENT vendor with a different database, not a mirror: two endpoints
+ * reading the same MaxMind snapshot would agree about being wrong. Free, no key,
+ * HTTPS (the browser navigates to it), and it reports country, city, region and
+ * timezone, so it corroborates the axes that exist rather than a subset.
+ *
+ * **The `ipv4.` host is the load-bearing part, and it was measured, not assumed.**
+ * `ipinfo.io` publishes **no AAAA record** — it is IPv4-only. A corroborating host
+ * that IS dual-stack gets read over IPv6 by any dual-stack client, so the two
+ * sources see two different addresses and the comparison is permanently
+ * `unverified`. That is not hypothetical: `ipwho.is` (which has an AAAA) was the
+ * first choice here, and a real Playwright run on this laptop reported
+ * `88.88.18.137` from ipinfo and `2001:4656:e2f2:...` from ipwho.is — a
+ * corroborating axis that could never corroborate anything. `ipv4.geojs.io`
+ * publishes no AAAA either, so both reads use the same IPv4 egress.
+ */
+export const GEOJS_SOURCE: NetworkSource = {
+  id: "geojs",
+  endpoint: "https://ipv4.geojs.io/v1/ip/geo.json",
+  parse: parseGeoJsObservation,
+};
+
+/** Read an egress identity through one named source. */
+export function observeNetworkVia(
+  runtime: BrowserRuntime,
+  source: NetworkSource,
+  now: () => number = Date.now,
+): Promise<NetworkObservation> {
+  return observeNetwork(runtime, source.endpoint, now, source.parse);
+}
+
+/**
  * The expression evaluated in the page to read the browser's own beliefs.
  *
  * Geolocation is wrapped in a promise with a short timeout because a headless
@@ -117,6 +215,7 @@ export async function observeNetwork(
   runtime: BrowserRuntime,
   endpoint: string,
   now: () => number = Date.now,
+  parse: (raw: string, latencyMs: number | null) => NetworkObservation = parseNetworkObservation,
 ): Promise<NetworkObservation> {
   const started = now();
   const opened = await runtime.open(endpoint);
@@ -124,7 +223,7 @@ export async function observeNetwork(
   const latencyMs = now() - started;
   const body = await runtime.getText("body");
   if (!body.ok) return { ...UNKNOWN_NETWORK, latencyMs };
-  return parseNetworkObservation(body.data, latencyMs);
+  return parse(body.data, latencyMs);
 }
 
 /**

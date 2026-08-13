@@ -1,0 +1,33 @@
+# Tenant zero: the target geoqa is tested against, not the shape of the product.
+#
+# Everything specific to digilist lives HERE rather than in the engine, which is the
+# whole point of the file existing. When tenant two arrives, nothing in src/ should
+# need to know.
+id: digilist
+name: Digilist AS
+# Profile market ids, not free text. A run for a market this tenant never asked
+# about is refused, which matters once quota is real: a typo that sweeps 16 markets
+# instead of 3 is a bill.
+markets: [oslo, bergen, trondheim]
+# An allowlist, and it is a security control rather than convenience. This engine
+# drives a real browser from residential IPs on a schedule; a target it was not
+# pointed at deliberately is either a mistake or somebody else's site.
+targets:
+  - https://digilist.no
+# The NAME of an environment variable, never a credential. R-26: credentials come
+# from the environment only. null means "use the shared default", which is what this
+# tenant does today — its own Decodo sub-user is slice 7.
+proxyCredentials: null
+# The NAME of the variable holding this tenant's proxy sub-account username, for
+# metering. Also a name: a sub-account username is half a credential pair and
+# identifies a billable account. Set GEOQA_SUBUSER_DIGILIST to meter this tenant;
+# until then its traffic is UNMEASURABLE rather than unlimited, because the shared
+# account's figure describes every tenant on it.
+proxySubUser: GEOQA_SUBUSER_DIGILIST
+quota:
+  # Measured, not guessed: a 430-page sweep of digilist.no costs roughly 0.5 GB, so
+  # 5 GB is ten full sweeps a month. The number exists because one sweep once
+  # consumed an entire allowance and every later run returned an opaque 407.
+  trafficMb: 5000
+  runsPerDay: 200
+retentionDays: 30

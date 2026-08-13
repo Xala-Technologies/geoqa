@@ -34,13 +34,33 @@ import { executeRun, type ExecuteOptions } from "./execute.js";
  * measuring is how the first OOM happens, so this is the smallest bound that is
  * not sequential: it proves the scheduler and at most doubles peak memory.
  *
- * PROVISIONAL. EXP-007 is the experiment that is supposed to replace it with a
- * measured number and, at the time of writing, is cited and does not exist
- * (gaps A-3b). `MatrixResult.concurrency` carries both the bound and the peak
- * actually reached so that experiment has something to read, and so a matrix
- * that died of memory pressure can still say what it was attempting.
+ * MEASURED, finally, but on one machine — so raised rather than derived. EXP-007
+ * now runs, and on a 14-core / 36 GB laptop against a local fixture server it
+ * reported 100% completion, 100% verdict agreement and 100% egress-held at every
+ * level tried, with wall clock per session barely moving:
+ *
+ *   concurrency  2 → x1.01     8 → x1.14
+ *                4 → x1.01    12 → x1.09
+ *                             16 → x1.30
+ *
+ * Four is the new default and not sixteen, deliberately. The measurement covers ONE
+ * machine, and a default has to be safe on the smallest one that will run this — a
+ * 2-core CI runner would be worse at 4 than the old 2, let alone at 16. Raising to 4
+ * captures most of the win (the numbers are flat to 12 here) while staying within
+ * `cores - 2` on any machine anybody would run a browser matrix on.
+ *
+ * `peak-memory-per-session` remains permanently unmeasurable from this process — the
+ * browser is a separate daemon on one engine and an unsampled child on the other — so
+ * EXP-007's overall verdict is `unmeasured` and the OOM risk that originally kept this
+ * at 1 is still unquantified. That is the honest reason not to go higher on the
+ * strength of wall clock alone.
+ *
+ * A CPU-derived bound (`min(4, max(2, cores - 2))`) is the obvious next step and is
+ * NOT taken here, because it would be generalising a formula from a single data point
+ * — which is the kind of unmeasured leap this file's history is a record of avoiding.
+ * `MatrixResult.concurrency` still carries both the bound and the peak reached.
  */
-export const DEFAULT_MATRIX_CONCURRENCY = 2;
+export const DEFAULT_MATRIX_CONCURRENCY = 4;
 
 /** The three axes. Values are ids, not paths — `plan` resolves those. */
 export interface MatrixAxes {

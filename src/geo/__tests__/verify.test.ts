@@ -4,12 +4,15 @@ import type { BrowserObservation, GeoProfile, NetworkObservation } from "../type
 import {
   compareCity,
   compareCountry,
+  compareDevice,
   compareEgressHeld,
   compareLanguage,
+  compareSources,
   compareTimezone,
   geoConfidence,
   verificationReasons,
   verifyGeo,
+  withCorroboration,
   withEgressHeld,
 } from "../verify.js";
 
@@ -271,3 +274,182 @@ describe("withEgressHeld", () => {
     expect(after.trustworthy).toBe(false);
   });
 });
+
+describe("compareSources", () => {
+  const obs = (over: Partial<NetworkObservation>): NetworkObservation => ({ ...UNKNOWN_NETWORK, ...over });
+
+  it("MATCHES when two independent databases agree about the country", () => {
+    const result = compareSources(obs({ ip: "1.2.3.4", country: "NO", city: "Oslo" }), obs({ ip: "1.2.3.4", country: "NO", city: "Oslo" }));
+    expect(result.verdict).toBe("match");
+    expect(result.reasons[0]).toContain("two independent sources agree");
+  });
+
+  it("reports the São Paulo / New York case as a MISMATCH", () => {
+    // The live finding this axis exists for: one Decodo ISP exit, one IP, two
+    // countries. Either reading alone is confident and coherent, and one is wrong.
+    const result = compareSources(
+      obs({ ip: "45.1.2.3", country: "BR", city: "São Paulo" }),
+      obs({ ip: "45.1.2.3", country: "US", city: "New York" }),
+    );
+    expect(result.verdict).toBe("mismatch");
+    expect(result.reasons[0]).toContain("BR and US");
+    expect(result.reasons[0]).toContain("a wrong database looks exactly like a wrong proxy");
+  });
+
+  it("does NOT call a city divergence a defect — it records it on a match", () => {
+    // Measured on one machine with no proxy: ipinfo says Tønsberg, geojs Rykkin,
+    // ipwho.is Oslo. Comparing cities strictly would fire on essentially every
+    // run, which is an engine manufacturing defects out of its own instrumentation.
+    const result = compareSources(
+      obs({ ip: "1.2.3.4", country: "NO", city: "Tønsberg" }),
+      obs({ ip: "1.2.3.4", country: "NO", city: "Oslo" }),
+    );
+    expect(result.verdict).toBe("match");
+    expect(result.reasons[0]).toContain("cities differ");
+    expect(result.reasons[0]).toContain("is not a defect");
+  });
+
+  it("says nothing about cities when they agree", () => {
+    const result = compareSources(obs({ ip: "1.2.3.4", country: "NO", city: "Oslo" }), obs({ ip: "1.2.3.4", country: "NO", city: "oslo " }));
+    expect(result.reasons[0]).not.toContain("cities differ");
+  });
+
+  it("refuses to compare two DIFFERENT IPs, and names both explanations", () => {
+    // Reproduced on this laptop with no proxy at all: curl reached ipinfo over
+    // IPv4 and ipwho.is over IPv6. Calling that a geographic disagreement would be
+    // a finding invented out of our own probing.
+    const result = compareSources(
+      obs({ ip: "88.88.18.137", country: "NO", city: "Tønsberg" }),
+      obs({ ip: "2001:4656::1", country: "US", city: "New York" }),
+    );
+    expect(result.verdict).toBe("unverified");
+    expect(result.reasons[0]).toContain("different IPs");
+    expect(result.reasons[0]).toContain("dual-stack");
+    expect(result.reasons[0]).toContain("rotation");
+  });
+
+  it("is unverified when either source read no country, and says which", () => {
+    expect(compareSources(obs({}), obs({ country: "NO" })).reasons[0]).toContain("primary source read no country");
+    expect(compareSources(obs({ country: "NO" }), obs({})).reasons[0]).toContain("corroborating source read no country");
+  });
+
+  it("compares countries even when one source could not report an IP", () => {
+    // A missing IP is not evidence of two visitors, so it must not block the
+    // comparison — otherwise a source that omits `ip` silently disables the axis.
+    expect(compareSources(obs({ country: "NO" }), obs({ ip: "1.2.3.4", country: "US" })).verdict).toBe("mismatch");
+  });
+});
+
+describe("withCorroboration", () => {
+  const obs = (over: Partial<NetworkObservation>): NetworkObservation => ({ ...UNKNOWN_NETWORK, ...over });
+  const norwegian = obs({ ip: "1.2.3.4", country: "NO", city: "Oslo" });
+  const browser: BrowserObservation = {
+    language: "nb-NO",
+    languages: ["nb-NO"],
+    timezone: "Europe/Oslo",
+    userAgent: "ua",
+    viewport: { width: 390, height: 844 },
+    geolocation: null,
+  };
+
+  it("starts unverified with no corroborating reading at all", () => {
+    // Neither agreement nor disagreement: nothing checked.
+    const v = verifyGeo(OSLO_PROFILE, norwegian, browser);
+    expect(v.network.corroborating).toBeNull();
+    expect(v.network.agreement.verdict).toBe("unverified");
+    expect(v.network.agreement.reasons[0]).toContain("no corroborating IP-geo source");
+  });
+
+  it("keeps BOTH readings, so a report can show which two numbers disagreed", () => {
+    const v = withCorroboration(verifyGeo(OSLO_PROFILE, norwegian, browser), obs({ ip: "1.2.3.4", country: "US", city: "New York" }));
+    expect(v.network.observed.country).toBe("NO");
+    expect(v.network.corroborating?.country).toBe("US");
+  });
+
+  it("drops trustworthiness and confidence when the sources disagree", () => {
+    const agreed = withCorroboration(verifyGeo(OSLO_PROFILE, norwegian, browser), obs({ ip: "1.2.3.4", country: "NO", city: "Oslo" }));
+    const disagreed = withCorroboration(verifyGeo(OSLO_PROFILE, norwegian, browser), obs({ ip: "1.2.3.4", country: "US", city: "New York" }));
+    expect(agreed.trustworthy).toBe(true);
+    expect(disagreed.trustworthy).toBe(false);
+    expect(disagreed.confidence).toBeLessThan(agreed.confidence);
+  });
+
+  it("can only ever LOWER trust — agreement does not rescue a mismatched country", () => {
+    // A second database agreeing that we are in the wrong country is not good news.
+    const german = obs({ ip: "1.2.3.4", country: "DE", city: "Berlin" });
+    const v = withCorroboration(verifyGeo(OSLO_PROFILE, german, browser), german);
+    expect(v.network.agreement.verdict).toBe("match");
+    expect(v.trustworthy).toBe(false);
+  });
+});
+
+describe("geoConfidence caps", () => {
+  const axis = (verdict: "match" | "mismatch" | "unverified") => ({ verdict, reasons: ["r"] });
+  const perfect = [axis("match"), axis("match"), axis("match"), axis("match")];
+
+  it("scores 100 with four matches and no caps", () => {
+    expect(geoConfidence(perfect)).toBe(100);
+  });
+
+  it("lets a capping axis pull a perfect score down without weighting it", () => {
+    // A disagreement does not make a run 15% less Norwegian; it makes the whole
+    // geographic answer unreliable. Averaging it in would let three good readings
+    // hide it.
+    expect(geoConfidence(perfect, [axis("mismatch")])).toBe(50);
+    expect(geoConfidence(perfect, [axis("unverified")])).toBe(85);
+    expect(geoConfidence(perfect, [axis("match")])).toBe(100);
+  });
+});
+
+describe("compareDevice", () => {
+  it("MATCHES when the declared user agent is what the page reports", () => {
+    expect(compareDevice({ userAgent: "Mozilla/5.0 (Pixel 5)" }, "Mozilla/5.0 (Pixel 5)").verdict).toBe("match");
+  });
+
+  it("MISMATCHES when the page reports a different one — the desktop-under-mobile case", () => {
+    // The failure C-8 names: a profile whose emulate name was a typo produced a run
+    // with no mobile user agent, a perfectly matching viewport and a clean
+    // verification, and a site doing UA detection served its desktop variant.
+    const result = compareDevice({ userAgent: "Mozilla/5.0 (Pixel 5)" }, "Mozilla/5.0 (X11; Linux x86_64) HeadlessChrome");
+    expect(result.verdict).toBe("mismatch");
+    expect(result.reasons[0]).toContain("page reports");
+  });
+
+  it("is UNVERIFIED for a profile that declares nothing, not a match", () => {
+    // A claim nobody made cannot be verified. Inventing an expectation from
+    // device.kind would report a mismatch on every mobile profile in this repo — all
+    // of which deliberately carry no descriptor.
+    const result = compareDevice({}, "Mozilla/5.0 (X11; Linux x86_64)");
+    expect(result.verdict).toBe("unverified");
+    expect(result.reasons[0]).toContain("no device claim to verify");
+  });
+
+  it("is UNVERIFIED for an emulate name, and says why it cannot be confirmed", () => {
+    // A descriptor name is not a substring of the user-agent string it produces:
+    // "Pixel 5" does not appear in the Android UA Playwright builds from it.
+    const result = compareDevice({ emulate: "Pixel 5" }, "Mozilla/5.0 (Linux; Android 11; Pixel 5)");
+    expect(result.verdict).toBe("unverified");
+    expect(result.reasons[0]).toContain("not a substring");
+  });
+
+  it("is UNVERIFIED when the user agent was never read", () => {
+    expect(compareDevice({ userAgent: "x" }, null).verdict).toBe("unverified");
+  });
+
+  it("costs a run its trustworthiness on a proven mismatch, and not otherwise", () => {
+    const browser: BrowserObservation = {
+      language: "nb-NO", languages: ["nb-NO"], timezone: "Europe/Oslo",
+      userAgent: "Mozilla/5.0 (desktop)", viewport: { width: 390, height: 844 }, geolocation: null,
+    };
+    const norwegian: NetworkObservation = { ...UNKNOWN_NETWORK, ip: "1.2.3.4", country: "NO", city: "Oslo" };
+    // Declares nothing: unverified, and the run can still be trustworthy.
+    const silent = verifyGeo(OSLO_PROFILE, norwegian, browser);
+    expect(silent.browser.device.verdict).toBe("unverified");
+    expect(silent.trustworthy).toBe(true);
+    // Declares a UA it did not get: not trustworthy.
+    const declaring = { ...OSLO_PROFILE, device: { ...OSLO_PROFILE.device, userAgent: "Mozilla/5.0 (Pixel 5)" } };
+    const wrong = verifyGeo(declaring, norwegian, browser);
+    expect(wrong.browser.device.verdict).toBe("mismatch");
+    expect(wrong.trustworthy).toBe(false);
+  });
+})

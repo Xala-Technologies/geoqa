@@ -13,7 +13,18 @@ import { evaluateMetric, meanOf, rate, type ExperimentSample, type MetricResult,
 import { redactProxyUrl, selectProvider } from "../network/provider.js";
 import { EXP_000, EXP_001, EXP_002, EXP_003, EXP_004, EXP_005, EXP_006, EXP_007 } from "../experiments/definitions.js";
 import { DEFECTS, startFixtureServer } from "../fixtures/server.js";
-import { browserVerify, journeyRun, loadProfileOrThrow, profileList, type CommandDeps, type ExperimentOptions } from "./commands.js";
+import {
+  browserVerify,
+  journeyRun,
+  loadProfileOrThrow,
+  profileList,
+  DEFAULT_ENGINE,
+  type CommandDeps,
+  type ExperimentOptions,
+} from "./commands.js";
+import type { BrowserRuntime, BrowserSessionConfig } from "../browser/types.js";
+import type { GeoProfile } from "../geo/types.js";
+import { parseDurationMs, type ParsedArgs } from "./args.js";
 
 const metric = (specs: MetricSpec[], key: string): MetricSpec => {
   const found = specs.find((m) => m.key === key);
@@ -28,6 +39,20 @@ const num = (sample: ExperimentSample, key: string): number | null => {
 
 const truthy = (key: string) => (s: ExperimentSample): boolean => s.data[key] === true;
 
+/**
+ * The engine and endpoint an experiment runs through, resolved once.
+ *
+ * Five call sites built their runtime with `deps.makeRuntime(config)` and no
+ * request, so `experiment run` was agent-browser-only whatever `--engine` said, and
+ * three of them reached for `DEFAULT_VERIFY_ENDPOINT` directly so a configured
+ * endpoint never arrived either. One helper rather than five conditionals: a
+ * per-site default is how two of them end up disagreeing about what "unset" means.
+ */
+const runtimeFor = (deps: CommandDeps, options: ExperimentOptions, profile: GeoProfile, config: BrowserSessionConfig): BrowserRuntime =>
+  deps.makeRuntime(config, { engine: options.engine ?? DEFAULT_ENGINE, profile });
+
+const endpointFor = (options: ExperimentOptions): string => options.verifyEndpoint ?? DEFAULT_VERIFY_ENDPOINT;
+
 /** The note every unmeasurable geographic metric carries in Phase 0. */
 export const NO_VENDOR_NOTE =
   "No geo-proxy vendor is configured, so every session egressed from this machine. The target is declared but cannot be evaluated — this is `unmeasured`, not a pass.";
@@ -35,7 +60,14 @@ export const NO_VENDOR_NOTE =
 // ── EXP-000: agent-browser primitives ────────────────────────────────────
 
 export async function sampleBrowserPrimitives(deps: CommandDeps, options: ExperimentOptions): Promise<Record<string, unknown>> {
-  const result = await browserVerify(deps, options.url);
+  // EXP-000 is the one experiment whose subject IS the adapter — "do these
+  // primitives answer on this engine" — so honouring `--engine` here is not
+  // uniformity for its own sake, it is the difference between measuring the engine
+  // asked about and measuring a different one.
+  const result = await browserVerify(deps, options.url, {
+    profileId: options.profileId,
+    ...(options.engine ? { engine: options.engine } : {}),
+  });
   return {
     passed: result.passed,
     total: result.total,
@@ -87,7 +119,10 @@ export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions
   if (!opened.ok) throw new Error(`could not open a network session: ${opened.reason}`);
   const session = opened.session;
   const routed = session.proxyUrl !== null;
-  const runtime = deps.makeRuntime(
+  const runtime = runtimeFor(
+    deps,
+    options,
+    profile,
     toSessionConfig(profile, {
       sessionId: `exp001-${deps.now()}-${index}`,
       proxyUrl: session.proxyUrl,
@@ -96,7 +131,7 @@ export async function sampleEgress(deps: CommandDeps, options: ExperimentOptions
     }),
   );
   try {
-    const network = await observeNetwork(runtime, DEFAULT_VERIFY_ENDPOINT);
+    const network = await observeNetwork(runtime, endpointFor(options));
     const country = compareCountry(profile.market.country, network.country);
     const city = compareCity(profile.market.city, network.city);
     return {
@@ -183,7 +218,7 @@ export const PRD_STABILITY_WINDOW_MS = 600_000;
  * check that takes an hour and a half gets killed halfway — which leaves
  * results.jsonl half-written and no summary at all, the worst of both outcomes.
  * So the cheap window stays the default and the note says loudly which window
- * it measured; the PRD window is a deliberate `--stability-window-ms 600000`
+ * it measured; the PRD window is a deliberate `--stability-window 10m`
  * when somebody is willing to pay for it. A long default would not be more
  * honest, it would just be unrun.
  */
@@ -256,7 +291,7 @@ export function stabilityWindowNote(window: StabilityWindow): string {
   if (window.windowMs >= PRD_STABILITY_WINDOW_MS) {
     return `${shape} That covers the ${duration(PRD_STABILITY_WINDOW_MS)} window the PRD asks for. The reads are spaced, not continuous, so a rotation that healed between two of them is still invisible.`;
   }
-  return `${shape} The PRD asks for a ${duration(PRD_STABILITY_WINDOW_MS)} window; that is NOT what this measured — pass \`--stability-window-ms ${PRD_STABILITY_WINDOW_MS}\` to measure it. A short window can prove instability but cannot prove stability over a long journey.`;
+  return `${shape} The PRD asks for a ${duration(PRD_STABILITY_WINDOW_MS)} window; that is NOT what this measured — pass \`--stability-window 10m\` to measure it. A short window can prove instability but cannot prove stability over a long journey.`;
 }
 
 /**
@@ -270,14 +305,17 @@ export function stabilityWindowNote(window: StabilityWindow): string {
 export async function sampleStability(deps: CommandDeps, options: StabilityOptions, index: number): Promise<Record<string, unknown>> {
   const window = resolveStabilityWindow(options);
   const profile = loadProfileOrThrow(deps, options.profileId);
-  const runtime = deps.makeRuntime(
+  const runtime = runtimeFor(
+    deps,
+    options,
+    profile,
     toSessionConfig(profile, { sessionId: `exp002-${deps.now()}-${index}`, baseEnv: deps.env }),
   );
   const seen: (string | null)[] = [];
   try {
     for (let read = 0; read < window.reads; read++) {
       if (read > 0) await new Promise((r) => setTimeout(r, window.intervalMs));
-      const network = await observeNetwork(runtime, DEFAULT_VERIFY_ENDPOINT);
+      const network = await observeNetwork(runtime, endpointFor(options));
       seen.push(network.ip);
     }
   } finally {
@@ -325,8 +363,8 @@ export function summariseStability(samples: ExperimentSample[], options: Stabili
 export async function sampleIsolation(deps: CommandDeps, options: ExperimentOptions, index: number): Promise<Record<string, unknown>> {
   const profile = loadProfileOrThrow(deps, options.profileId);
   const stamp = `${deps.now()}-${index}`;
-  const a = deps.makeRuntime(toSessionConfig(profile, { sessionId: `isoA-${stamp}`, baseEnv: deps.env }));
-  const b = deps.makeRuntime(toSessionConfig(profile, { sessionId: `isoB-${stamp}`, baseEnv: deps.env }));
+  const a = runtimeFor(deps, options, profile, toSessionConfig(profile, { sessionId: `isoA-${stamp}`, baseEnv: deps.env }));
+  const b = runtimeFor(deps, options, profile, toSessionConfig(profile, { sessionId: `isoB-${stamp}`, baseEnv: deps.env }));
   try {
     await a.open(options.url);
     await b.open(options.url);
@@ -367,7 +405,10 @@ export async function sampleProfileConsistency(deps: CommandDeps, options: Exper
   const { localeInitScript } = await import("../geo/profile.js");
   writeFileSync(initScript, localeInitScript(profile));
 
-  const runtime = deps.makeRuntime(
+  const runtime = runtimeFor(
+    deps,
+    options,
+    profile,
     toSessionConfig(profile, { sessionId: `exp004-${deps.now()}-${index}`, initScriptPath: initScript, baseEnv: deps.env }),
   );
   try {
@@ -416,6 +457,10 @@ export async function sampleJourney(deps: CommandDeps, options: ExperimentOption
     url: options.url,
     profileId: options.profileId,
     journeyId: "landing-page",
+    // Forwarded rather than left to `journeyRun`'s own default, so `--engine`
+    // means the same thing whether an experiment runs the journey or a human does.
+    ...(options.engine ? { engine: options.engine } : {}),
+    ...(options.verifyEndpoint ? { verifyEndpoint: options.verifyEndpoint } : {}),
     ...(options.providerName ? { providerName: options.providerName } : {}),
   });
   return {
@@ -461,6 +506,10 @@ export async function sampleEvidenceQuality(deps: CommandDeps, options: Experime
       url: `${server.origin}${defect.path}`,
       profileId: options.profileId,
       journeyId: "landing-page",
+      ...(options.engine ? { engine: options.engine } : {}),
+      // No verifyEndpoint override: this experiment runs against the LOCAL fixture
+      // server and its geography is irrelevant to what it measures, which is whether
+      // a defect produces evidence that explains itself.
     });
     const siteFindings = result.findings.filter((f) => f.category !== "instrumentation");
     const categories = [...new Set(siteFindings.map((f) => f.category))];
@@ -596,6 +645,8 @@ async function runConcurrentSession(
       url: options.url,
       profileId,
       journeyId: "landing-page",
+      ...(options.engine ? { engine: options.engine } : {}),
+      ...(options.verifyEndpoint ? { verifyEndpoint: options.verifyEndpoint } : {}),
       ...(options.providerName ? { providerName: options.providerName } : {}),
     });
     return {
@@ -738,6 +789,63 @@ export function summariseConcurrency(samples: ExperimentSample[], options: Concu
 export interface SamplerPair {
   sample: (deps: CommandDeps, options: ExperimentOptions, index: number) => Promise<Record<string, unknown>>;
   summarise: (samples: ExperimentSample[], options: ExperimentOptions) => { metrics: MetricResult[]; notes: string[] };
+}
+
+/**
+ * The per-experiment knobs, off the command line.
+ *
+ * Parsed here rather than in `args.ts` because the knob types live here: an
+ * experiment states what it reads, and `ExperimentOptions` does not grow a field
+ * per experiment. `args.ts` cannot import this file either way — `samplers` →
+ * `commands` → `args` already, and dependency-cruiser refuses the cycle.
+ *
+ * Unreadable REFUSES. The alternative is what shipped: nothing reached
+ * `stabilityWindowMs`, so EXP-002 measured 24 seconds while the PRD asked for
+ * ten minutes, and a `--stability-window 10m` that fell back to the default
+ * would have produced the same 24-second answer with a caller convinced they had
+ * asked for ten minutes. `resolveStabilityWindow` and `resolveConcurrency`
+ * already refuse impossible values; this refuses unparseable ones, which is the
+ * same rule one layer out.
+ */
+export function experimentKnobs(args: ParsedArgs): {
+  ok: true;
+  knobs: StabilityWindowOptions & ConcurrencyOptions;
+} | { ok: false; errors: string[] } {
+  const knobs: StabilityWindowOptions & ConcurrencyOptions = {};
+  const errors: string[] = [];
+
+  const window = args.flags["stability-window"];
+  if (typeof window === "string") {
+    const ms = parseDurationMs(window);
+    if (ms === null) errors.push(`--stability-window "${window}" is not a duration — try 600000, 600s or 10m`);
+    else knobs.stabilityWindowMs = ms;
+  } else if (window === true) {
+    errors.push("--stability-window needs a duration, e.g. --stability-window 10m");
+  }
+
+  const reads = args.flags["stability-reads"];
+  if (typeof reads === "string") {
+    const n = Number(reads);
+    if (!Number.isInteger(n)) errors.push(`--stability-reads "${reads}" is not a whole number`);
+    else knobs.stabilityReads = n;
+  } else if (reads === true) {
+    errors.push("--stability-reads needs a number");
+  }
+
+  // Shared spelling with `matrix run --concurrency`, and deliberately so: both
+  // mean "how many full runs at once". EXP-007 exists to tell the matrix what its
+  // bound should be, and two names for one quantity is how the answer stops
+  // being applied to the question.
+  const concurrency = args.flags["concurrency"];
+  if (typeof concurrency === "string") {
+    const n = Number(concurrency);
+    if (!Number.isInteger(n)) errors.push(`--concurrency "${concurrency}" is not a whole number`);
+    else knobs.concurrency = n;
+  } else if (concurrency === true) {
+    errors.push("--concurrency needs a number");
+  }
+
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, knobs };
 }
 
 export const SAMPLERS: Record<string, SamplerPair> = {

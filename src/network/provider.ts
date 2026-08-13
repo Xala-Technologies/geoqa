@@ -123,7 +123,11 @@ function substituteProxyPlaceholders(url: string, market: Market, sessionId: str
     .replaceAll("{countryLower}", market.country.toLowerCase())
     .replaceAll("{city}", market.city)
     .replaceAll("{cityLower}", market.city.toLowerCase())
-    .replaceAll("{session}", sessionId);
+    // Hyphens stripped HERE too, not only in `defaultSessionId`: an injected
+    // `newSessionId`, a market id with a hyphen, or a caller passing its own id would
+    // otherwise reintroduce the silent truncation this cost a day to find. The vendor
+    // parses the username as `-`-delimited parameters, so a hyphen inside a VALUE ends it.
+    .replaceAll("{session}", sessionId.replace(/-/g, ""));
 }
 
 /**
@@ -213,7 +217,47 @@ export interface ProviderOptions {
   newSessionId?: (market: Market, nowMs: number) => string;
 }
 
-const defaultSessionId = (market: Market, nowMs: number): string => `${market.id}-${nowMs}`;
+/**
+ * A monotonic counter, so two sessions minted in the same millisecond cannot collide.
+ *
+ * Deliberately a counter and not randomness: it is deterministic within a process, needs
+ * no seeding, and keeps a session id readable in a log. Tests inject `newSessionId`
+ * anyway, so this never makes a test unpredictable.
+ */
+let sessionSequence = 0;
+
+/**
+ * A session id with **no hyphens**, and that is the entire point of this function.
+ *
+ * The id is what the `{session}` placeholder puts into a residential vendor's USERNAME to
+ * pin a sticky exit, and that username is a `-`-delimited parameter list:
+ * `user-<account>-country-no-city-oslo-session-<id>`. A vendor therefore parses the value
+ * up to the next hyphen — so a hyphenated id is SILENTLY TRUNCATED at its first one.
+ *
+ * Measured against Decodo, and it is unambiguous:
+ *
+ *   session-oslo-1  → 188.92.250.221
+ *   session-oslo-2  → 188.92.250.221     identical
+ *   session-oslo-3  → 188.92.250.221
+ *   session-oslo    → 188.92.250.221     ← the truncated value
+ *   session-oslo1   → 84.210.158.133
+ *   session-oslo2   → 84.209.67.194      distinct
+ *   session-oslo3   → 212.89.117.129
+ *
+ * The id used to be `<market>-<epochMs>[-<n>]`, so the effective sticky key was just
+ * `<market>`: **every run in a market shared one exit IP, forever.** Not only concurrent
+ * runs — sequential ones too, across separate browser launches, verified. And nothing
+ * contradicted it, because `egressHeld` compares the opening and closing IP of one run and
+ * they genuinely did match. The engine was reporting a per-session network identity it had
+ * never actually had.
+ *
+ * So: base-36 timestamp, base-36 sequence, alphanumeric market prefix, no separators. Short
+ * (vendors also cap username length), readable enough to grep, and impossible to truncate
+ * into a shared key. The sequence keeps two sessions minted in the same millisecond apart;
+ * the timestamp keeps two runs apart across process restarts.
+ */
+const defaultSessionId = (market: Market, nowMs: number): string =>
+  `${market.id.replace(/[^a-z0-9]/gi, "")}${nowMs.toString(36)}${(++sessionSequence).toString(36)}`;
 
 /** Egress straight from this machine. Always usable; never geographic. */
 export function directProvider(options: ProviderOptions = {}): GeoNetworkProvider {

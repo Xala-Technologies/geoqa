@@ -125,16 +125,37 @@ describe("the journeys that actually ship", () => {
   const dir = path.join(repoRoot, "journeys");
   const files = readdirSync(dir).filter((f) => f.endsWith(".yaml"));
 
-  it("finds every shipped journey", () => {
-    expect(files.sort()).toEqual([
+  /**
+   * The journeys something else DEPENDS on, not an inventory of the directory.
+   *
+   * This was an exact-equality roster and it broke on every addition — twice in one
+   * day, once at four journeys and once at eight, each time reporting a red suite
+   * for a new file that was perfectly fine. A test that fails when the thing it
+   * guards is working correctly gets deleted or ignored, and then it guards
+   * nothing.
+   *
+   * A containment check still catches the failure worth catching: a journey being
+   * REMOVED while a default, a doc or an experiment still names it. `landing-page`
+   * is the CLI's default journey; `sweep` is what the page axis is for; the rest are
+   * the five flows the PRD's J01–J05 name.
+   */
+  it("still ships every journey something else depends on", () => {
+    for (const required of [
       "browse.yaml",
       "contact-form.yaml",
       "conversion-probe.yaml",
       "landing-page.yaml",
       "localization.yaml",
       "reader.yaml",
+      "search.yaml",
       "sweep.yaml",
-    ]);
+    ]) {
+      expect(files).toContain(required);
+    }
+  });
+
+  it("ships nothing but YAML, so a stray file cannot be silently unloadable", () => {
+    expect(files.filter((f) => !f.endsWith(".yaml"))).toEqual([]);
   });
 
   it("declares writes on exactly the journeys that change state", () => {

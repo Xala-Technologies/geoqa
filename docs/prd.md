@@ -110,6 +110,24 @@ unmeasured guess until EXP-007 runs.
   descriptor, so the declared box always wins over the descriptor's — the viewport
   is a verified axis (R-5) and must mean what the profile says.
 
+- **R-105** Egress geography is corroborated by a **second, independent IP-geo
+  database**, and a disagreement about the COUNTRY caps the run's network-identity
+  confidence. Measured: one Decodo ISP exit resolved to São Paulo per Decodo's own
+  endpoint and New York per ipinfo, for the same IP. Either reading alone is
+  confident and coherent, and one is wrong — a wrong database looks exactly like a
+  wrong proxy, and the two need opposite fixes. A different vendor, never a mirror:
+  two endpoints reading one MaxMind snapshot would agree about being wrong.
+- **R-106** Corroboration compares **country only**, and never compares two
+  readings taken from **different IPs**. Both restrictions exist to stop the engine
+  manufacturing findings out of its own instrumentation, which is the failure mode
+  it exists to detect in others. Cities diverge between databases as a matter of
+  course — one live Norwegian exit was placed in Stavanger and Bærum by two
+  sources, 400 km apart — so city divergence is recorded and never a verdict. And
+  because `ipinfo.io` publishes no AAAA record, a dual-stack corroborating host is
+  read over IPv6 while the primary is read over IPv4: two addresses, two visitors,
+  nothing comparable. The corroborating host is pinned to IPv4 for that reason,
+  which was measured after a real run reported two different addresses.
+
 ### Journeys
 
 - **R-10** A journey is a YAML list of actions and checks. It is **deterministic**:
@@ -133,6 +151,172 @@ unmeasured guess until EXP-007 runs.
 - **R-16** A negative or absent reading is **confirmed after a settle** before
   being reported — an element mid-animation and an asynchronously emitted LCP
   otherwise produce defects that do not exist.
+
+- **R-107** At least one journey **clicks**, and its click is verified by a real
+  navigation rather than by a successful call. A fake click always succeeds: it
+  cannot say whether the browser followed the link, whether the next page loaded,
+  or whether the checks after it ran against the page they were written for. The
+  proof is a results page whose links are dead — a 4xx finding on a step that runs
+  after the click cannot appear unless the browser really navigated.
+- **R-109** A persistence claim is asserted **positively as well as negatively**. A
+  `text-absent` check is trivially true on a page that never contained the word, so
+  a negative assertion alone cannot prove that a language, a session or a choice
+  survived — measured: an override journey asserting only the absence of a
+  Norwegian marker reported PASS against a deliberately broken override, because the
+  marker existed on the landing page and nowhere else. A vacuous check is worse than
+  a missing one: it occupies the place where a reader believes a claim is made.
+- **R-111** Every ACTION resolves to the first **visible** match, not the first
+  match in document order. Nobody writes a click step for an element the visitor
+  cannot see, and a union like `[hreflang='en']` otherwise resolves to a `<link>` in
+  `<head>`: invisible, unclickable, thirty seconds of actionability timeout, and an
+  instrumentation failure standing where a real reading should be. The same applies
+  to `fill`, `select` and `check`, which additionally raised a strict-mode violation
+  on any selector matching more than one element.
+- **R-136** A session key placed inside a vendor's username contains **no separator the
+  vendor parses**. A residential proxy username is a `-`-delimited parameter list, so a
+  hyphenated session value is silently truncated at its first hyphen — which collapsed every
+  run in a market onto one sticky exit while `egressHeld` reported `match`, because the IP
+  genuinely did hold: it was the same one every time. A guard that asks "did this run hold
+  its IP" cannot see "this run holds the IP every other run also holds".
+- **R-132** A search source's `health()` is a **real probe** distinguishing bad
+  credentials from an exhausted account. Valid credentials with no quota left is
+  `unusable`, not usable: a search source that cannot answer is worse than an absent one,
+  because empty results read as "nobody ranks". A missing quota figure is "does not say",
+  never zero.
+- **R-133** `searchObservation` has **three** states. The provider could not answer →
+  `null`. Results came back and we are not in them → a real low score, expressed as a
+  small number rather than 0 so a measured absence is distinguishable from an unmeasured
+  one. Results came back and we rank → scored by position. "No results at all" is `null`,
+  because an exhausted account, an unparsed response and a genuinely empty SERP are
+  indistinguishable, and "your site is invisible" is too alarming a claim to make on that.
+- **R-134** Search visibility is **not folded into `overall`**. The other axes answer
+  whether a run's readings can be believed; this one answers whether a page is visible in
+  search. Averaging them would let good search visibility disguise a run that could not
+  read the page.
+- **R-135** A city-scoped search **resolves** the city against the provider's own
+  gazetteer, filtered by country, and REFUSES when it cannot. `Oslo` matches
+  `Oslo,Minnesota,United States` as well as `Oslo,Oslo,Norway`, so an unfiltered first
+  match would run a Norwegian market's SERP from Minnesota. Dropping an unresolvable city
+  and searching the whole country would be worse still: the caller asked what a visitor in
+  that city sees.
+- **R-129** Runs are queryable across time, and the index is a **derived cache** over
+  the evidence tree rather than the record itself. Each run's own artifact is the
+  authority on that run, so a corrupt or deleted index costs nothing permanent and is
+  rebuildable. A store that owned the record would introduce the failure this system
+  exists to prevent — a confident answer about runs that did not happen the way it says.
+- **R-130** Appending to the index can **never fail a run**. A run that verified a site
+  correctly and wrote its evidence has not failed at anything a user cares about if a
+  cache line could not be written.
+- **R-131** A regression is a check that **used to pass** in the same
+  profile + journey + target, reported once at the transition. A failure with no earlier
+  pass is not a regression; it may never have worked. An `ERROR` run is skipped rather
+  than counted as a failed check, because `ERROR` means geoqa could not read the page,
+  and reporting our own instrumentation failure as the site's regression is the one
+  confusion this system refuses to make.
+- **R-126** A profile or journey id is **not a path**. It becomes a filename, so it is
+  constrained to lowercase letters, digits and inner hyphens, and every resolved
+  candidate is re-checked to be inside the directory it belongs to. Before this,
+  `--geo ../../../../etc/hosts` resolved outside the profiles directory and tried to
+  read it: only `.yaml` files were reachable, but the id came from the command line, the
+  resolved path was echoed back, and a YAML parse error can quote the line it failed on.
+- **R-127** A tenant may carry its **own** profiles and journeys, resolved before the
+  shared set and overriding by name, with fallback for everything it has not customised
+  — so a tenant tightens one budget without forking the engine. A listing shows the
+  override INSTEAD of the shared entry, never both: a listing that disagreed with the
+  resolver would be worse than no listing.
+- **R-128** A name that matches nothing says **where it looked**. The loader's ENOENT
+  tells a reader about the filesystem; the operator's mistake was a typo.
+- **R-123** A tenant's proxy budget is enforced **before anything launches**, not
+  discovered as a 407 mid-sweep. A matrix is expanded first so the check knows the real
+  page count: a 430-page sweep against a tenant with 100 MB left is refused before the
+  browser starts, rather than dying at page 90 and leaving 340 pages unmeasured while
+  an operator debugs a proxy that is fine.
+- **R-124** Traffic is read from the **vendor** and the run count is derived from **our
+  own evidence tree**, and the two are not interchangeable. Bytes are counted at the
+  proxy, so an estimate that drifted would be worse than none because it would be
+  trusted; and the vendor has no idea what a run is. The run count is derived rather
+  than stored, because a counter file can be deleted, written twice or left behind by a
+  crash, and every one of those makes a ceiling wrong in the direction that lets work
+  through.
+- **R-125** A usage figure that could not be read is **unmeasured, never zero** — the
+  same rule as every other reading in this system. It warns and proceeds rather than
+  blocking, because with a vendor-enforced cap per sub-account exhaustion is isolated to
+  the tenant that caused it, and refusing every tenant's work because a usage API is
+  down would cause more harm than it prevents. The warning states that the guard is not
+  in force. When the vendor enforces no cap of its own, that is said out loud too: a cap
+  geoqa enforces can be bypassed by a bug in geoqa, and one the vendor enforces cannot.
+- **R-118** A tenant is **data**, in `tenants/<id>.yaml`, with the same reasoning as a
+  profile: it cannot reach the browser, a non-engineer can edit it, and it diffs in a
+  review. Unknown keys are an error — a misspelled `retentionDay` that silently became
+  the default is a retention policy somebody set on purpose and never got.
+- **R-119** A tenant file holds the **NAME** of an environment variable for its proxy
+  credentials, never a credential. A registry holding secrets is the `.env` mistake
+  moved somewhere with worse odds.
+- **R-120** Evidence is written under `<root>/<tenantId>/<runId>`, and **a path that
+  can escape its tenant's root is a security defect, not a bug.** The id is
+  constrained by pattern AND the resolved path is re-checked, because one line of
+  defence against traversal is a line somebody eventually finds a way round.
+  Containment is tested by `path.relative`, never by `startsWith`: `/evidence/acme`
+  starts with `/evidence/ac`, so a prefix test places tenant `acme` inside tenant
+  `ac`'s root and calls it contained. An absolute segment is refused too — 
+  `path.resolve("/evidence", "/etc")` is `/etc`, which discards the root entirely.
+- **R-121** A tenant id is lowercase, because macOS and Windows filesystems are
+  case-INSENSITIVE while Linux is not. `Acme` and `acme` would be two tenants in CI
+  and one tenant on a developer's laptop — a cross-tenant read that only reproduces on
+  the machine nobody tests on.
+- **R-122** A tenant declares the sites it **owns** and the markets it asked for, and
+  both are refused before anything launches. Ownership is compared by **origin**, never
+  by prefix: `https://acme.no.evil.test` starts with `https://acme.no` as a string, and
+  a prefix test would authorise an attacker's host. This is not bureaucracy — the
+  engine drives a real browser from residential IPs on a schedule, so a target
+  allowlist is the difference between a QA runner and something that looks like
+  distributed traffic aimed at whoever the URL names.
+- **R-114** `run.json` records what kind of visitor a run ACTUALLY was, not what its
+  profile declared. A profile saying `returning` and a run that restored nothing were
+  indistinguishable in the evidence, which is the same class of lie as an unmeasured
+  metric reported as fine. The declaration is an intention; `restored` is an
+  observation, and only one of them is evidence.
+- **R-115** An unknown device descriptor **refuses the launch**. The alternative fails
+  invisibly in every direction at once: no descriptor applied, so no mobile user
+  agent, no touch and no device scale factor; `setDevice` still answering `ok`, because
+  it compares the requested name against the name the context was built with; and the
+  profile's own viewport matching regardless. The run then reports a clean mobile
+  verification while presenting a desktop identity to any site doing UA detection.
+- **R-116** A DECLARED device identity is a **verified axis**. `navigator.userAgent`
+  was observed on every run and compared to nothing. A profile that declares no user
+  agent gets `unverified` rather than a pass — a claim nobody made cannot be verified,
+  and inventing an expectation from the device kind would report a mismatch on every
+  mobile profile that deliberately carries no descriptor.
+- **R-117** A responsiveness budget may only be asserted **after an interaction**, and
+  an unmeasurable INP is neither a pass nor the site's fault. INP does not exist until
+  something has been clicked, pressed, filled or scrolled — and even then a page whose
+  handler does nothing expensive responds faster than the browser reports, so `null` is
+  a fact about the page. A budget met by never touching anything is the emptiest green
+  tick available; blaming the site for the journey's step ordering is the opposite
+  error.
+- **R-113** `--engine` and the configured verify endpoint reach **every** command
+  that opens a browser, experiments included. An experiment whose samples are taken
+  through an engine nobody asked about answers a different question than the one
+  printed at the top of its summary — and for EXP-000, whose subject IS the adapter,
+  it answers no question at all. Absent means the default engine, so an experiment
+  re-run without the flag stays comparable with its own stored results.
+- **R-112** A step that can NAVIGATE records the URL it landed on. Without it a
+  click records nothing, and any check that fails afterwards cannot be attributed —
+  a live run failed a language-persistence check and the evidence could not say
+  which page had been reached, so a site defect and a badly chosen marker were
+  indistinguishable. Evidence that cannot answer "where were we" cannot answer the
+  question it was collected for.
+- **R-110** A selector in a **click, fill or press** step names ONE element, not a
+  family. A CSS comma is a union resolved in document order rather than a preference
+  list, so a broad union clicks whichever element appears first in the page — which
+  is a logo on most sites, and was the nav's Home link on the fixture that exposed
+  it. The same union is correct in an ASSERTION, where "does this site have
+  navigation" is answered by any match.
+- **R-108** An empty result set is a **correct answer**, not a defect. A search for
+  a term a site does not contain returns nothing, so a journey may only assert a
+  minimum result count when the caller supplies a term known to match — which is why
+  the query is a variable. A runner that reported every fruitless search as a
+  finding would be manufacturing defects out of its own inputs.
 
 ### Honest verdicts
 
@@ -401,6 +585,33 @@ unmeasured guess until EXP-007 runs.
   form, registration or booking per scenario, and the operator is told the number
   and must pass an explicit flag before anything launches. A dry run states the
   count for free.
+- **R-101** A site-wide sweep runs **inside the bounded pool**, as a page axis on the
+  matrix (`--urls-file`), never as a shell loop around the CLI. The first sweep was
+  430 pages driven from a loop alongside three other browser fleets, and it made a
+  `selector-visible` check report a missing `h1` on six pages that demonstrably had
+  one — all six passed re-run alone. An engine whose own load can manufacture a
+  site defect is worse than no engine, so the URL list belongs where the
+  concurrency bound, the per-scenario seed and the write consent already apply.
+- **R-102** A URL list is **fully validated before anything launches**, with the line
+  number of every bad entry, and one bad line refuses the whole matrix — the same
+  rule as a mistyped `--market` (R-84). A non-http scheme is refused by name: a
+  `file:` URL would let a matrix pass against local disk while claiming to have
+  visited a site. Order and duplicates are preserved, because sitemap order is
+  meaningful to whoever reads the results and a repeated URL is a legitimate second
+  sample.
+- **R-103** Two pages sharing a profile, a journey and a millisecond get **distinct
+  run ids**. A run id is `run_<ms>_<slug>` and becomes an evidence directory name,
+  so without this the second page overwrites the first page's manifest — a sweep
+  losing runs while reporting a full count. The scenario's index disambiguates, not
+  its URL: a URL contains `/` and `:`.
+- **R-104** An identity may be named by **place** (`--country`, `--city`, `--device`)
+  and not only by profile id, and the place is **resolved against the profiles that
+  exist** — a place with no profile refuses and lists the ones there are. Naming
+  both a profile and a place refuses rather than ranking them: two identities have
+  no correct answer, and silently picking either produces a run reporting a city
+  nobody asked about, which is the single worst failure this engine can have. A
+  matrix names its identities with `--market`, and refuses the place flags rather
+  than resolving one it would never read.
 
 ### Evidence has a shelf life
 
@@ -542,9 +753,13 @@ rather than a constant, with the reads spread across whatever window is asked fo
 of the vendor's stickiness), and the note the summary carries states the window
 actually used. 24 seconds remains the default on purpose — ten minutes × 10
 samples is 100 minutes, and a killed feasibility run leaves a half-written
-`results.jsonl` with no summary. No CLI flag reaches the parameter yet
-([gaps C-1](gaps.md#c-1--the-stability-window-is-a-parameter-now-and-no-flag-reaches-it)),
-so the measured number is still 24 seconds.
+`results.jsonl` with no summary. `--stability-window 10m --samples 3` now reaches
+it ([gaps C-1](gaps.md#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it)),
+and a duration it cannot parse is refused rather than defaulted — a summary
+measuring 24 seconds under a caller who believes they asked for ten minutes is
+worse than no measurement. The number in `experiments/` is still 24 seconds until
+the ten-minute run is taken, and that run waits on the samplers honouring
+`--engine` ([gaps D-1b](gaps.md#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers)).
 
 **EXP-007 is declared and has not been run**, and one of its targets cannot be
 evaluated at all: peak memory across the browser process tree is not observable

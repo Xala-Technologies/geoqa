@@ -14,7 +14,7 @@ import {
 const axis = (verdict: AxisResult["verdict"], why = "because"): AxisResult => ({ verdict, reasons: [why] });
 
 const geo = (
-  over: Partial<Record<"country" | "city" | "language" | "timezone" | "viewport" | "egressHeld", AxisResult>> = {},
+  over: Partial<Record<"country" | "city" | "language" | "timezone" | "viewport" | "egressHeld" | "agreement" | "device", AxisResult>> = {},
 ): GeoVerification => ({
   profileId: "oslo-mobile",
   network: {
@@ -23,6 +23,8 @@ const geo = (
     country: over.country ?? axis("match"),
     city: over.city ?? axis("match"),
     egressHeld: over.egressHeld ?? axis("match"),
+    corroborating: null,
+    agreement: over.agreement ?? axis("unverified"),
   },
   browser: {
     requested: { language: "nb-NO", timezone: "Europe/Oslo", viewport: { width: 390, height: 844 } },
@@ -33,6 +35,7 @@ const geo = (
     language: over.language ?? axis("match"),
     timezone: over.timezone ?? axis("match"),
     viewport: over.viewport ?? axis("match"),
+    device: over.device ?? axis("unverified"),
   },
   confidence: 100,
   trustworthy: true,
@@ -175,3 +178,71 @@ describe("describeConfidence", () => {
     );
   });
 });
+
+describe("source disagreement caps the network axis", () => {
+  it("caps network identity when two IP-geo databases disagree about the same IP", () => {
+    // A run reporting geo: 100 while its two sources contradict each other is
+    // exactly the confident, coherent lie this score exists to prevent. Measured:
+    // one Decodo ISP exit read as São Paulo by one source and New York by another.
+    const clean = networkConfidence(geo({ agreement: axis("match") }));
+    const contradicted = networkConfidence(geo({ agreement: axis("mismatch") }));
+    expect(clean).toBe(100);
+    expect(contradicted).toBe(40);
+  });
+
+  it("applies the SAME cap as a proven country mismatch, and leaves the readings intact", () => {
+    // The cap multiplier is identical (0.4) because both are failures of what this
+    // axis is for. The resulting numbers are not: a country mismatch also zeroes
+    // the country term, because we know that reading is wrong. A disagreement does
+    // not — we do not know which source is wrong, so both readings stand and only
+    // the confidence in them is capped. 40 versus 10 is the honest difference.
+    expect(networkConfidence(geo({ agreement: axis("mismatch") }))).toBe(40);
+    expect(networkConfidence(geo({ country: axis("mismatch") }))).toBe(10);
+  });
+
+  it("does NOT cap on an unverified agreement, which is the default for most commands", () => {
+    // Most commands do not pay for a second lookup. "Nothing checked" must not
+    // read as "something disagreed".
+    expect(networkConfidence(geo({ agreement: axis("unverified") }))).toBe(100);
+  });
+
+  it("names the disagreement in the notes, because it is the one note that says do not trust the number", () => {
+    const report = scoreRun({
+      geo: geo({ agreement: axis("mismatch", "two IP-geo sources disagree about the same IP: BR and US") }),
+      journey: journey({ passed: 3 }),
+      manifest: fullPassManifest,
+    });
+    expect(report.notes.join(" ")).toContain("two IP-geo sources disagree");
+  });
+});
+
+describe("searchObservation is real now, and still never fabricated", () => {
+  it("records a measured observation", () => {
+    const report = scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest, searchObservation: 95 });
+    expect(report.searchObservation).toBe(95);
+  });
+
+  it("stays NULL when nothing was measured, including when the field is absent", () => {
+    // Most runs take no SERP observation, and "not measured" must not become a zero.
+    expect(scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest }).searchObservation).toBeNull();
+    expect(
+      scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest, searchObservation: null }).searchObservation,
+    ).toBeNull();
+  });
+
+  it("does NOT fold into overall — it answers a question about the SITE, not the reading", () => {
+    // The other four axes answer "can this run's readings be believed"; this one answers
+    // "is this page visible in search". Averaging them would let good search visibility
+    // disguise a run that could not read the page.
+    const blind = scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest, searchObservation: 2 });
+    const visible = scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest, searchObservation: 100 });
+    expect(blind.overall).toBe(visible.overall);
+  });
+
+  it("renders as 'n/a' when unmeasured and as a number when measured", () => {
+    expect(describeConfidence(scoreRun({ geo: geo(), journey: journey({ passed: 1 }), manifest: fullPassManifest }))).toContain("search n/a");
+    expect(
+      describeConfidence(scoreRun({ geo: geo(), journey: journey({ passed: 1 }), manifest: fullPassManifest, searchObservation: 55 })),
+    ).toContain("search 55");
+  });
+})

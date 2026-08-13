@@ -7,8 +7,10 @@
  * That is what lets these be covered without launching Chrome, while keeping
  * `index.ts` thin enough to be honestly coverage-excluded.
  */
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { z } from "zod";
 import path from "node:path";
+import { parseUrlList } from "./args.js";
 import { AgentBrowserRuntime, type RuntimeOptions } from "../browser/agent-browser.js";
 import type { BrowserRuntime, BrowserSessionConfig } from "../browser/types.js";
 import { DEFAULT_EVIDENCE_DIRNAME, DEFAULT_PROVIDER, type GeoQaConfig } from "../config/schema.js";
@@ -42,14 +44,37 @@ import {
   type ExperimentSummary,
   type MetricResult,
 } from "../experiments/harness.js";
-import { observeBrowser, observeNetwork, DEFAULT_VERIFY_ENDPOINT } from "../geo/observe.js";
+import { observeBrowser, observeNetwork, observeNetworkVia, DEFAULT_VERIFY_ENDPOINT, GEOJS_SOURCE } from "../geo/observe.js";
 import { loadGeoProfile, toSessionConfig, type ParseResult } from "../geo/profile.js";
 import type { GeoProfile } from "../geo/types.js";
-import { verifyGeo } from "../geo/verify.js";
+import { verifyGeo, withCorroboration } from "../geo/verify.js";
 import { loadJourney } from "../journeys/spec.js";
 import { seedFrom } from "../journeys/random.js";
 import { redactProxyUrl, selectProvider, type TcpProbe } from "../network/provider.js";
 import { buildRuntime, newRunId, type RunEngine, type RunSpec } from "../run/context.js";
+import { containedPath, loadTenant, tenantEvidenceRoot, tenantOwnsTarget } from "../tenant/registry.js";
+import {
+  checkQuota,
+  estimateTrafficMb,
+  runsStartedToday,
+  usageFor,
+  type QuotaDecision,
+} from "../tenant/quota.js";
+import { decodoUsageProbe, type UsageProbe } from "../tenant/usage-probe.js";
+import {
+  filterHistory,
+  findRegressions,
+  nodeHistoryFs,
+  readHistory,
+  rebuildHistory,
+  summariseHistory,
+  type HistoryFilter,
+  type HistoryFs,
+  type HistorySummary,
+  type Regression,
+} from "../history/store.js";
+import { HISTORY_SCHEMA_VERSION, type RunRecord } from "../history/records.js";
+import type { Tenant } from "../tenant/types.js";
 import { executeRun, prepareRun } from "../run/execute.js";
 import {
   expandMatrix,
@@ -145,6 +170,22 @@ export interface CommandDeps {
    * value nobody would notice going stale.
    */
   browserTimeouts?: GeoQaConfig["browser"];
+  /**
+   * Injectable so the unit suite never reads the vendor's usage API. Same reason
+   * `probe` and `pruneFs` exist: a quota check that could only be tested by spending
+   * real traffic would not be tested.
+   */
+  usageProbe?: UsageProbe;
+  /**
+   * The tenant whose own profiles and journeys take precedence, when one is scoped.
+   *
+   * Just the id: the tenant's data directory is derived from it, so there is one place
+   * that knows the layout. Absent means the shared set only, which is what
+   * single-target use has always done.
+   */
+  tenantId?: string;
+  /** Injectable so history tests never touch a real tree. Same reason `pruneFs` exists. */
+  historyFs?: HistoryFs;
 }
 
 /**
@@ -204,6 +245,7 @@ export function verificationSpec(
     initScriptPath: config.initScripts?.[0] ?? null,
     headed: config.headed ?? false,
     // Inert: read by no branch of buildRuntime.
+    corroborateGeo: false,
     profilePath: "",
     journeyPath: "",
     target: "",
@@ -247,40 +289,352 @@ export function resolveEvidenceRoot(repoRoot: string, configuredRoot: string, fl
   return path.isAbsolute(configuredRoot) ? configuredRoot : path.resolve(repoRoot, configuredRoot);
 }
 
+export const tenantsDir = (deps: CommandDeps): string => path.join(deps.repoRoot, "tenants");
+
+export function tenantPath(deps: CommandDeps, id: string): string {
+  return path.join(tenantsDir(deps), id.endsWith(".yaml") ? id : `${id}.yaml`);
+}
+
+export function tenantList(deps: CommandDeps): { tenants: { id: string; name: string; markets: number; targets: number; trafficMb: number }[] } {
+  const tenants = yamlFiles(tenantsDir(deps)).map((file) => {
+    const loaded = loadTenant(path.join(tenantsDir(deps), file));
+    if (!loaded.ok) return { id: file.replace(/\.yaml$/, ""), name: `INVALID: ${loaded.errors[0]}`, markets: 0, targets: 0, trafficMb: 0 };
+    const t = loaded.value;
+    return { id: t.id, name: t.name, markets: t.markets.length, targets: t.targets.length, trafficMb: t.quota.trafficMb };
+  });
+  return { tenants };
+}
+
+/**
+ * Resolve `--tenant` into the tenant and the evidence root its runs must use.
+ *
+ * Two things happen here and neither is optional. The tenant is LOADED, so a
+ * mistyped id refuses instead of creating a directory for a tenant that does not
+ * exist — a run whose evidence lands under `evidence/digilst/` is lost, and lost
+ * quietly. And the evidence root is REPLACED rather than appended to by a caller,
+ * because every path below this point derives from it: a caller that forgot to nest
+ * would write one tenant's run into the shared tree.
+ *
+ * No `--tenant` is not an error. Single-target use is still the common case and the
+ * shared root is still correct for it — but then no tenant rule applies either, which
+ * is why the tenant is returned as null rather than a default one.
+ */
+export function resolveTenant(
+  deps: CommandDeps,
+  tenantId: string | undefined,
+): { ok: true; tenant: Tenant | null; evidenceRoot: string } | { ok: false; errors: string[] } {
+  if (tenantId === undefined || tenantId === "") return { ok: true, tenant: null, evidenceRoot: deps.evidenceRoot };
+  const loaded = loadTenant(tenantPath(deps, tenantId));
+  if (!loaded.ok) return { ok: false, errors: loaded.errors };
+  const root = tenantEvidenceRoot(deps.evidenceRoot, loaded.value.id);
+  if (!root.ok) return { ok: false, errors: root.errors };
+  return { ok: true, tenant: loaded.value, evidenceRoot: root.value };
+}
+
+/**
+ * Is this run allowed, for this tenant?
+ *
+ * Target ownership and market scope, checked BEFORE anything launches. Both are
+ * refusals rather than warnings: a run against a site the tenant does not own is
+ * either a mistake or this engine being aimed at somebody else's product from
+ * residential IPs, and a market nobody asked about is a bill.
+ *
+ * Returns every problem at once, like the matrix's validation, because fixing one
+ * refusal per invocation is how a tool stops being used.
+ */
+export function checkTenantScope(tenant: Tenant, options: { url?: string; markets?: string[] }): string[] {
+  const errors: string[] = [];
+  if (options.url !== undefined && options.url !== "" && !tenantOwnsTarget(tenant, options.url)) {
+    errors.push(
+      `tenant "${tenant.id}" does not own ${options.url} — declared targets are ${tenant.targets.join(", ")}. Add it to tenants/${tenant.id}.yaml if it is theirs.`,
+    );
+  }
+  for (const market of options.markets ?? []) {
+    if (!tenant.markets.includes(market)) {
+      errors.push(`tenant "${tenant.id}" has not asked for market "${market}" — declared markets are ${tenant.markets.join(", ")}`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * Enforce a tenant's proxy budget before anything launches.
+ *
+ * The three-state result is the whole design, and it mirrors every other honest
+ * reading in this codebase. `refused` stops the run. `within` proceeds. `unknown`
+ * proceeds and SAYS SO — because with a vendor-enforced cap per sub-account,
+ * exhaustion is isolated to the tenant that caused it, so blocking every tenant's
+ * work because a usage API is down would cause more harm than it prevents. What it
+ * must never do is read an unmeasured figure as nothing spent.
+ *
+ * `pageLoads` is how many page loads the caller is about to perform — scenarios for a
+ * matrix, one for a journey. The estimate is deliberately coarse and named as an
+ * estimate wherever it surfaces; its job is to catch the 430-page sweep against a
+ * tenant with 100 MB left, not to bill anybody.
+ */
+export async function enforceQuota(
+  deps: CommandDeps,
+  tenant: Tenant,
+  pageLoads: number,
+): Promise<QuotaDecision> {
+  const estimate = estimateTrafficMb(pageLoads);
+  // The sub-account username comes from the environment, via the NAME the tenant
+  // declares. A tenant naming a variable that is not set is unmeasurable, which is
+  // the same state as naming no variable at all — and both are distinct from
+  // measuring zero.
+  const subUser = tenant.proxySubUser === null ? null : (deps.env[tenant.proxySubUser] ?? null);
+  const apiKey = deps.env.DECODO_API_KEY ?? null;
+  const probe = deps.usageProbe ?? decodoUsageProbe;
+  const subUsers = apiKey === null || subUser === null ? null : await probe(apiKey);
+  const runs = runsStartedToday(existingRunIds(deps.evidenceRoot), deps.now());
+  return checkQuota(tenant, usageFor(tenant, subUsers, subUser, runs), estimate);
+}
+
+/**
+ * The run ids already in a tenant's evidence tree.
+ *
+ * A missing directory is an empty list, not an error: a tenant's first run has
+ * nowhere to have written yet, and refusing it would make the quota check the thing
+ * that prevents a tenant from ever starting.
+ */
+function existingRunIds(root: string): string[] {
+  try {
+    return readdirSync(root).filter((entry) => entry.startsWith("run_"));
+  } catch {
+    return [];
+  }
+}
+
 export const profilesDir = (deps: CommandDeps): string => path.join(deps.repoRoot, "profiles");
 export const journeysDir = (deps: CommandDeps): string => path.join(deps.repoRoot, "journeys");
 
-const yamlFiles = (dir: string): string[] => readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort();
+/** A tenant's own data lives beside its registry entry: `tenants/<id>/…`. */
+export const tenantDataDir = (deps: CommandDeps, tenantId: string, kind: "profiles" | "journeys"): string =>
+  path.join(tenantsDir(deps), tenantId, kind);
+
+const yamlFiles = (dir: string): string[] => {
+  try {
+    return readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort();
+  } catch {
+    // A tenant with no profiles of its own is normal, not an error: it uses the
+    // shared set. Only a missing SHARED directory would be a broken install, and
+    // that surfaces as "no profile named X" a moment later.
+    return [];
+  }
+};
+
+/**
+ * A profile or journey id, constrained so it cannot be a path.
+ *
+ * This closes a real traversal that predates multi-tenancy. `profilePath` used to
+ * `path.join` the id straight onto the directory, so `--geo ../../../../etc/hosts`
+ * resolved to `/Volumes/etc/hosts.yaml` and tried to read it — verified before the
+ * fix. Only `.yaml` files were reachable and a parse failure was the usual outcome,
+ * but the id came from the command line, the resolved path was echoed back in the
+ * error, and a YAML parse error can quote the line it failed on. That is an
+ * attacker-controlled read attempt with a disclosure channel, which is enough.
+ *
+ * Same shape as `TenantIdSchema` and for the same reason: these ids become
+ * filenames. A `.yaml` suffix is tolerated because callers and tests pass both
+ * spellings, but nothing else containing a dot is.
+ */
+export const DataIdSchema = z
+  .string()
+  .regex(
+    /^[a-z0-9][a-z0-9-]*[a-z0-9](\.yaml)?$/,
+    "a profile or journey id is lowercase letters, digits and inner hyphens — it becomes a filename, so dots, slashes and traversal are refused",
+  );
+
+/**
+ * Where a named profile or journey is read from, tenant first.
+ *
+ * A tenant's own file WINS over the repo's, which is the point of the feature: a
+ * tenant customises a journey without forking the engine, and the repo's set stays
+ * the shared baseline. Falling back rather than requiring a full set means a tenant
+ * declaring one custom journey still gets the other seven.
+ *
+ * Every candidate goes through `containedPath` against the directory it is supposed
+ * to be in — the id pattern already refuses traversal, and this refuses anything that
+ * got past it, for the reason recorded on `tenantEvidenceRoot`. Belt and braces is
+ * warranted when the consequence is reading a file the caller chose.
+ *
+ * A name that matches nothing anywhere is a refusal naming both places it looked. The
+ * previous behaviour was to return a path that did not exist and let the loader report
+ * ENOENT, which tells a reader about the filesystem rather than about their typo.
+ */
+export function resolveDataPath(
+  deps: CommandDeps,
+  kind: "profiles" | "journeys",
+  id: string,
+): { ok: true; value: string } | { ok: false; errors: string[] } {
+  const valid = DataIdSchema.safeParse(id);
+  if (!valid.success) {
+    return { ok: false, errors: [`${kind === "profiles" ? "profile" : "journey"} "${id}": ${valid.error.issues[0]?.message ?? "invalid id"}`] };
+  }
+  const file = id.endsWith(".yaml") ? id : `${id}.yaml`;
+  const roots = deps.tenantId === undefined ? [] : [tenantDataDir(deps, deps.tenantId, kind)];
+  roots.push(kind === "profiles" ? profilesDir(deps) : journeysDir(deps));
+
+  const looked: string[] = [];
+  for (const root of roots) {
+    const contained = containedPath(root, file);
+    // A refusal here is not "try the next root": it means the id got past the pattern
+    // and is trying to leave. Stop.
+    if (!contained.ok) return contained;
+    looked.push(contained.value);
+    if (existsSync(contained.value)) return { ok: true, value: contained.value };
+  }
+  return {
+    ok: false,
+    errors: [`no ${kind === "profiles" ? "profile" : "journey"} named "${id}" — looked in ${looked.join(" and ")}`],
+  };
+}
 
 export function profilePath(deps: CommandDeps, id: string): string {
-  return path.join(profilesDir(deps), id.endsWith(".yaml") ? id : `${id}.yaml`);
+  const resolved = resolveDataPath(deps, "profiles", id);
+  if (!resolved.ok) throw new Error(resolved.errors.join("; "));
+  return resolved.value;
 }
 
 export function journeyPath(deps: CommandDeps, id: string): string {
-  return path.join(journeysDir(deps), id.endsWith(".yaml") ? id : `${id}.yaml`);
+  const resolved = resolveDataPath(deps, "journeys", id);
+  if (!resolved.ok) throw new Error(resolved.errors.join("; "));
+  return resolved.value;
 }
 
 export function loadProfileOrThrow(deps: CommandDeps, id: string): GeoProfile {
-  const loaded = loadGeoProfile(profilePath(deps, id));
+  const resolved = resolveDataPath(deps, "profiles", id);
+  if (!resolved.ok) throw new Error(resolved.errors.join("; "));
+  const loaded = loadGeoProfile(resolved.value);
   if (!loaded.ok) throw new Error(`profile "${id}": ${loaded.errors.join("; ")}`);
   return loaded.value;
 }
 
 // ── list ─────────────────────────────────────────────────────────────────
 
-export function profileList(deps: CommandDeps): { profiles: { id: string; label: string; country: string; city: string; device: string }[] } {
-  const profiles = yamlFiles(profilesDir(deps)).map((file) => {
-    const loaded = loadGeoProfile(path.join(profilesDir(deps), file));
-    if (!loaded.ok) return { id: file.replace(/\.yaml$/, ""), label: `INVALID: ${loaded.errors[0]}`, country: "?", city: "?", device: "?" };
+/**
+ * Every name available for a kind, tenant's own first and the shared set after.
+ *
+ * De-duplicated by filename, so a tenant's `oslo-desktop.yaml` REPLACES the repo's in
+ * the listing rather than appearing twice — which is what `resolveDataPath` does when
+ * a run asks for it, and a listing that disagreed with the resolver would be worse
+ * than no listing.
+ */
+function availableData(deps: CommandDeps, kind: "profiles" | "journeys"): { file: string; dir: string }[] {
+  const dirs = deps.tenantId === undefined ? [] : [tenantDataDir(deps, deps.tenantId, kind)];
+  dirs.push(kind === "profiles" ? profilesDir(deps) : journeysDir(deps));
+  const seen = new Set<string>();
+  const found: { file: string; dir: string }[] = [];
+  for (const dir of dirs) {
+    for (const file of yamlFiles(dir)) {
+      if (seen.has(file)) continue;
+      seen.add(file);
+      found.push({ file, dir });
+    }
+  }
+  return found.sort((a, b) => a.file.localeCompare(b.file));
+}
+
+export function profileList(deps: CommandDeps): {
+  profiles: { id: string; label: string; country: string; city: string; device: string; visitorType: string }[];
+} {
+  const profiles = availableData(deps, "profiles").map(({ file, dir }) => {
+    const loaded = loadGeoProfile(path.join(dir, file));
+    if (!loaded.ok) {
+      // An unreadable profile is listed rather than skipped — a profile that
+      // vanished from a listing is how a market silently stops being covered — and
+      // its visitorType is "?" rather than a guess, because a default here would
+      // make it selectable by place.
+      return { id: file.replace(/\.yaml$/, ""), label: `INVALID: ${loaded.errors[0]}`, country: "?", city: "?", device: "?", visitorType: "?" };
+    }
     const p = loaded.value;
-    return { id: p.id, label: p.label, country: p.market.country, city: p.market.city, device: p.device.id };
+    return { id: p.id, label: p.label, country: p.market.country, city: p.market.city, device: p.device.id, visitorType: p.visitorType };
   });
   return { profiles };
 }
 
+/** The device a place-based selection assumes. Same reasoning as `DEFAULT_PROFILE_ID`. */
+export const DEFAULT_DEVICE = "desktop";
+
+export interface PlaceSelection {
+  /** A profile id, the direct way. */
+  geo?: string;
+  country?: string;
+  city?: string;
+  device?: string;
+  /**
+   * Which kind of visitor the place should resolve to. Defaults to `anonymous`.
+   *
+   * A first-time visitor is the neutral subject: it carries nothing in, keeps
+   * nothing out, and is what a place name means when nobody says otherwise. Without
+   * this the moment a second profile existed for one place — the returning-visitor
+   * one — every `--country NO --city Oslo` became ambiguous and refused, which is
+   * the refusal working correctly and the feature becoming useless.
+   */
+  visitor?: GeoProfile["visitorType"];
+}
+
+/**
+ * A profile id from `--country` / `--city`, or from `--geo` directly.
+ *
+ * The place form exists because a profile id is an implementation detail of this
+ * repo's `profiles/` directory, and the question anybody actually has is "what
+ * does a visitor in Oslo see". It RESOLVES rather than constructs: `oslo-desktop`
+ * is looked up among the profiles that exist, so `--city Osló` refuses instead of
+ * building a path to a file that is not there and failing per scenario.
+ *
+ * Giving both forms is refused rather than ranked. A `--geo bergen-desktop
+ * --city Oslo` has two answers and no correct one, and picking either silently
+ * means a run reporting a city it was not asked about — the single worst failure
+ * this engine can have.
+ */
+export function resolveProfileId(
+  deps: CommandDeps,
+  selection: PlaceSelection,
+): { ok: true; id: string } | { ok: false; errors: string[] } {
+  const place = selection.country !== undefined || selection.city !== undefined;
+  if (selection.geo !== undefined && place) {
+    return {
+      ok: false,
+      errors: [`--geo ${selection.geo} and --country/--city both name an identity — give one`],
+    };
+  }
+  if (!place) return { ok: true, id: selection.geo ?? DEFAULT_PROFILE_ID };
+
+  const device = selection.device ?? DEFAULT_DEVICE;
+  const visitor = selection.visitor ?? "anonymous";
+  const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+  const matches = profileList(deps).profiles.filter(
+    (p) =>
+      p.device === device &&
+      p.visitorType === visitor &&
+      (selection.country === undefined || same(p.country, selection.country)) &&
+      (selection.city === undefined || same(p.city, selection.city)),
+  );
+  const asked = [selection.country, selection.city].filter((v) => v !== undefined).join("/");
+  if (matches.length === 0) {
+    // The available places, because "no profile for NO/Ålesund" without them
+    // sends someone to read the directory, and the answer is a flag away.
+    const places = [
+      ...new Set(
+        profileList(deps)
+          .profiles.filter((p) => p.device === device && p.visitorType === visitor)
+          .map((p) => `${p.country}/${p.city}`),
+      ),
+    ];
+    return { ok: false, errors: [`no ${visitor} ${device} profile for ${asked} — available: ${places.sort().join(", ")}`] };
+  }
+  // Ambiguity refuses too: two profiles for one place would be a run whose
+  // identity depends on directory order.
+  if (matches.length > 1) {
+    return { ok: false, errors: [`${asked} on ${device} as a ${visitor} visitor matches ${matches.length} profiles (${matches.map((p) => p.id).join(", ")}) — name one with --geo`] };
+  }
+  return { ok: true, id: (matches[0] as { id: string }).id };
+}
+
 export function journeyList(deps: CommandDeps): { journeys: { id: string; title: string; steps: number }[] } {
-  const journeys = yamlFiles(journeysDir(deps)).map((file) => {
-    const loaded = loadJourney(path.join(journeysDir(deps), file));
+  const journeys = availableData(deps, "journeys").map(({ file, dir }) => {
+    const loaded = loadJourney(path.join(dir, file));
     if (!loaded.ok) return { id: file.replace(/\.yaml$/, ""), title: `INVALID: ${loaded.errors[0]}`, steps: 0 };
     return { id: loaded.value.id, title: loaded.value.title, steps: loaded.value.steps.length };
   });
@@ -411,6 +765,18 @@ export interface GeoVerifyOptions {
   providerName?: string;
   verifyEndpoint?: string;
   engine?: RunEngine;
+  /**
+   * Read a SECOND, independent IP-geo database and report whether the two agree.
+   *
+   * Default ON for this command, because "where is this session" is the entire
+   * question it answers, it runs once, and one extra page load is nothing against
+   * a wrong answer. `journey run` and `matrix run` default it OFF for the opposite
+   * reason: they are where volume lives, a 430-page sweep would be 430 extra
+   * probes against a free endpoint's monthly allowance, and an engine that
+   * exhausts its own corroborating source starts reporting `unverified` for every
+   * run — the failure Decodo's 407 already taught once.
+   */
+  corroborate?: boolean;
 }
 
 export async function proxyVerify(deps: CommandDeps, options: GeoVerifyOptions): Promise<GeoVerifyResult> {
@@ -448,12 +814,19 @@ export async function proxyVerify(deps: CommandDeps, options: GeoVerifyOptions):
     warnings.push(...(await applyDeviceProfile(runtime, profile)));
     const network = await observeNetwork(runtime, options.verifyEndpoint ?? DEFAULT_VERIFY_ENDPOINT);
     const browser = await observeBrowser(runtime);
+    const verified = verifyGeo(profile, network, browser);
+    // The corroborating read comes AFTER the browser observation, not between the
+    // two network reads: a second navigation resets nothing here, but it does add
+    // wall clock, and the browser axes should be read as close to the primary
+    // identity as the sequence allows.
+    const verification =
+      options.corroborate === false ? verified : withCorroboration(verified, await observeNetworkVia(runtime, GEOJS_SOURCE));
     return {
       profileId: profile.id,
       provider: provider.name,
       proxy: redactProxyUrl(session.session.proxyUrl),
       engine,
-      verification: verifyGeo(profile, network, browser),
+      verification,
       warnings,
     };
   } finally {
@@ -466,6 +839,10 @@ export async function proxyVerify(deps: CommandDeps, options: GeoVerifyOptions):
 export interface JourneyRunOptions {
   url: string;
   profileId: string;
+  /** Read a second IP-geo database and report whether the two agree. */
+  corroborate?: boolean;
+  /** Recorded on the run's history entry, so a tenant's trend is its own. */
+  tenantId?: string;
   journeyId: string;
   providerName?: string;
   vars?: Record<string, string>;
@@ -508,6 +885,7 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
       // Default derived from the run id: each run paces differently, and any one
       // run replays exactly. `--seed` from a failing run's run.json repeats it.
       seed: options.seed ?? seedFrom(runId),
+      corroborateGeo: options.corroborate === true,
       target: options.url,
       profilePath: profilePath(deps, options.profileId),
       journeyPath: journeyPath(deps, options.journeyId),
@@ -528,6 +906,7 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
     provider,
     log: deps.log,
     repeat: options.repeat ?? 1,
+    ...(options.tenantId !== undefined ? { tenantId: options.tenantId } : {}),
   });
   return { ...result, warnings };
 }
@@ -542,11 +921,49 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
  */
 export const DEFAULT_MATRIX_DEVICES = ["mobile", "desktop"];
 
+/**
+ * Read a `--urls-file` into the matrix's target axis.
+ *
+ * Unreadable is an ERROR, never an empty list: a missing or unreadable file
+ * that degraded to "no targets" would run the matrix against the single `--url`
+ * and report a clean pass over one page while the operator believed they had
+ * swept a sitemap.
+ */
+export function loadUrlList(file: string): { ok: true; urls: string[] } | { ok: false; errors: string[] } {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (e: unknown) {
+    return { ok: false, errors: [`--urls-file ${file}: ${e instanceof Error ? e.message : String(e)}`] };
+  }
+  const parsed = parseUrlList(text);
+  return parsed.ok ? parsed : { ok: false, errors: parsed.errors.map((line) => `--urls-file ${file}: ${line}`) };
+}
+
 export interface MatrixRunOptions {
+  /**
+   * The target when the matrix carries no URL axis, and the fallback for a
+   * scenario whose own target is null.
+   */
   url: string;
   markets: string[];
   journeys: string[];
   devices?: string[];
+  /**
+   * Pages to visit, one scenario each per market/device/journey. Empty or absent
+   * keeps the single-`--url` shape.
+   */
+  targets?: string[];
+  /**
+   * Read a second IP-geo database per scenario and report whether the two agree.
+   *
+   * Off by default, and the default matters more here than anywhere else: this is
+   * one extra probe PER SCENARIO, so a 430-page sweep is 430 of them against a
+   * free endpoint's monthly allowance. An engine that exhausts its own
+   * corroborating source reports `unverified` for every later run — the shape of
+   * failure an exhausted proxy already produced once.
+   */
+  corroborate?: boolean;
   providerName?: string;
   engine?: RunEngine;
   vars?: Record<string, string>;
@@ -611,20 +1028,40 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
   const errors: string[] = [];
   if (options.markets.length === 0) errors.push("matrix run needs at least one --market");
   if (options.journeys.length === 0) errors.push("matrix run needs at least one --journey");
+  const targets = options.targets ?? [];
+  // Checked here rather than left to `prepareRun`: an empty target reaches the
+  // browser as a navigation to nothing, once per scenario, and the matrix reports
+  // N unmeasured scenarios instead of one refused argument.
+  if (targets.length === 0 && options.url === "") {
+    errors.push("matrix run needs --url, or --urls-file to sweep a list of pages");
+  }
 
   // Expanded through the same function the runner uses, so what is validated and
   // printed here is exactly what will be executed — including its dedupe and its
   // ordering.
-  const axes = { markets: options.markets, devices, journeys: options.journeys };
+  const axes = { markets: options.markets, devices, journeys: options.journeys, targets };
   const scenarios = expandMatrix(axes);
 
+  // Resolved through `resolveDataPath` rather than `profilePath`, because a matrix
+  // reports EVERY problem at once and a throwing path builder would abort on the
+  // first — turning "these four names are wrong" into "this one is", once per run.
   for (const profileId of [...new Set(scenarios.map((s) => `${s.market}-${s.device}`))]) {
-    const loaded = loadGeoProfile(profilePath(deps, profileId));
+    const file = resolveDataPath(deps, "profiles", profileId);
+    if (!file.ok) {
+      errors.push(...file.errors);
+      continue;
+    }
+    const loaded = loadGeoProfile(file.value);
     if (!loaded.ok) errors.push(`profile "${profileId}": ${loaded.errors.join("; ")}`);
   }
   const writeJourneys: string[] = [];
   for (const journeyId of [...new Set(scenarios.map((s) => s.journey))]) {
-    const loaded = loadJourney(journeyPath(deps, journeyId));
+    const file = resolveDataPath(deps, "journeys", journeyId);
+    if (!file.ok) {
+      errors.push(...file.errors);
+      continue;
+    }
+    const loaded = loadJourney(file.value);
     if (!loaded.ok) errors.push(`journey "${journeyId}": ${loaded.errors.join("; ")}`);
     else if (loaded.value.writes) writeJourneys.push(journeyId);
   }
@@ -669,13 +1106,26 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
       // one profile prepared in the same millisecond would otherwise share an
       // evidence directory, and the second would overwrite the first's manifest
       // — a matrix losing runs while reporting a full count.
-      const runId = newRunId(`${profileId}-${scenario.journey}`, deps.now());
+      // The scenario's index disambiguates a URL axis, and only a URL axis: two
+      // pages share a profile, a journey and a millisecond under concurrency, and
+      // a run id is `run_<ms>_<slug>`, so they would share an evidence directory
+      // and the second would overwrite the first's manifest. The index rather
+      // than the URL itself — a URL contains `/` and `:`, and the run id becomes a
+      // directory name. Appended only when the axis is present, so a plain
+      // market × device × journey matrix keeps the run ids it had.
+      const slug = scenario.target === null ? `${profileId}-${scenario.journey}` : `${profileId}-${scenario.journey}-${scenario.index}`;
+      const runId = newRunId(slug, deps.now());
       const prepared = await prepareRun(
         {
           runId,
           engine,
           seed: scenarioSeed(baseSeed, scenario.key),
-          target: options.url,
+          corroborateGeo: options.corroborate === true,
+          // The scenario's own page when the matrix carries a URL axis. Without
+          // this the axis expanded, every scenario got its own key and seed, and
+          // all of them visited `--url` — a sweep reporting 430 clean pages
+          // having loaded one of them 430 times.
+          target: scenario.target ?? options.url,
           profilePath: profilePath(deps, profileId),
           journeyPath: journeyPath(deps, scenario.journey),
           evidenceRoot: deps.evidenceRoot,
@@ -689,7 +1139,13 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
       // Prefixed with the scenario, because under concurrency a bare warning
       // cannot be attributed to the market it is about.
       for (const w of prepared.warnings) deps.log(`warning: ${scenario.key}: ${w}`);
-      return { spec: prepared.spec, provider, log: deps.log, repeat: options.repeat ?? 1 };
+      return {
+        spec: prepared.spec,
+        provider,
+        log: deps.log,
+        repeat: options.repeat ?? 1,
+        ...(deps.tenantId !== undefined ? { tenantId: deps.tenantId } : {}),
+      };
     },
     run: deps.runOnce,
     now: deps.now,
@@ -709,6 +1165,11 @@ function renderScenario(outcome: MatrixScenarioResult): string {
 
 export function renderMatrixResult(matrix: MatrixRunResult): string {
   const lines: string[] = [];
+  // Said out loud, because the difference between one page and 430 is the
+  // difference between a smoke test and half a gigabyte of proxy traffic, and the
+  // scenario count alone does not distinguish "43 markets" from "43 pages".
+  const pages = new Set(matrix.scenarios.map((s) => s.target).filter((t) => t !== null)).size;
+  const pagesNote = pages === 0 ? [] : [`  ${pages} page(s) from the URL axis`];
   // Tense matters here and is not cosmetic: after the fact the sentence is a
   // record of real forms submitted against a live product, and reading it as a
   // warning about something still to come would be the wrong action entirely.
@@ -725,6 +1186,7 @@ export function renderMatrixResult(matrix: MatrixRunResult): string {
     lines.push(
       `matrix dry run — ${matrix.scenarios.length} scenario(s), nothing launched`,
       `  provider ${matrix.provider}, engine ${matrix.engine}, base seed ${matrix.baseSeed}`,
+      ...pagesNote,
       ...matrix.scenarios.map((s) => `  ${s.key}`),
       ...writesNote,
     );
@@ -734,6 +1196,7 @@ export function renderMatrixResult(matrix: MatrixRunResult): string {
       `${matrix.result.verdict} — ${c.total} scenario(s): ${c.passed} passed, ${c.warned} warned, ${c.siteFailed} site-failed, ${c.unmeasured} unmeasured`,
       `  concurrency limit ${matrix.result.concurrency.limit}, peak in flight ${matrix.result.concurrency.peakInFlight}, ${matrix.result.durationMs}ms`,
       `  provider ${matrix.provider}, engine ${matrix.engine}, base seed ${matrix.baseSeed} (replays the whole matrix)`,
+      ...pagesNote,
       // Only the scenarios a human acts on are listed; the passing ones are a
       // count, because 96 lines of "passed" is how the four that matter get
       // missed. --json carries every scenario either way.
@@ -917,6 +1380,130 @@ export function renderPruneResult(result: EvidencePruneResult): string {
   return lines.join("\n");
 }
 
+// ── runs (history) ───────────────────────────────────────────────────────
+
+export interface RunsListResult {
+  summary: HistorySummary;
+  runs: RunRecord[];
+  regressions: Regression[];
+  /** Index lines that could not be parsed. A half-written last line is normal. */
+  skipped: number;
+  /** Said out loud when the index has gaps a rebuild would close. */
+  warnings: string[];
+}
+
+/**
+ * The history, filtered, with regressions.
+ *
+ * `limit` applies to the RUN LIST only and never to the summary or the regressions:
+ * "the last 20 runs" is a display preference, while "how many runs have there been"
+ * and "what broke" are questions about all of them. Truncating the answer to match the
+ * display would be a quieter version of the same lie as an unmeasured metric reported
+ * as fine.
+ */
+export function runsList(
+  deps: CommandDeps,
+  options: HistoryFilter & { limit?: number } = {},
+): RunsListResult {
+  const { records, skipped } = readHistory(deps.evidenceRoot, deps.historyFs ?? nodeHistoryFs);
+  const matching = filterHistory(records, options);
+  const warnings: string[] = [];
+  if (skipped > 0) {
+    warnings.push(
+      `${skipped} line(s) of the run index could not be parsed and were skipped — a half-written final line is normal after an interrupted run. The evidence is still on disk: "geoqa runs rebuild" reconstructs the index from it.`,
+    );
+  }
+  const limit = options.limit ?? 20;
+  return {
+    // Over EVERY matching run, not the truncated list.
+    summary: summariseHistory(matching),
+    runs: matching.slice(-limit).reverse(),
+    regressions: findRegressions(matching),
+    skipped,
+    warnings,
+  };
+}
+
+/**
+ * Rebuild the index from the runs on disk.
+ *
+ * The operation that makes the index safe to treat as a cache. `run.json` is the
+ * authority on its own run, so a corrupt, truncated, hand-edited or deleted index costs
+ * nothing permanent — which is the whole reason this is JSONL over the evidence tree
+ * rather than a database that owns the truth.
+ */
+export function runsRebuild(deps: CommandDeps): { written: number; unreadable: string[] } {
+  return rebuildHistory(
+    deps.evidenceRoot,
+    (runJson, runId) => {
+      // `run.json` holds the run, the profile and the journey; a record needs the
+      // result shape, so the fields are read defensively rather than cast. A file that
+      // does not describe a run is reported by the caller, not guessed at.
+      const doc = runJson as { runId?: string; target?: string; profile?: { id?: string }; journey?: { id?: string; verdict?: string; seed?: number } };
+      if (typeof doc.runId !== "string") return null;
+      return {
+        schemaVersion: HISTORY_SCHEMA_VERSION,
+        runId: doc.runId,
+        tenantId: null,
+        target: typeof doc.target === "string" ? doc.target : "",
+        profileId: doc.profile?.id ?? "",
+        journeyId: doc.journey?.id ?? "",
+        // The JOURNEY's verdict, which is what run.json records. A rebuilt record is
+        // therefore slightly poorer than an appended one — run.json does not carry the
+        // assembled run verdict or the confidence report — and that is stated rather
+        // than papered over with defaults that would read as real readings.
+        verdict: (doc.journey?.verdict as RunRecord["verdict"] | undefined) ?? "ERROR",
+        startedAt: new Date(Number(/^run_(\d+)_/.exec(runId)?.[1] ?? 0)).toISOString(),
+        durationMs: 0,
+        seed: doc.journey?.seed ?? 0,
+        engine: "unknown",
+        evidenceId: null,
+        findings: { total: 0, bySeverity: {}, byCategory: {}, labels: [] },
+        confidence: { overall: 0, geo: 0, browser: 0, journey: 0, evidence: 0 },
+        geo: {
+          requestedCountry: "",
+          requestedCity: "",
+          observedCountry: null,
+          observedCity: null,
+          country: "unverified",
+          city: "unverified",
+          egressHeld: "unverified",
+          agreement: "unverified",
+        },
+        latencyMs: null,
+        vitals: { lcp: null, cls: null, ttfb: null, inp: null },
+      };
+    },
+    deps.historyFs ?? nodeHistoryFs,
+  );
+}
+
+export function renderRunsList(result: RunsListResult): string {
+  const lines: string[] = [];
+  const s = result.summary;
+  lines.push(
+    s.runs === 0
+      ? "no runs recorded yet"
+      : `${s.runs} run(s) from ${s.first} to ${s.last} — ${Object.entries(s.byVerdict).map(([v, n]) => `${n} ${v}`).join(", ")}`,
+  );
+  // Null, not 0, on an empty history: "no runs" and "runs that scored zero" are
+  // different facts and only one of them is bad news.
+  if (s.meanConfidence !== null) lines.push(`  mean overall confidence ${s.meanConfidence}`);
+  for (const w of result.warnings) lines.push(`  ! ${w}`);
+  if (result.regressions.length > 0) {
+    lines.push(`  ${result.regressions.length} regression(s) — a check that used to pass and now does not:`);
+    for (const r of result.regressions.slice(0, 10)) {
+      lines.push(`    ${r.label} · ${r.profileId}/${r.journeyId} · last good ${r.lastGood.startedAt} → first bad ${r.firstBad.startedAt}`);
+    }
+  }
+  for (const run of result.runs) {
+    lines.push(
+      `  ${run.verdict.padEnd(18)} ${run.startedAt} ${run.profileId.padEnd(18)} ${run.journeyId.padEnd(18)} conf ${String(run.confidence.overall).padStart(3)} ${run.target}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 // ── experiment run ───────────────────────────────────────────────────────
 
 export interface ExperimentOptions {
@@ -925,6 +1512,26 @@ export interface ExperimentOptions {
   profileId: string;
   url: string;
   providerName?: string;
+  /**
+   * Which browser adapter the samples are taken through.
+   *
+   * Absent means `DEFAULT_ENGINE`, which is what every experiment measured before
+   * this field existed — so an experiment re-run without `--engine` still measures
+   * what its recorded results measured. The field matters because it is the
+   * difference between a feasibility number about the daemon engine and one about
+   * Playwright, and EXP-001's own hypothesis is about the proxy rather than the
+   * adapter: measuring it through an engine nobody uses answers a question nobody
+   * asked.
+   */
+  engine?: RunEngine;
+  /**
+   * The egress-identity endpoint. Absent means `DEFAULT_VERIFY_ENDPOINT`.
+   *
+   * Here because the samplers reached for the constant directly, so a configured
+   * `network.verifyEndpoint` did not reach an experiment at all — the exact shape of
+   * defect B-1 closed for the config file, reappearing one layer down.
+   */
+  verifyEndpoint?: string;
 }
 
 export type Sampler = (deps: CommandDeps, options: ExperimentOptions, index: number) => Promise<Record<string, unknown>>;

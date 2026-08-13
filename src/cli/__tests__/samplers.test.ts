@@ -7,7 +7,8 @@ import type { GeoQaRunResult } from "../../findings/types.js";
 import type { ExperimentSample } from "../../experiments/harness.js";
 import { EXP_007 } from "../../experiments/definitions.js";
 import { bad, fakeRuntime, ok } from "../../run/__tests__/fake-runtime.js";
-import { defaultDeps, profileList, type CommandDeps } from "../commands.js";
+import { defaultDeps, profileList, DEFAULT_ENGINE, type CommandDeps, type RuntimeRequest } from "../commands.js";
+import { parseArgs } from "../args.js";
 import {
   DEFAULT_CONCURRENCY,
   DEFAULT_STABILITY_READS,
@@ -18,6 +19,7 @@ import {
   SAMPLERS,
   concurrencyProfiles,
   concurrencyShapeNote,
+  experimentKnobs,
   resolveConcurrency,
   resolveStabilityWindow,
   sampleConcurrency,
@@ -744,5 +746,151 @@ describe("the sampler registry", () => {
   it("states plainly why the geographic targets cannot be evaluated yet", () => {
     expect(NO_VENDOR_NOTE).toContain("unmeasured");
     expect(NO_VENDOR_NOTE).toContain("not a pass");
+  });
+});
+
+describe("experimentKnobs", () => {
+  const knobs = (argv: string[]) => experimentKnobs(parseArgs(argv));
+
+  it("reaches EXP-002's stability window, which is the whole reason it exists", () => {
+    // The window is a parameter and nothing reached it, so the experiment measured
+    // 24 seconds while the PRD asked about ten minutes.
+    expect(knobs(["experiment", "run", "EXP-002", "--stability-window", "10m"])).toEqual({
+      ok: true,
+      knobs: { stabilityWindowMs: 600_000 },
+    });
+  });
+
+  it("reaches the read count and the concurrency, and passes nothing it was not given", () => {
+    expect(knobs(["experiment", "run", "EXP-002", "--stability-reads", "9"])).toEqual({
+      ok: true,
+      knobs: { stabilityReads: 9 },
+    });
+    expect(knobs(["experiment", "run", "EXP-007", "--concurrency", "5"])).toEqual({
+      ok: true,
+      knobs: { concurrency: 5 },
+    });
+    // Absent means absent: the sampler applies its own default, so an "unset" that
+    // arrived as a number would be a second source of truth for it.
+    expect(knobs(["experiment", "run", "EXP-001"])).toEqual({ ok: true, knobs: {} });
+  });
+
+  it("REFUSES an unreadable duration instead of falling back to the cheap default", () => {
+    const result = knobs(["experiment", "run", "EXP-002", "--stability-window", "ten-minutes"]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("is not a duration");
+  });
+
+  it("refuses a flag given with no value, which is where a fallback would be invisible", () => {
+    // `--stability-window --json` is a missing value, and 24s dressed as ten
+    // minutes is the exact failure this slice closes.
+    const window = knobs(["experiment", "run", "EXP-002", "--stability-window", "--json"]);
+    expect(window.ok).toBe(false);
+    const reads = knobs(["experiment", "run", "EXP-002", "--stability-reads", "--json"]);
+    expect(reads.ok).toBe(false);
+    const concurrency = knobs(["experiment", "run", "EXP-007", "--concurrency", "--json"]);
+    expect(concurrency.ok).toBe(false);
+  });
+
+  it("refuses a non-integer read count and a non-integer concurrency", () => {
+    const reads = knobs(["experiment", "run", "EXP-002", "--stability-reads", "2.5"]);
+    expect(reads.ok).toBe(false);
+    if (reads.ok) throw new Error("expected a refusal");
+    expect(reads.errors[0]).toContain("not a whole number");
+    expect(knobs(["experiment", "run", "EXP-007", "--concurrency", "two"]).ok).toBe(false);
+  });
+
+  it("reports every bad knob at once", () => {
+    const result = knobs(["experiment", "run", "EXP-002", "--stability-window", "soon", "--stability-reads", "x", "--concurrency", "y"]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors).toHaveLength(3);
+  });
+
+  it("hands resolveStabilityWindow a window it then applies", () => {
+    // End to end, because the two halves passing separately is exactly the state
+    // this slice found: a resolver that worked and a flag that never arrived.
+    const result = knobs(["experiment", "run", "EXP-002", "--stability-window", "10m", "--stability-reads", "3"]);
+    if (!result.ok) throw new Error("expected the knobs to parse");
+    const window = resolveStabilityWindow({ id: "EXP-002", samples: 3, profileId: "oslo-desktop", url: "https://x", ...result.knobs });
+    expect(window).toEqual({ windowMs: 600_000, reads: 3, intervalMs: 300_000 });
+    expect(stabilityWindowNote(window)).toContain("10min");
+  });
+});
+
+describe("every sampler honours --engine and --verifyEndpoint (D-1b)", () => {
+  /** Capture what each sampler asked its runtime factory for. */
+  const capturing = (): { requests: (RuntimeRequest | undefined)[]; opened: string[]; deps: CommandDeps } => {
+    const requests: (RuntimeRequest | undefined)[] = [];
+    const opened: string[] = [];
+    const d = deps({
+      makeRuntime: (_config, request) => {
+        requests.push(request);
+        return fakeRuntime({
+          open: (url: string) => {
+            opened.push(url);
+            return Promise.resolve(ok({ url, title: "T", targetId: "t", launchHash: "h", browserLaunched: false }));
+          },
+        });
+      },
+    });
+    return { requests, opened, deps: d };
+  };
+
+  const base = { id: "EXP-001", samples: 1, profileId: "oslo-desktop", url: "https://x" };
+
+  it("takes EXP-001's samples through the engine it was asked for, not agent-browser", async () => {
+    // Before this, `experiment run --engine playwright` took every sample through
+    // agent-browser and reported a clean result for an engine it never touched.
+    const cap = capturing();
+    await sampleEgress(cap.deps, { ...base, engine: "playwright" }, 0);
+    expect(cap.requests.map((r) => r?.engine)).toEqual(["playwright"]);
+    // And the profile travels with it: a Playwright context with no locale renders
+    // this machine's geography while claiming to verify a market's.
+    expect(cap.requests[0]?.profile.id).toBe("oslo-desktop");
+  });
+
+  it("defaults to the engine every recorded experiment result was measured on", async () => {
+    // An experiment re-run without --engine must still measure what its stored
+    // results measured, or the two are not comparable.
+    const cap = capturing();
+    await sampleEgress(cap.deps, base, 0);
+    expect(cap.requests[0]?.engine).toBe(DEFAULT_ENGINE);
+  });
+
+  it("reads the endpoint it was given rather than the constant", async () => {
+    // The samplers reached for DEFAULT_VERIFY_ENDPOINT directly, so a configured
+    // network.verifyEndpoint did not reach an experiment at all — B-1's defect one
+    // layer down.
+    const cap = capturing();
+    await sampleEgress(cap.deps, { ...base, verifyEndpoint: "http://127.0.0.1:1/ipinfo" }, 0);
+    expect(cap.opened).toContain("http://127.0.0.1:1/ipinfo");
+  });
+
+  it("carries the engine into EXP-003's TWO isolated sessions, not just the first", async () => {
+    // Two runtimes, and a per-call-site default is exactly how one of them ends up
+    // on a different engine than the other while the sample reports one number.
+    const cap = capturing();
+    await sampleIsolation(cap.deps, { ...base, id: "EXP-003", engine: "playwright" }, 0);
+    expect(cap.requests.map((r) => r?.engine)).toEqual(["playwright", "playwright"]);
+  });
+
+  it("carries it into EXP-004 and EXP-002", async () => {
+    const four = capturing();
+    await sampleProfileConsistency(four.deps, { ...base, id: "EXP-004", engine: "playwright" }, 0);
+    expect(four.requests[0]?.engine).toBe("playwright");
+
+    const two = capturing();
+    await sampleStability(two.deps, { ...base, id: "EXP-002", engine: "playwright", stabilityWindowMs: 2, stabilityReads: 2 }, 0);
+    expect(two.requests[0]?.engine).toBe("playwright");
+  });
+
+  it("carries it into EXP-000, whose SUBJECT is the adapter", async () => {
+    // The one experiment where the engine is the thing under test rather than a
+    // detail of how the measurement was taken.
+    const cap = capturing();
+    await sampleBrowserPrimitives(cap.deps, { ...base, id: "EXP-000", engine: "playwright" });
+    expect(cap.requests[0]?.engine).toBe("playwright");
   });
 });

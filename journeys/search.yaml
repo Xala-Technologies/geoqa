@@ -1,0 +1,113 @@
+id: search
+title: Site search, and opening a result
+description: >
+  J03. Land, find the search box, type a term, submit, read the results, open
+  one. Four real navigations if you count the result page, and it is the first
+  journey in this repo that CLICKS anything — `browse.yaml` has none, so until
+  now "open a result" and "follow a contextual link" were capabilities nothing
+  above the runtime adapters ever exercised.
+
+  Search is worth a journey of its own rather than a step inside another one,
+  because it is the flow where a site most often breaks in a way that renders
+  perfectly: the box accepts input, the button submits, and the results page
+  comes back empty, or 500s, or returns the same page it started on. Every one of
+  those looks fine in a screenshot of the landing page.
+
+  The term is a VARIABLE (`--var query=...`) and it has to be. A search for a
+  word the site does not contain returns an empty result set, and an empty result
+  set is a CORRECT answer, not a defect — so this journey can only assert a
+  minimum result count when the caller supplies a term they know matches. Without
+  `--var query`, `{query}` is left as a literal (an unknown placeholder is never
+  silently blanked), so the search runs for the string "{query}", finds nothing,
+  and the result-count check fails honestly rather than misleadingly. Supply the
+  term.
+
+  Selectors are unions where the step is an ASSERTION: a search box is
+  `input[type=search]` on some sites, `name=q` on others and `role=searchbox` on a
+  few, and a runner that only knows one of them reports "no search on this site"
+  about a site that has one. A union answers "does this exist" correctly.
+
+  A union is NOT safe in a click step, and the click below is deliberately narrow
+  because of it. A CSS comma is resolved in document order, not as a preference
+  list, so a broad fallback clicks whichever element happens to come first in the
+  page — a nav item on most real sites. That failure is silent: it does not error,
+  it clicks the wrong thing and every check afterwards describes the wrong page.
+  See `docs/gaps.md` C-11, which was found by a sibling journey reporting PASS on a
+  deliberately broken site.
+
+  Selectors are not interpolated today, which is a real limit for a tenant whose
+  markup none of these unions match — noted rather than worked around.
+writes: false
+steps:
+  - { action: open, url: "{target}", label: land on the page }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: no-http-5xx, severity: critical }
+
+  # Find the box the way a visitor does — by looking for it.
+  - { action: pause, minMs: 900, maxMs: 2600, label: look for the search box }
+  - {
+      action: assert,
+      check: selector-visible,
+      selector: "input[type='search'], input[name='q'], input[name='s'], [role='searchbox']",
+      severity: high,
+      label: has a search box,
+    }
+  - { action: screenshot, label: before-search }
+
+  # Type at human speed, then submit with the key a visitor actually presses.
+  - {
+      action: fill,
+      selector: "input[type='search'], input[name='q'], input[name='s'], [role='searchbox']",
+      value: "{query}",
+      label: type the query,
+    }
+  - { action: pause, minMs: 400, maxMs: 1400, label: hesitate before submitting }
+  - { action: press, key: Enter, label: submit the search }
+
+  # A results PAGE, not the page we started on. `url-matches` is the check that
+  # catches a form which swallowed the submit and left the visitor where they
+  # were — the failure that renders perfectly.
+  - { action: assert, check: url-matches, value: "search|sok|search-results|resultat", severity: high, label: went to a results page }
+  - { action: assert, check: no-http-5xx, severity: critical, label: search did not 500 }
+  - { action: assert, check: no-http-4xx, severity: high }
+  - { action: snapshot, label: results-tree }
+  - {
+      action: assert,
+      check: selector-count-min,
+      selector: "#results a, .result, [data-result], li a",
+      value: 1,
+      severity: high,
+      label: the query returned at least one result,
+    }
+  - { action: screenshot, label: results }
+
+  # Read the results before opening one. Half of visitors sort or filter first.
+  - { action: pause, minMs: 1600, maxMs: 4200, label: scan the results }
+  - { action: scroll, direction: down, px: 600, probability: 0.5, label: look further down the results }
+
+  # THE CLICK. Everything above exists to make this step meaningful.
+  # Scoped to the results, deliberately. A CSS comma resolves in DOM order rather
+  # than as a preference list, so a broad `li a` fallback would click whichever list
+  # item appears first in the document — a nav item on most real sites. See C-11.
+  - { action: click, selector: "#results a, .result, [data-result]", label: open the first result }
+  - { action: assert, check: title-exists, severity: critical, label: the result page has a title }
+  - { action: assert, check: no-http-4xx, severity: critical, label: the result is not a dead link }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: selector-visible, selector: h1, severity: high, label: the result page has a heading }
+  - { action: pause, minMs: 1200, maxMs: 3600, label: read the result }
+  - { action: screenshot, label: result-page, fullPage: true }
+  - { action: assert, check: no-page-errors, severity: high }
+  - { action: assert, check: no-console-errors, severity: medium }
+  # `inp-below` is deliberately NOT asserted here, and the reason is measured.
+  #
+  # This journey types, presses Enter and clicks, so it interacts — and INP was still
+  # null. Chromium reports event-timing entries only above a threshold, so a click on
+  # a page whose handler does nothing expensive is genuinely too fast to produce an
+  # entry. `inp: null` is then a fact about the page rather than a failed read.
+  #
+  # But an unreadable check is categorised `instrumentation` and ERROR outranks FAIL,
+  # so asserting INP in a general-purpose journey turns a perfectly clean run into
+  # "we could not verify" on most simple pages — the engine blaming itself for a page
+  # that had nothing to measure. The check exists and is proven against
+  # `/slow-interaction`; it belongs in a journey aimed at a page known to do real
+  # work on interaction. See docs/gaps.md C-5.

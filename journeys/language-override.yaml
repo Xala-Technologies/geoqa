@@ -1,0 +1,126 @@
+id: language-override
+title: A visitor overrides the language the site chose for them
+description: >
+  J06. Land on a Norwegian IP, get Norwegian, choose English, navigate onward,
+  and still be reading English.
+
+  This is the localization failure that no other check can see. The page renders,
+  returns 200, has a heading, passes every vitals budget — and is in the wrong
+  language. A geo-redirect that runs on every request will silently undo the
+  visitor's choice on their next click, forever, and every screenshot of it looks
+  correct.
+
+  It is also the failure that costs the most trust per occurrence. A visitor who
+  has told a site twice which language they read, and is answered in the other
+  one, does not conclude that the site has a caching bug.
+
+  The claim is made THREE ways, and the third one is the one this journey was
+  nearly shipped without:
+
+  - `url-matches`, which catches a switch that never navigated at all — the link
+    that looks like a language toggle and does nothing.
+  - `text-absent` on `{leavingMarker}`, a word that exists only in the language
+    being left, which catches the opposite failure: the URL changed and the
+    content did not.
+  - `text-contains` on `{arrivingMarker}`, a word that exists only in the language
+    being chosen.
+
+  **A negative assertion alone cannot prove a language persisted**, and this was
+  measured rather than reasoned about. The first version asserted only
+  `text-absent: Velkommen` — a word on the fixture's homepage and nowhere else — so
+  one click later `text-absent` was trivially true on a page that never contained
+  it, and the run reported PASS against a deliberately broken override. A vacuous
+  check is worse than a missing one: it occupies the place where the reader
+  believes a claim is being made.
+
+  Both markers must therefore be words that appear in the SITE CHROME of every
+  page — a nav item, a footer heading — and that cannot legitimately appear in the
+  other language. Not a brand name, not a word the two languages share, and not
+  something that only exists on the landing page.
+writes: false
+steps:
+  - { action: open, url: "{target}", label: land on the geo-chosen language }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - {
+      action: assert,
+      check: text-contains,
+      selector: body,
+      value: "{leavingMarker}",
+      severity: high,
+      category: localization,
+      label: the site chose the local language,
+    }
+  - { action: screenshot, label: as-the-site-chose }
+
+  # Find the switcher and use it the way a visitor does.
+  - { action: pause, minMs: 900, maxMs: 2800, label: notice the language switcher }
+  - {
+      action: assert,
+      check: selector-visible,
+      selector: "#to-english, [hreflang='en'], a[href*='/en'], [data-lang='en']",
+      severity: high,
+      category: localization,
+      label: the language can be changed at all,
+    }
+  - { action: click, selector: "#to-english, [hreflang='en'], a[href*='/en'], [data-lang='en']", label: choose the other language }
+
+  # The choice took effect.
+  - { action: assert, check: url-matches, value: "{overrideUrlPattern}", severity: high, category: localization, label: the switch navigated }
+  - {
+      action: assert,
+      check: text-absent,
+      selector: body,
+      value: "{leavingMarker}",
+      severity: high,
+      category: localization,
+      label: the content changed language, not just the URL,
+    }
+  - {
+      action: assert,
+      check: text-contains,
+      selector: body,
+      value: "{arrivingMarker}",
+      severity: high,
+      category: localization,
+      label: the chosen language is actually present,
+    }
+  - { action: screenshot, label: after-choosing }
+  - { action: pause, minMs: 1200, maxMs: 3400, label: read a little }
+
+  # THE CLAIM. Everything above is setup; this step is the journey.
+  #
+  # One more internal navigation, and the choice has to survive it. A site that
+  # geo-redirects on every request fails exactly here and nowhere else.
+  #
+  # The selector is CONTENT-SCOPED, and that is not fussiness. A CSS comma is a
+  # union resolved in DOM ORDER, not a preference list — so `#deeper, a[href^='/']`
+  # clicked the nav's "Home" link, which on this fixture happens to be the English
+  # homepage. The journey then never reached the unprefixed page, both language
+  # checks passed, and a deliberately BROKEN override reported PASS. See gaps C-11.
+  - { action: click, selector: "main a[href^='/'], article a[href^='/'], #deeper", label: navigate onward }
+  - { action: assert, check: no-http-4xx, severity: critical, label: the onward link was not dead }
+  - {
+      action: assert,
+      check: text-absent,
+      selector: body,
+      value: "{leavingMarker}",
+      severity: critical,
+      category: localization,
+      label: the language left behind did NOT come back,
+    }
+  # The positive half, and the reason this journey is not vacuous. `text-absent`
+  # alone is trivially true on a page that never had the word — which is exactly
+  # how an earlier version of this file reported PASS on a broken override.
+  - {
+      action: assert,
+      check: text-contains,
+      selector: body,
+      value: "{arrivingMarker}",
+      severity: critical,
+      category: localization,
+      label: the chosen language SURVIVED the next navigation,
+    }
+  - { action: screenshot, label: one-click-later, fullPage: true }
+  - { action: assert, check: no-page-errors, severity: high }
+  - { action: assert, check: no-console-errors, severity: medium }

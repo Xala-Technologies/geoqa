@@ -76,6 +76,50 @@ export function compareViewport(
 }
 
 /**
+ * Did the device identity the profile DECLARED actually reach the page?
+ *
+ * The gap this closes: `navigator.userAgent` was observed on every run and written
+ * into the evidence, and compared to nothing. `verifyGeo` checked country, city,
+ * language, timezone and viewport WIDTH — and the profile's viewport is applied
+ * after any device descriptor and overrides it, so the width matched whether or not
+ * the descriptor took. A profile whose `emulate:` name was a typo produced a run
+ * with no mobile user agent, no touch, a perfectly matching viewport and a clean
+ * verification. A site doing server-side device detection would have served its
+ * desktop variant, and nothing in the evidence would say so.
+ *
+ * Asymmetric, like `compareCity` and for a sharper reason: this can only judge a
+ * claim that was made. A profile declaring no `userAgent` and no `emulate` has
+ * asserted nothing about the device beyond its viewport, and inventing an
+ * expectation from `device.kind` would report `mismatch` on every mobile profile in
+ * this repo — all of which deliberately carry no descriptor, because emulation makes
+ * the rendered viewport a property of the page's markup (gaps C-8). "Unverified"
+ * is the honest verdict for a claim nobody made.
+ *
+ * The comparison is CONTAINMENT rather than equality when the profile declares an
+ * `emulate` name: the expected marker is the descriptor's own name reduced to the
+ * token a user-agent string would carry ("Pixel 5" → "Android" is not derivable), so
+ * only an explicit `userAgent` can be matched exactly. That is a real limit and it is
+ * why an explicit `userAgent` is the stronger declaration of the two.
+ */
+export function compareDevice(
+  requested: { userAgent?: string | undefined; emulate?: string | undefined },
+  observed: string | null,
+): AxisResult {
+  const declared = requested.userAgent ?? null;
+  if (declared === null) {
+    return requested.emulate === undefined
+      ? unverified("the profile declares no user agent and no device descriptor, so there is no device claim to verify beyond the viewport")
+      : unverified(
+          `the profile emulates "${requested.emulate}" but declares no explicit userAgent, and a descriptor name is not a substring of the user-agent string it produces — the descriptor is applied and cannot be confirmed from the page`,
+        );
+  }
+  if (observed === null) return unverified("navigator.userAgent was never read");
+  return observed === declared
+    ? matched(`navigator.userAgent is the declared ${declared}`)
+    : mismatched(`profile declares userAgent ${declared}, page reports ${observed}`);
+}
+
+/**
  * Did one run hold one egress identity?
  *
  * Asymmetric on purpose, the same way `compareCity` is: a rotation can be
@@ -108,6 +152,90 @@ export function withEgressHeld(verification: GeoVerification, egressHeld: AxisRe
   };
 }
 
+/**
+ * Do two independent IP-geo databases agree about where this IP is?
+ *
+ * The finding that produced this axis: one Decodo ISP exit resolved to **São
+ * Paulo** per Decodo's own endpoint and **New York** per ipinfo, for the same IP.
+ * Either reading alone is a confident, coherent answer, and one of them is wrong.
+ * An engine whose whole job is proving where a visitor is cannot treat a single
+ * lookup as ground truth, because a wrong database reads exactly like a wrong
+ * proxy — and the two demand opposite actions.
+ *
+ * Three things make this comparison narrower than it first looks.
+ *
+ * **A different IP is not a disagreement.** If the two reads returned different
+ * IPs they describe different visitors, and calling that a geographic
+ * disagreement would be a finding invented out of our own probing. Measured on
+ * this laptop with no proxy at all: `curl` reached ipinfo over IPv4 and ipwho.is
+ * over IPv6, same machine, two addresses. So a changed IP is `unverified` and
+ * names both possibilities — a dual-stack route or a rotation between the reads.
+ *
+ * **Only COUNTRY is compared.** City divergence between databases is normal, not
+ * a defect: this machine reads Tønsberg (ipinfo), Rykkin (geojs) and Oslo
+ * (ipwho.is) simultaneously. Comparing cities strictly would report a
+ * disagreement on essentially every run, which is the failure mode where an
+ * engine manufactures defects out of its own instrumentation. City divergence is
+ * recorded as a reason, never as a verdict.
+ *
+ * **A country disagreement IS a `mismatch`, unlike a city mismatch elsewhere.**
+ * `compareCity` refuses to call a city wrong because it cannot know. Here the
+ * proven fact is not "the country is X" — it is "the reading is unreliable", and
+ * that is established rather than suspected: two databases genuinely returned
+ * different countries. The verdict is about the agreement, not about the country.
+ */
+export function compareSources(primary: NetworkObservation, secondary: NetworkObservation): AxisResult {
+  if (primary.country === null) return unverified("primary source read no country to corroborate");
+  if (secondary.country === null) return unverified("corroborating source read no country");
+  if (primary.ip !== null && secondary.ip !== null && primary.ip !== secondary.ip) {
+    return unverified(
+      `the two sources saw different IPs (${primary.ip} and ${secondary.ip}) — a dual-stack route or a rotation between the reads, so their locations describe different visitors and cannot be compared`,
+    );
+  }
+  const a = primary.country.toUpperCase();
+  const b = secondary.country.toUpperCase();
+  if (a !== b) {
+    return mismatched(
+      `two IP-geo sources disagree about the same IP: ${a} and ${b}. One of them is wrong and the reading cannot be trusted — a wrong database looks exactly like a wrong proxy`,
+    );
+  }
+  const cityNote =
+    primary.city !== null && secondary.city !== null && primary.city.trim().toLowerCase() !== secondary.city.trim().toLowerCase()
+      ? ` (cities differ — ${primary.city} and ${secondary.city} — which is normal between databases and is not a defect)`
+      : "";
+  return matched(`two independent sources agree the egress is in ${a}${cityNote}`);
+}
+
+/**
+ * Fold a corroborating reading into a verification.
+ *
+ * Shaped like `withEgressHeld`, and for the same reason: it can only ever lower
+ * trust. Agreement between two databases does not make a mismatched country
+ * right; disagreement makes a matched one unreliable. The corroborating
+ * observation is kept alongside the primary rather than merged into it — a report
+ * has to be able to show both numbers, because "which of these two is wrong" is
+ * the question a reader is left holding.
+ */
+export function withCorroboration(
+  verification: GeoVerification,
+  corroborating: NetworkObservation,
+): GeoVerification {
+  const agreement = compareSources(verification.network.observed, corroborating);
+  return {
+    ...verification,
+    network: { ...verification.network, corroborating, agreement },
+    // Recomputed with the agreement as a CAP rather than a fifth weighted axis:
+    // the question it answers is not "how geographic is this run" but "can the
+    // geographic answer be believed at all", and a disagreement should pull a
+    // perfect four-axis score down rather than average into it.
+    confidence: geoConfidence(
+      [verification.network.country, verification.network.city, verification.browser.language, verification.browser.timezone],
+      [agreement],
+    ),
+    trustworthy: verification.trustworthy && agreement.verdict === "match",
+  };
+}
+
 const WEIGHT = { country: 0.45, city: 0.15, language: 0.2, timezone: 0.2 } as const;
 const SCORE: Record<AxisResult["verdict"], number> = { match: 1, unverified: 0.4, mismatch: 0 };
 
@@ -121,13 +249,20 @@ const SCORE: Record<AxisResult["verdict"], number> = { match: 1, unverified: 0.4
  * result is then CAPPED by the weakest axis, so a single proven mismatch can
  * never be averaged away by three good readings.
  */
-export function geoConfidence(axes: AxisResult[]): number {
+export function geoConfidence(axes: AxisResult[], caps: AxisResult[] = []): number {
   const weights = [WEIGHT.country, WEIGHT.city, WEIGHT.language, WEIGHT.timezone];
   let score = 0;
   for (const [i, axis] of axes.entries()) score += (weights[i] ?? 0) * (SCORE[axis.verdict] ?? 0);
-  const worst = axes.some((a) => a.verdict === "mismatch")
+  // `caps` carry no weight of their own and only ever pull the number DOWN. An
+  // axis belongs here when it answers "can this reading be believed" rather than
+  // "where are we" — source agreement is the first such axis: two databases
+  // disagreeing does not make a run 15% less Norwegian, it makes the whole
+  // geographic answer unreliable, and averaging that in would let three good
+  // readings hide it.
+  const all = [...axes, ...caps];
+  const worst = all.some((a) => a.verdict === "mismatch")
     ? 0.5
-    : axes.some((a) => a.verdict === "unverified")
+    : all.some((a) => a.verdict === "unverified")
       ? 0.85
       : 1;
   return Math.round(score * worst * 100);
@@ -143,6 +278,10 @@ export function verifyGeo(
   const language = compareLanguage(profile.market.language, browser.language);
   const timezone = compareTimezone(profile.market.timezone, browser.timezone);
   const viewport = compareViewport(profile.device.viewport, browser.viewport);
+  const device = compareDevice(
+    { ...(profile.device.userAgent !== undefined ? { userAgent: profile.device.userAgent } : {}), ...(profile.device.emulate !== undefined ? { emulate: profile.device.emulate } : {}) },
+    browser.userAgent,
+  );
   const axes = [country, city, language, timezone];
   return {
     profileId: profile.id,
@@ -156,6 +295,11 @@ export function verifyGeo(
       // be?", which is a question about one moment. Stability is a different
       // claim over a different span, and `withEgressHeld` folds it in later.
       egressHeld: unverified("egress stability is only known once the journey has finished"),
+      // No second opinion unless one was paid for. `withCorroboration` fills both
+      // in; until then the honest state is that nothing checked, which is neither
+      // agreement nor disagreement.
+      corroborating: null,
+      agreement: unverified("no corroborating IP-geo source was read"),
     },
     browser: {
       requested: {
@@ -167,12 +311,18 @@ export function verifyGeo(
       language,
       timezone,
       viewport,
+      device,
     },
     confidence: geoConfidence(axes),
     // The viewport counts toward trustworthiness even though it is not in the
     // weighted geo score: a desktop render under a mobile profile is not a
     // trustworthy observation of that profile, whatever the geography said.
-    trustworthy: [...axes, viewport].every((a) => a.verdict === "match"),
+    //
+    // The DEVICE axis deliberately does not. It is `unverified` for every profile
+    // that declares no user agent — which is all of them today — so counting it
+    // would mark every run in the repo untrustworthy for a claim nobody made. A
+    // proven device MISMATCH is a different matter and is folded in below.
+    trustworthy: [...axes, viewport].every((a) => a.verdict === "match") && device.verdict !== "mismatch",
   };
 }
 

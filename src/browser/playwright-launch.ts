@@ -157,6 +157,8 @@ export const DEFAULT_VISIBILITY_TIMEOUT_MS = 5_000;
 const asLocator = (page: Page, selector: string, visibilityTimeoutMs: number): PwLocator => {
   const all = page.locator(selector);
   const one = all.first();
+  // The element an ACTION should reach. See the comment on `click` below.
+  const visible = all.filter({ visible: true }).first();
   return {
     innerText: () => one.innerText(),
     count: () => all.count(),
@@ -190,11 +192,33 @@ const asLocator = (page: Page, selector: string, visibilityTimeoutMs: number): P
         return false;
       }
     },
-    click: () => one.click(),
+    /**
+     * Every ACTION targets the first VISIBLE match, not the first DOM match.
+     *
+     * Two failures, both measured, both from the same cause. `click` used
+     * `all.first()`, which is the first element in document order regardless of
+     * whether a human could see it — so a union like
+     * `"#to-english, [hreflang='en'], a[href*='/en']"` resolved to the
+     * `<link hreflang="en">` in `<head>` on digilist.no: not visible, not
+     * clickable, and a 30-second actionability timeout reported as an
+     * instrumentation failure. And `fill`/`selectOption`/`check` used the
+     * UNNARROWED locator, so a selector matching more than one element raised a
+     * strict-mode violation rather than filling the box the author meant.
+     *
+     * Filtering to visible is what an author means in every case: nobody writes a
+     * click step for an element the visitor cannot see. It also makes the failure
+     * honest — "no visible match" instead of "this specific hidden node was not
+     * actionable".
+     *
+     * It does NOT rescue a bad selector. A union in a click step still resolves in
+     * document order among the visible matches, which is gaps C-11 and is a
+     * journey-authoring rule, not something an adapter can decide.
+     */
+    click: () => visible.click(),
     ariaSnapshot: () => one.ariaSnapshot(),
-    fill: (value) => all.fill(value),
-    selectOption: (values) => all.selectOption(values),
-    check: () => all.check(),
+    fill: (value) => visible.fill(value),
+    selectOption: (values) => visible.selectOption(values),
+    check: () => visible.check(),
   };
 };
 
@@ -254,7 +278,31 @@ const asContext = (context: BrowserContext): PwContext => ({
  * have the page already rendered for an anonymous visitor.
  */
 export async function openContext(browser: Browser, options: PlaywrightContextOptions): Promise<PwSession> {
-  const device = options.deviceName === null ? {} : (devices[options.deviceName] ?? {});
+  /**
+   * An unknown device name REFUSES the launch instead of quietly meaning "no
+   * emulation".
+   *
+   * `devices[name] ?? {}` was the previous form, and it made a typo invisible in
+   * every direction: the context was built with no descriptor, so no mobile user
+   * agent, no `deviceScaleFactor`, no `isMobile` and no `hasTouch` — and then
+   * `setDevice` answered `ok`, because it compares the requested name against the
+   * name the context was built WITH, the same string. The profile's own `viewport`
+   * is applied regardless, so the viewport axis matched too. The result was a run
+   * that reported a clean mobile verification while presenting a desktop identity to
+   * any site doing UA or touch detection.
+   *
+   * Throwing is right rather than warning: a device name is a declaration in a
+   * profile, not a runtime condition, and the same reasoning refuses an unknown
+   * `--engine` (a successful run of something nobody asked for is worse than no
+   * run). The message lists nothing — Playwright ships over a hundred descriptors —
+   * but it names the one that was asked for, which is what a typo needs.
+   */
+  if (options.deviceName !== null && devices[options.deviceName] === undefined) {
+    throw new Error(
+      `unknown device descriptor "${options.deviceName}" — a profile's emulate: must name a Playwright device. An unrecognised name would silently mean "no emulation", and the run would then report a clean mobile verification while presenting a desktop user agent.`,
+    );
+  }
+  const device = options.deviceName === null ? {} : (devices[options.deviceName] as Record<string, unknown>);
   const harPath = options.harPath ?? null;
   // The HAR's directory is normally the run's evidence directory, made when the
   // init script was written — but a launch must not die because a caller created

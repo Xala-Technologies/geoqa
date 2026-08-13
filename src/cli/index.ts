@@ -28,10 +28,14 @@ import {
   browserVerify,
   defaultDeps,
   DEFAULT_ENGINE,
-  DEFAULT_PROFILE_ID,
   evidenceInspect,
   evidencePrune,
   experimentRun,
+  enforceQuota,
+  loadUrlList,
+  resolveTenant,
+  tenantList,
+  checkTenantScope,
   journeyList,
   journeyRun,
   matrixRun,
@@ -41,12 +45,16 @@ import {
   renderMatrixResult,
   renderPruneResult,
   renderRunResult,
+  renderRunsList,
+  runsList,
+  runsRebuild,
   resolveEvidenceRoot,
+  resolveProfileId,
 } from "./commands.js";
 import { configPath, loadConfig } from "../config/load.js";
 import { findExperiment } from "../experiments/definitions.js";
 import { DEFAULT_MATRIX_CONCURRENCY } from "../run/matrix.js";
-import { SAMPLERS } from "./samplers.js";
+import { experimentKnobs, SAMPLERS } from "./samplers.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -114,6 +122,27 @@ async function main(argv: string[]): Promise<number> {
     evidenceRoot: resolveEvidenceRoot(repoRoot, config.evidence.root, flagString(args, "evidence-root", "")),
     browserTimeouts: config.browser,
   });
+  /**
+   * `--tenant`, resolved BEFORE anything else that touches the filesystem.
+   *
+   * It replaces `deps.evidenceRoot`, so every path below derives from the tenant's
+   * own directory rather than being nested by each caller — a caller that forgot
+   * would write one tenant's run into the shared tree, which is the cross-tenant
+   * read this whole slice exists to prevent.
+   */
+  const tenancy = resolveTenant(deps, args.flags.tenant === undefined ? undefined : flagString(args, "tenant", ""));
+  if (!tenancy.ok) {
+    console.error(tenancy.errors.join("\n"));
+    return 2;
+  }
+  const tenant = tenancy.tenant;
+  if (tenant !== null) {
+    deps.evidenceRoot = tenancy.evidenceRoot;
+    // The tenant's own profiles and journeys now take precedence over the shared set.
+    deps.tenantId = tenant.id;
+    console.error(`tenant: ${tenant.id} (${tenant.name}) — evidence under ${tenancy.evidenceRoot}`);
+  }
+
   const providerName = flagString(args, "provider", config.network.provider);
   const verifyEndpoint = config.network.verifyEndpoint;
 
@@ -126,6 +155,39 @@ async function main(argv: string[]): Promise<number> {
     return 2;
   }
 
+  /**
+   * `--country`/`--city` name ONE identity; a matrix's identities are its
+   * `--market` axis. Refused rather than ignored, and refused BEFORE resolution
+   * so the message names the right flag: resolving first would answer
+   * `matrix run --country NO` with "11 profiles match, name one with --geo",
+   * which is true and useless.
+   */
+  if (group === "matrix" && (args.flags.country !== undefined || args.flags.city !== undefined)) {
+    console.error("matrix run selects identities with --market, not --country/--city");
+    return 2;
+  }
+
+  /**
+   * The identity, from `--geo` or from `--country`/`--city`.
+   *
+   * Resolved ONCE for every command, so the three commands that take an identity
+   * cannot disagree about how a place becomes a profile. Refusing here rather
+   * than defaulting is the same rule as `--engine`: a run that quietly used Oslo
+   * because it could not resolve Bergen reports a market nobody asked about.
+   */
+  const selectedProfile = resolveProfileId(deps, {
+    ...(args.flags.geo !== undefined ? { geo: flagString(args, "geo", "") } : {}),
+    ...(args.flags.country !== undefined ? { country: flagString(args, "country", "") } : {}),
+    ...(args.flags.city !== undefined ? { city: flagString(args, "city", "") } : {}),
+    ...(args.flags.device !== undefined ? { device: flagString(args, "device", "") } : {}),
+    ...(args.flags.visitor !== undefined ? { visitor: flagString(args, "visitor", "") as "anonymous" | "returning" } : {}),
+  });
+  if (!selectedProfile.ok) {
+    console.error(selectedProfile.errors.join("\n"));
+    return 2;
+  }
+  const profileId = selectedProfile.id;
+
   const emit = (value: unknown, human: string): number => {
     console.log(json ? JSON.stringify(value, null, 2) : human);
     return 0;
@@ -133,7 +195,18 @@ async function main(argv: string[]): Promise<number> {
 
   if (group === "profile" && (action === "list" || action === undefined)) {
     const result = profileList(deps);
-    return emit(result, result.profiles.map((p) => `${p.id.padEnd(20)} ${p.country}/${p.city} ${p.device}`).join("\n"));
+    return emit(
+      result,
+      result.profiles.map((p) => `${p.id.padEnd(20)} ${p.country}/${p.city} ${p.device.padEnd(8)} ${p.visitorType}`).join("\n"),
+    );
+  }
+
+  if (group === "tenant" && (action === "list" || action === undefined)) {
+    const result = tenantList(deps);
+    return emit(
+      result,
+      result.tenants.map((t) => `${t.id.padEnd(16)} ${t.name.padEnd(24)} ${t.markets} market(s)  ${t.targets} target(s)  ${t.trafficMb}MB`).join("\n"),
+    );
   }
 
   if (group === "journey" && action === "list") {
@@ -144,7 +217,7 @@ async function main(argv: string[]): Promise<number> {
   if (group === "browser" && action === "verify") {
     const result = await browserVerify(deps, flagString(args, "url", "https://example.com"), {
       engine,
-      profileId: flagString(args, "geo", DEFAULT_PROFILE_ID),
+      profileId,
     });
     const human = [
       `${result.passed}/${result.total} primitives verified on ${result.engine}`,
@@ -155,7 +228,9 @@ async function main(argv: string[]): Promise<number> {
 
   if (group === "proxy" && action === "verify") {
     const result = await proxyVerify(deps, {
-      profileId: flagString(args, "geo", DEFAULT_PROFILE_ID),
+      profileId,
+      // Default ON here and OFF for runs — the reasoning is on `GeoVerifyOptions`.
+      corroborate: !flagBool(args, "no-corroborate"),
       providerName,
       engine,
       verifyEndpoint,
@@ -164,6 +239,15 @@ async function main(argv: string[]): Promise<number> {
     const human = [
       `${result.profileId} via ${result.provider}${result.proxy ? ` (${result.proxy})` : ""} on ${result.engine}`,
       `  network  country=${v.network.country.verdict} city=${v.network.city.verdict}  observed ${v.network.observed.country}/${v.network.observed.city} ${v.network.observed.org ?? ""}`,
+      // Both readings, side by side, whatever the verdict. When two databases
+      // disagree the reader is left holding "which of these is wrong", and one
+      // number cannot answer it.
+      ...(v.network.corroborating === null
+        ? []
+        : [
+            `  sources  agreement=${v.network.agreement.verdict}  ipinfo ${v.network.observed.country}/${v.network.observed.city}  vs  geojs ${v.network.corroborating.country}/${v.network.corroborating.city}`,
+            ...v.network.agreement.reasons.map((r) => `           ${r}`),
+          ]),
       `  browser  language=${v.browser.language.verdict} timezone=${v.browser.timezone.verdict} viewport=${v.browser.viewport.verdict}  observed ${v.browser.observed.language}/${v.browser.observed.timezone}/${v.browser.observed.viewport?.width ?? "?"}px`,
       `  confidence ${v.confidence}${v.trustworthy ? "" : " (NOT fully verified)"}`,
       ...result.warnings.map((w) => `  ! ${w}`),
@@ -172,9 +256,27 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (group === "journey" && action === "run") {
+    // Refused before anything launches. A run against a site the tenant does not own
+    // is either a mistake or this engine aimed at somebody else's product from
+    // residential IPs.
+    const scope = tenant === null ? [] : checkTenantScope(tenant, { url: flagString(args, "url", "") });
+    if (scope.length > 0) {
+      console.error(scope.join("\n"));
+      return 2;
+    }
+    if (tenant !== null) {
+      // One journey is one page load's worth of budget, roughly — the estimate is
+      // coarse on purpose and named as an estimate wherever it surfaces.
+      const quota = await enforceQuota(deps, tenant, flagNumber(args, "repeat", 1));
+      for (const w of quota.warnings) console.error(`warning: ${w}`);
+      if (quota.state === "refused") {
+        console.error(quota.errors.join("\n"));
+        return 2;
+      }
+    }
     const result = await journeyRun(deps, {
       url: flagString(args, "url", ""),
-      profileId: flagString(args, "geo", DEFAULT_PROFILE_ID),
+      profileId,
       journeyId: flagString(args, "journey", "landing-page"),
       providerName,
       engine,
@@ -182,6 +284,8 @@ async function main(argv: string[]): Promise<number> {
       vars: flagVars(argv),
       headed: flagBool(args, "headed"),
       repeat: flagNumber(args, "repeat", 1),
+      corroborate: flagBool(args, "corroborate"),
+      ...(tenant !== null ? { tenantId: tenant.id } : {}),
       ...(args.flags.seed !== undefined ? { seed: flagNumber(args, "seed", 0) } : {}),
     });
     emit(result, renderRunResult(result));
@@ -189,11 +293,44 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (group === "matrix" && action === "run") {
+    // Read and fully validated before anything launches. A bad line refuses the
+    // matrix; discovering it two hundred pages in is a bill, not a report.
+    const urls = args.flags["urls-file"] === undefined ? null : loadUrlList(flagString(args, "urls-file", ""));
+    if (urls !== null && !urls.ok) {
+      console.error(urls.errors.join("\n"));
+      return 2;
+    }
+    const scope =
+      tenant === null ? [] : checkTenantScope(tenant, { url: flagString(args, "url", ""), markets: flagList(argv, "market") });
+    if (scope.length > 0) {
+      console.error(scope.join("\n"));
+      return 2;
+    }
+    // Expanded first, so the quota check knows the real page count rather than
+    // guessing at it — a 430-page sweep against a tenant with 100 MB left is exactly
+    // the case worth refusing, and the number is free from the dry run.
+    const planned = await matrixRun(deps, {
+      url: flagString(args, "url", ""),
+      markets: flagList(argv, "market"),
+      journeys: flagList(argv, "journey"),
+      devices: flagList(argv, "device"),
+      ...(urls !== null ? { targets: urls.urls } : {}),
+      dryRun: true,
+    });
+    if (tenant !== null) {
+      const quota = await enforceQuota(deps, tenant, planned.scenarios.length * flagNumber(args, "repeat", 1));
+      for (const w of quota.warnings) console.error(`warning: ${w}`);
+      if (quota.state === "refused") {
+        console.error(quota.errors.join("\n"));
+        return 2;
+      }
+    }
     const result = await matrixRun(deps, {
       url: flagString(args, "url", ""),
       markets: flagList(argv, "market"),
       journeys: flagList(argv, "journey"),
       devices: flagList(argv, "device"),
+      ...(urls !== null ? { targets: urls.urls } : {}),
       providerName,
       engine,
       verifyEndpoint,
@@ -203,6 +340,7 @@ async function main(argv: string[]): Promise<number> {
       concurrency: flagNumber(args, "concurrency", DEFAULT_MATRIX_CONCURRENCY),
       dryRun: flagBool(args, "dry-run"),
       allowWrites: flagBool(args, "allow-writes"),
+      corroborate: flagBool(args, "corroborate"),
       ...(args.flags.seed !== undefined ? { seed: flagNumber(args, "seed", 0) } : {}),
     });
     emit(result, renderMatrixResult(result));
@@ -211,6 +349,35 @@ async function main(argv: string[]): Promise<number> {
     // scenarios is zero evidence.
     if (result.result === null) return 0;
     return result.result.verdict === "FAIL" || result.result.verdict === "ERROR" ? 1 : 0;
+  }
+
+  if (group === "runs" && (action === "list" || action === undefined)) {
+    const result = runsList(deps, {
+      ...(args.flags.url !== undefined ? { target: flagString(args, "url", "") } : {}),
+      ...(args.flags.geo !== undefined || args.flags.country !== undefined ? { profileId } : {}),
+      ...(args.flags.journey !== undefined ? { journeyId: flagString(args, "journey", "") } : {}),
+      ...(args.flags.verdict !== undefined ? { verdict: flagString(args, "verdict", "") } : {}),
+      ...(args.flags.since !== undefined ? { since: flagString(args, "since", "") } : {}),
+      limit: flagNumber(args, "limit", 20),
+    });
+    emit(result, renderRunsList(result));
+    // Red when a check that used to pass now does not. A regression report nobody's CI
+    // notices is a report nobody reads.
+    return result.regressions.length > 0 ? 1 : 0;
+  }
+
+  if (group === "runs" && action === "rebuild") {
+    const result = runsRebuild(deps);
+    emit(
+      result,
+      [
+        `rebuilt the run index from the evidence tree — ${result.written} run(s)`,
+        ...result.unreadable.map((u) => `  ! ${u}`),
+      ].join("\n"),
+    );
+    // A run directory the rebuild could not read is a gap in the history, and a
+    // scheduled rebuild must go red rather than look fine.
+    return result.unreadable.length > 0 ? 1 : 0;
   }
 
   if (group === "evidence" && action === "inspect") {
@@ -271,18 +438,34 @@ async function main(argv: string[]): Promise<number> {
       console.error(`experiment "${spec.id}" has no sampler yet`);
       return 2;
     }
-    const result = await experimentRun(
-      deps,
-      {
-        id: spec.id,
-        samples: flagNumber(args, "samples", 10),
-        profileId: flagString(args, "geo", DEFAULT_PROFILE_ID),
-        url: flagString(args, "url", "https://example.com"),
-        providerName,
-      },
-      pair.sample,
-      pair.summarise,
-    );
+    const knobs = experimentKnobs(args);
+    if (!knobs.ok) {
+      console.error(knobs.errors.join("\n"));
+      return 2;
+    }
+    /**
+     * Declared as a variable, not passed as a literal, deliberately.
+     *
+     * `experimentRun` takes `ExperimentOptions`, and the per-experiment knobs are
+     * declared on the sampler that reads them — so a fresh object literal would
+     * trip an excess-property check while a widened shared type would grow a
+     * field per experiment. A variable is assignable and the samplers keep
+     * stating their own requirements.
+     */
+    const experimentOptions = {
+      id: spec.id,
+      samples: flagNumber(args, "samples", 10),
+      profileId,
+      url: flagString(args, "url", "https://example.com"),
+      providerName,
+      // The engine and endpoint now reach the samplers (D-1b). Before this,
+      // `experiment run --engine playwright` took every sample through
+      // agent-browser and reported a clean result for an engine it never touched.
+      engine,
+      verifyEndpoint,
+      ...knobs.knobs,
+    };
+    const result = await experimentRun(deps, experimentOptions, pair.sample, pair.summarise);
     emit(result.summary, result.rendered);
     return result.summary.verdict === "fail" ? 1 : 0;
   }

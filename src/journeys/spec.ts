@@ -32,6 +32,15 @@ export const CheckSchema = z.discriminatedUnion("check", [
   z.object({ check: z.literal("no-http-4xx") }),
   z.object({ check: z.literal("lcp-below"), value: z.number().positive() }),
   z.object({ check: z.literal("cls-below"), value: z.number().nonnegative() }),
+  /**
+   * INP, and it is the one vitals check that needs the journey's cooperation.
+   *
+   * LCP and CLS happen to a page; INP happens to a page BECAUSE somebody
+   * interacted with it. A journey that asserts this without a click, press, fill
+   * or scroll before it will read `null` and get `unverified` — which is honest,
+   * and is also a check that can never pass. Put it after the interaction.
+   */
+  z.object({ check: z.literal("inp-below"), value: z.number().positive() }),
   z.object({ check: z.literal("no-a11y-critical") }),
 ]);
 

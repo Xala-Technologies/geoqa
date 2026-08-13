@@ -67,10 +67,18 @@ describe("expandMatrix", () => {
 });
 
 describe("resolveConcurrency", () => {
-  it("defaults to a conservative bound rather than to unlimited", () => {
+  it("defaults to a bound that is measured, and still safe on a small machine", () => {
+    // Was `< 4` while the number was a placeholder. EXP-007 now measures it: on a
+    // 14-core laptop, completion, verdict agreement and egress-held were all 100% from
+    // 2 to 16, with wall clock per session at x1.01 (4), x1.14 (8) and x1.30 (16).
+    //
+    // The upper bound here is 8 rather than 16 because the default has to be safe on the
+    // SMALLEST machine that will run this — a 2-core CI runner is worse at 16 than at 2
+    // — and because `peak-memory-per-session` is permanently unmeasurable from this
+    // process, so the OOM risk that originally kept this at 1 is still unquantified.
     expect(resolveConcurrency()).toBe(DEFAULT_MATRIX_CONCURRENCY);
     expect(DEFAULT_MATRIX_CONCURRENCY).toBeGreaterThan(0);
-    expect(DEFAULT_MATRIX_CONCURRENCY).toBeLessThan(4);
+    expect(DEFAULT_MATRIX_CONCURRENCY).toBeLessThanOrEqual(8);
   });
 
   it("reads an unparseable request as the default, never as unlimited", () => {

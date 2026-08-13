@@ -58,7 +58,7 @@ export async function verifyGeoActivity(spec: RunSpec): Promise<GeoVerification>
   if (spec.initScriptPath) writeInitScript(spec, profile);
   const runtime = buildRuntime(spec, profile);
   await applyDeviceProfile(runtime, profile);
-  return verifyEnvironment(runtime, profile, spec.verifyEndpoint);
+  return verifyEnvironment(runtime, profile, spec.verifyEndpoint, spec.corroborateGeo);
 }
 
 export async function runJourneyActivity(spec: RunSpec): Promise<JourneyResult> {

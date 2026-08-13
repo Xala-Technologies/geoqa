@@ -125,17 +125,77 @@ Where: `network/provider.ts`, `cli/samplers.ts` (`NO_VENDOR_NOTE`), `infra/`,
 **Cannot be closed by code.** An exit IP is a purchase (or a colleague's spare
 Pi). Everything the code can do about it is done.
 
-### A-2 · No search/SERP observation
+### A-2 · CLOSED — a real SERP source, and `searchObservation` is wired
 
-`ConfidenceReport.searchObservation` is hardcoded `null` and documented to stay
-that way until a source is wired. Correct behaviour (R-36), but it means one of
-the five confidence axes never contributes.
+`src/search/` with a SerpApi adapter. Named for the vendor we actually have credentials
+for: the register said "Serper", the working account is SerpApi, and building against a
+vendor whose key nobody has would have produced an adapter nothing could prove.
 
-**Cannot be closed by code.** It needs a SERP data source — an API subscription
-or a scraper with its own legal and rate-limit story. Inventing a number for it
-is the one thing that is definitely wrong.
+**`health()` is a real probe with three states, verified live:**
 
-Where: `confidence/score.ts`.
+```
+real key : usable      — SerpApi account Active, 2505 search(es) left
+bad key  : unusable    — SerpApi rejected the credentials: Invalid API key…
+no key   : unconfigured — SERPAPI_KEY is not set
+```
+
+The middle state a credentials check cannot see is the one that matters:
+`total_searches_left: 0` with valid credentials is **`unusable`**, because a search
+source that cannot answer is worse than an absent one. Empty results read as "nobody
+ranks" — which is the DataForSEO failure in `network/types.ts`, and that account is
+overdrawn right now while still authenticating. A missing quota field is
+`searchesLeft: null` ("does not say"), never `0`.
+
+**The three-state observation, which is the whole point:**
+
+| What happened | `searchObservation` |
+|---|---|
+| Provider could not answer | `null`, with a reason |
+| Results came back, we are NOT in them | a real LOW score (2) |
+| Results came back, we rank | scored by position |
+
+"No results at all" is `null`, not zero. An exhausted account returns an empty list, and
+so does a parse we got wrong, while "your site is invisible" is one of the most alarming
+things this system could say. But "results, but not us" IS a real reading and scores 2 —
+a small NUMBER rather than 0, so a measured absence is distinguishable at a glance from an
+unmeasured one.
+
+`searchObservation` is deliberately **excluded from `overall`**. The other four axes answer
+"can this run's readings be believed"; this one answers "is this page visible in search".
+Averaging them would let good search visibility disguise a run that could not read the page.
+
+**Two bugs the first live queries found, both in code I had just written.**
+
+`hl=nb` is REFUSED: *"Unsupported `nb` interface language"*. Google's interface language
+for Norwegian is the macrolanguage `no`, not the correct BCP-47 tag a browser sends. A
+blind reduction to the primary subtag was wrong for the first market this project was
+built for. Fixed with a documented map of the divergences.
+
+`location=Oslo,NO` is REFUSED too. The accepted form is a canonical name from the
+vendor's own gazetteer, and its shape is not derivable — `Oslo,Oslo,Norway`,
+`Bergen,Vestland,Norway`, `Stockholm,Stockholm Municipality,Stockholm County,Sweden`,
+`Berlin,Germany`. So a city is now RESOLVED via the free `/locations.json`, filtered by
+country code — because a search for "Oslo" returns `Oslo,Minnesota,United States` in the
+same list, and taking the first match would have run a Norwegian market's SERP from
+Minnesota and reported it as Oslo. An unresolvable city **refuses the query** rather than
+quietly running a country-wide search: the caller asked what a visitor in that city sees.
+
+Both failures were caught on the first live query precisely because the adapter reports an
+unreadable response as unmeasured rather than as an empty SERP. A client that returned
+`[]` would have reported "digilist ranks nowhere in Norway" twice, confidently.
+
+**A live finding.** For `leie lokaler`, digilist.no is absent from the top 10 in both Oslo
+and Bergen — a MEASURED absence, score 2:
+
+```
+Oslo    9 results  | digilist: absent  | top3: booking.oslo.kommune.no, aktivioslo.no, selskapslokaler.no
+Bergen 10 results  | digilist: absent  | top3: www.bergen.kommune.no, selskapslokaler.no, www.kulturhusetibergen.no
+```
+
+**Residual:** nothing in the run path calls `search()` yet — the axis accepts an
+observation and no command produces one. That is the wiring for the keyword/SEO agents
+(slices 13–15), and it is named here rather than left to be discovered, because an option
+nothing reads is the defect B-1 closed.
 
 ### A-3 · The matrix runs in process now; nothing schedules it, and the bound is a guess
 
@@ -152,7 +212,18 @@ refused, which is invariant 6 arriving here as data rather than as a hole.
 
 Still open, and each is a different kind of open:
 
-- **The concurrency default is provisional and admits it.** `DEFAULT_MATRIX_CONCURRENCY = 2`,
+- **CLOSED: the concurrency default is measured now.** `DEFAULT_MATRIX_CONCURRENCY = 4`.
+  EXP-007 ran for the first time (it could not before — the samplers were
+  agent-browser-only and there is no Chrome for that engine here, which slice 4 fixed). On
+  a 14-core / 36 GB laptop against a local fixture server: 100% completion, 100% verdict
+  agreement and 100% egress-held at 2, 4, 8, 12 and 16, with wall clock per session at
+  x1.01, x1.01, x1.14, x1.09 and x1.30. Raised to 4 rather than 16 because the default must
+  be safe on the smallest machine that will run it, and because
+  `peak-memory-per-session` stays unmeasurable so the OOM risk is still unquantified. A
+  CPU-derived bound is the obvious next step and is deliberately NOT taken on one data
+  point.
+
+  The original wording, kept because the reasoning was right: `DEFAULT_MATRIX_CONCURRENCY = 2`,
   commented as a placeholder for EXP-007, because each in-flight scenario costs a
   browser context and, on agent-browser, a whole Chrome. `MatrixResult.concurrency`
   records both the limit and the peak actually reached, so the number EXP-007 needs
@@ -195,7 +266,7 @@ Three things remain true, and the first is the one that matters:
   `ExperimentOptions` itself (`cli/commands.ts`) carries no `concurrency` field
   and `cli/index.ts` passes none — **verified now** by reading the `experimentRun`
   call site. So the experiment can only ever run at `DEFAULT_CONCURRENCY = 3`. Same
-  wiring as [C-1](#c-1--the-stability-window-is-a-parameter-now-and-no-flag-reaches-it)
+  wiring as [C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it)
   and [D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers);
   all three are the same three lines.
 - **`peak-memory-per-session` is declared and permanently `unmeasured`**
@@ -208,16 +279,214 @@ Three things remain true, and the first is the one that matters:
 Where: `experiments/definitions.ts` (`EXP_007`), `cli/samplers.ts`
 (`sampleConcurrency`, `concurrencyProfiles`), `experiments/EXP-007-concurrency/`.
 
-### A-4 · Findings have nowhere to go
+### A-6 · CLOSED — tenants are a first-class type, and isolation is demonstrated
 
-Read-only by design: no Linear, no Convex, no repo write, no dashboard, no
-persistence beyond the on-disk evidence directory. A finding's lifecycle ends
-when the process prints it. There is also no aggregation across runs — no trend,
-no regression detection, no "this CLS was 0.31 last week".
+`tenants/<id>.yaml` → `Tenant`, evidence at `<root>/<tenantId>/<runId>`, and both
+scope rules refused before anything launches. Decided with the owner: a YAML registry
+now, a database at run persistence where queries across runs are the actual
+requirement; and a proxy sub-account per tenant, so exhaustion is a 407 on that
+sub-user alone rather than everyone's runs (slice 7 provisions them).
 
-**Cannot be closed by code here.** A findings sink is deferred to a later phase
-by the owner. Noted so it is not mistaken for an oversight, and so nobody builds
-half of one.
+Isolation is DEMONSTRATED rather than asserted. Two tenants, two real runs, two
+disjoint trees:
+
+```
+<root>/digilist/run_1786611417809_oslo-desktop
+<root>/acme/run_1786611421089_oslo-desktop
+```
+
+The security work is `containedPath`, extracted as a primitive because slice 8 needs
+the same rule for tenant-scoped profiles and journeys, and a containment check
+reimplemented per call site is one that is subtly different in one of them. Three
+escapes refused: `..` above the root, an ABSOLUTE segment (which discards the root
+entirely — `path.resolve("/evidence", "/etc")` is `/etc`), and a segment resolving to
+the root itself, which would hand one tenant the shared tree. Containment is
+`path.relative`, never `startsWith`, because `/evidence/acme` starts with
+`/evidence/ac`.
+
+Two decisions worth keeping visible. The tenant id refuses UPPERCASE, and not on
+style: macOS and Windows filesystems are case-insensitive while Linux is not, so
+`Acme` and `acme` would be two tenants in CI and one on a laptop — a cross-tenant
+read reproducing only on the machine nobody tests on. And target ownership is compared
+by ORIGIN: `https://digilist.no.evil.test` starts with `https://digilist.no` as a
+string, so a prefix test would authorise an attacker's host.
+
+**Residual:** quota is DECLARED and not yet enforced. `trafficMb` and `runsPerDay` are
+parsed and validated and nothing reads them — which is precisely the defect B-1 closed
+for the config file, so it is named here rather than left to be discovered. Slice 7.
+
+### A-7 · CLOSED — per-tenant proxy quota, enforced before launch
+
+The incident this closes: one 430-page sweep consumed an entire allowance, and every
+run afterwards returned a bare `407` that reads exactly like a wrong password. An hour
+went into the wrong place.
+
+Two numbers, two sources, deliberately not interchangeable. **Traffic** comes from the
+vendor (`GET /v2/sub-users`) because bytes are counted at the proxy and an estimate
+that drifted would be worse than none — it would be trusted. **Run count** is derived
+from the tenant's own evidence directories, because the vendor has no idea what a run
+is; derived rather than stored, because a counter file can be deleted, written twice
+or left behind by a crash, and every one of those makes the ceiling wrong in the
+direction that lets work through.
+
+A matrix is EXPANDED first so the check knows the real page count. Verified live:
+
+```
+this run is estimated at 202 MB and tenant "digilist" has 14 MB left of 700 MB —
+refusing before anything launches.
+```
+
+**The third state is the point.** A traffic figure that could not be read is `null`,
+never `0` — the DataForSEO lesson in `network/types.ts`, where a credentials-present
+check let a zero-balance account pass for weeks. It warns and proceeds rather than
+blocking, and that is a deliberate trade: with a vendor-enforced cap per sub-account,
+exhaustion is isolated to the tenant that caused it, so refusing every tenant's work
+because a usage API is down would cause more harm than it prevents. The run ceiling
+still applies, because that number is ours and is always readable.
+
+**A live finding, and it is about the isolation model rather than the code.** The
+account's only sub-user has `traffic_limit: null` — **no vendor-side cap is set**. So
+the strong half of the owner's chosen isolation is not in force, and geoqa's own check
+is currently the only guard. It says so on every metered run:
+
+```
+warning: the vendor enforces no traffic cap on tenant "digilist"'s sub-account, so
+this check is the ONLY thing standing between it and the whole account allowance.
+```
+
+`auto_disable` is also `false`, so exhaustion will not stop the sub-account either.
+**Action for the owner: set a per-sub-account traffic limit at Decodo.** A cap geoqa
+enforces can be bypassed by a bug in geoqa; one the vendor enforces cannot.
+
+When a vendor cap IS set, the effective ceiling is the LOWER of the two — a tenant
+budget above the vendor's limit is a budget that cannot be spent, and pretending
+otherwise refuses late instead of early.
+
+**Residual:** `MB_PER_PAGE_LOAD` is 1, from a measured ~1.2 MB/page on digilist.no
+through residential. It is rounded DOWN on purpose (an estimate used to refuse work
+should under-state, or it blocks runs that would have fitted) and is named as an
+estimate everywhere it surfaces. A tenant whose pages are much heavier will
+under-estimate; per-tenant calibration from observed usage is the fix and needs run
+persistence.
+
+### B-11 · FIXED — a profile or journey id could be a path
+
+**Security fix, and it predates multi-tenancy.** `profilePath` and `journeyPath`
+`path.join`ed a CLI-supplied id straight onto a directory, so:
+
+```
+$ geoqa proxy verify --geo ../../../../etc/hosts
+profile "…": /Volumes/etc/hosts.yaml: ENOENT
+```
+
+Verified against the code before the fix. The blast radius was limited — only `.yaml`
+files were reachable and a parse failure was the usual outcome — but the id came from
+the command line, the resolved path was echoed back, and a YAML parse error can quote
+the line it failed on. An attacker-controlled read attempt with a disclosure channel is
+enough to call it a defect rather than a wart.
+
+Closed by `DataIdSchema` (same shape and same reasoning as `TenantIdSchema`: these ids
+become filenames) plus `containedPath` on every candidate, which is the belt to the
+pattern's braces. Found while building tenant-scoped data, which is the honest story:
+the traversal was not what the slice was for, and adding a second search root is what
+made anybody look at how the first one was joined.
+
+The error also improved: `no profile named "x" — looked in <paths>` instead of the
+loader's ENOENT, which told a reader about the filesystem rather than about their typo.
+
+### A-8 · CLOSED — profiles and journeys can be tenant-scoped
+
+`tenants/<id>/profiles/` and `tenants/<id>/journeys/`, resolved BEFORE the repo's own.
+A tenant's file wins by name, and everything it has not customised falls back to the
+shared set — so a tenant declaring one custom journey still gets the other seven,
+without forking the engine.
+
+Proven live. `tenants/digilist/journeys/landing-page.yaml` tightens the LCP budget from
+the shared 2500ms to 1200ms:
+
+```
+shared:  landing-page   13 steps  Landing page validation
+tenant:  landing-page    8 steps  Landing page validation (digilist budgets)
+
+$ geoqa journey run --tenant digilist … --journey landing-page
+  ✓ fast for THIS tenant
+PASS
+```
+
+The listing de-duplicates by filename, so a tenant's override REPLACES the shared entry
+rather than appearing twice — a listing that disagreed with the resolver would be worse
+than no listing.
+
+**One regression caught by the suite and worth recording.** Making the path builders
+throw broke `matrix run`'s "report every problem at once" contract: it aborted on the
+first bad name, turning "these four names are wrong" into "this one is", once per run.
+The matrix now resolves through `resolveDataPath` and collects refusals like any other
+validation error.
+
+**And a process mistake of mine, recorded because it shipped.** A live-verification step
+used `git checkout tenants/digilist.yaml` to undo a temporary edit, and silently
+discarded the `proxySubUser` field added minutes earlier in the same slice — so
+[A-7](#a-7--closed--per-tenant-proxy-quota-enforced-before-launch) was committed
+describing a field the tenant file did not have. Restored here. `git checkout` is not an
+undo for a file with other uncommitted work in it.
+
+### A-4 · CLOSED — findings and verdicts are queryable across runs
+
+`<evidenceRoot>/runs.jsonl`, one record per run, appended as each finishes, under the
+tenant's evidence root when a run is scoped — so a tenant's history inherits the
+containment already proven in `tenant/registry.ts` rather than inventing its own.
+
+**The decision worth recording is that the index is a DERIVED CACHE, not the truth.**
+Each run's `run.json` is the authority on that run, so a corrupt, truncated,
+hand-edited or deleted index costs nothing permanent and `geoqa runs rebuild`
+reconstructs it. A store that owned the record would introduce exactly the failure this
+project exists to prevent: a confident answer about runs that did not happen the way it
+says.
+
+**Why not SQLite, which Node now ships.** `node:sqlite` is EXPERIMENTAL — it prints a
+warning on every invocation and its own documentation says it may change at any time.
+A CLI that emits an experimental-feature warning before every line of output is a worse
+tool, and "may change at any time" is a poor foundation for the store that trends and a
+UI are meant to depend on. JSONL costs one line per run, is greppable, diffs in a
+review, and cannot lose a run because the run is still on disk. **When SQLite becomes
+right:** when a query needs an index rather than a scan — a tenant with 10,000 runs is a
+10 MB file scanned in milliseconds, but a hosted UI serving many tenants concurrently is
+a different problem, and this shape imports into a table without a rewrite.
+
+Regression detection is the payoff and is proven live on a stable origin: a page loses
+its `h1`, and
+
+```
+1 regression(s) — a check that used to pass and now does not:
+  has a primary heading · oslo-desktop/h1 · last good …05.988Z → first bad …08.306Z
+```
+
+Four deliberate narrowings, each of which prevents a specific false report:
+
+- Scoped to one profile + journey + target. "The h1 check started failing" is only
+  meaningful for a fixed combination, and merging them averages a real regression into
+  noise.
+- Only the TRANSITION. A check that broke on Monday is one entry with a Monday date, not
+  one per day since — a list that grows while nothing new breaks is a list nobody reads.
+- A failure with no earlier pass is NOT a regression. It may never have worked, and
+  saying otherwise sends somebody looking for a change that does not exist.
+- An `ERROR` run is SKIPPED, not read as a failed check. `ERROR` means geoqa could not
+  read the page; reporting our own instrumentation failure as the site's regression is
+  the single confusion this whole codebase is built to avoid.
+
+Three honesty properties carried through: `meanConfidence` is `null` for an empty
+history rather than 0; a `null` vital stays null rather than becoming a zero that would
+show a page getting faster the moment it stopped being measurable; and `--limit`
+truncates the printed list only, never the summary or the regressions.
+
+**Appending can never fail a run.** A run that verified a site correctly and wrote its
+evidence has not failed at anything a user cares about if a cache line could not be
+written, so the problem is logged and the result returned.
+
+**Residual:** a rebuilt record is poorer than an appended one — `run.json` carries the
+journey's verdict and seed but not the assembled confidence report — and it says so
+rather than filling the gaps with defaults that would read as real readings. Widening
+`run.json` to carry the assembled result would close it and is a schema change.
 
 ### A-5 · Adaptive recovery deferred
 
@@ -466,7 +735,31 @@ The state file lives at `<evidenceRoot>/visitors/<profileId>.json`, outside any 
 directory, because it must outlive one run and because it holds live cookies — a
 credential, not evidence.
 
-**Still open: the honesty half.** `resolveVisitorState` computes an `unmet`
+**CLOSED: the honesty half.** `executeRun` resolves the visitor state, LOGS the
+`unmet` sentence, and `run.json` now carries
+`visitor: { declared, restored, unmet }` — purely additive, so no schema bump. A run
+that tested a first-time visitor and a run that tested a returning one are no longer
+indistinguishable in the evidence. The declaration is an intention; `restored` is an
+observation, and only one of them is evidence.
+
+**CLOSED: nothing exercised it.** `profiles/oslo-desktop-returning.yaml` is the first
+profile to declare `visitorType: returning`, so the restore branches are no longer
+dead in every real run. It is a separate profile rather than a flipped flag on
+`oslo-desktop` for two reasons: a returning visitor is a different test subject (a
+cookie banner, "welcome back" copy and a geo-redirect all behave differently on a
+second visit, and both cases need covering), and the state file is keyed by profile
+id, so a shared id would have the anonymous and returning runs fighting over one
+session file. Named `oslo-desktop-returning` rather than `oslo-returning` because the
+matrix builds ids as `<market>-<device>` and the shorter name reads as a device called
+"returning".
+
+Adding it immediately broke `--country NO --city Oslo`, which then matched two desktop
+profiles and refused — the ambiguity check working correctly and the feature becoming
+useless. `PlaceSelection` gained `visitor`, defaulting to `anonymous`: a first-time
+visitor is the neutral subject, and it is what a place name means when nobody says
+otherwise. `--visitor returning` asks for the other.
+
+The original diagnosis, kept because it was accurate: `resolveVisitorState` computes an `unmet`
 sentence for the two cases where the declaration was not met, and **nothing
 surfaces it** — **verified now**: `grep -rn "resolveVisitorState\|\.unmet" src`
 excluding tests returns two hits, both inside `run/context.ts` itself. Nothing
@@ -478,40 +771,25 @@ reported as fine. Two lines in `execute.ts` (log the warning) and one field in
 `collectEvidence`'s `run.json` (`visitor: { declared, restored, unmet }`, purely
 additive so no schema bump) close it.
 
-**And nothing exercises it: all 16 profiles declare `visitorType: anonymous`** —
-verified by grep. The path is implemented, tested against injected fakes, and has
-never restored a real cookie. One `*-returning` profile plus an e2e case (first run
-sets a cookie, second run sees it) is what would prove it.
+**Residual, and small: no e2e proves a real cookie survives.** The profile exists and
+the path is exercised, but the two-run sequence — first run sets a cookie, second run
+sees it — is not automated. It needs an e2e that runs the same profile twice against a
+fixture that sets a cookie, which is a test-harness shape this suite does not have yet
+(every existing case is a single run).
 
 Where: `browser/playwright.ts`, `run/context.ts` (`VISITOR_STATE_DIR`,
 `resolveVisitorState`), `profiles/*.yaml`.
 
-### B-8 · A proxy URL with any placeholder in it cannot start a `journey run`
+### B-8 · CLOSED — a template can start a run
 
-**Verified now**, unchanged, by reading the two functions against each other. It
-is the first wall an exit purchase will hit:
-
-- `health()` cannot probe a URL containing `{` — correct, a placeholder is not a
-  host — and reports `state: "unconfigured"`, detail *"proxy is a template or not a
-  parseable URL — not probed"* (`network/provider.ts:228-235`).
-- `prepareRun` throws on `unconfigured` for any provider other than `direct`
-  (`run/execute.ts:79`, R-8: no silent downgrade). Also correct in isolation.
-
-Together: `GEOQA_PROXY_OSLO="http://user-sessid-{session}:pw@gw.vendor.net:7777"`
-makes `geoqa journey run --provider http-proxy` fail before the browser opens,
-with a message saying the provider is not configured when it is configured
-correctly. The placeholder mechanism and the health gate disagree about what a
-brace means: unprobeable and unconfigured are being treated as one state.
-
-`proxy verify` and the experiment samplers are unaffected — the first tolerates
-`unconfigured`, the second never calls `health` — which is why the suite is green
-and nothing has noticed.
-
-Fix: `ProviderHealth` needs a fourth state, "configured, not probeable", that
-`prepareRun` treats as usable-with-a-warning. The alternative, probing a
-substituted URL, means giving `health()` a market, and `anyConfiguredUrl` exists
-precisely because health is a question about the vendor rather than about one
-market.
+**Closed 2026-08-13.** `health()` bailed on seeing `{` and returned
+`unconfigured`, which `prepareRun` treats as a hard refusal for any non-direct
+provider — so a template, the only way a residential vendor is ever configured,
+could never start a run at all. The reasoning was wrong where it counted:
+placeholders live in the USERNAME while the gateway host and port are literal,
+which is exactly what a reachability probe needs. Placeholders are now replaced
+with an inert token before parsing. Two tests that pinned the old behaviour were
+rewritten to assert the fix.
 
 ### B-9 · Closed: the boundary lint's first catch
 
@@ -547,30 +825,14 @@ function, so no exclusion was needed.
 
 Where: `browser/engines.ts`, `run/context.ts`, `.dependency-cruiser.mjs`.
 
-### B-10 · The e2e suite still asserts `trace.json` on the Playwright engine
+### B-10 · CLOSED — the e2e derives the trace filename
 
-**Verified now** by reading the two files against each other.
-`traceArtifactFormat` now writes `trace.zip` on Playwright (see
-[D-1c](#d-1c--closed-a-trace-carries-its-own-format)), and
-`e2e/playwright-run.e2e.ts:168` still does
-`evidenceFile("e2e_missing_cta", "trace.json")`. **`pnpm test:e2e` fails** on the
-one assertion whose whole purpose is proving a fail-tier trace is real. The unit
-suite is unaffected, so nothing else will tell you.
+**Closed 2026-08-13.** The e2e hardcoded `trace.json` and drifted the moment the
+two engines started writing different formats. It now calls
+`traceArtifactFormat("playwright")`, so the assertion cannot disagree with the
+collector again.
 
-Fix is one filename, and the same test is the right place to also assert that the
-manifest agrees with the disk — `{ path: "trace.zip", mime: "application/zip" }`
-for the `trace` artifact — because "the manifest describes a zip as JSON" is
-exactly the class of defect the e2e suite exists to catch.
-
-Where: `e2e/playwright-run.e2e.ts:165-171`, `run/stages.ts` (`traceArtifactFormat`).
-
----
-
-## C. Measurement gaps
-
-Built, plausibly correct, not proven by anything.
-
-### C-1 · The stability window is a parameter now, and no flag reaches it
+### C-1 · The stability window is a parameter, and a flag now reaches it
 
 **Closed as a hardcoded constant.** `STABILITY_READS` and
 `STABILITY_INTERVAL_MS` are gone. `resolveStabilityWindow` takes
@@ -589,18 +851,31 @@ old fixed 6s spacing would be 101 hits on the identity endpoint per sample, whic
 trips ipinfo's rate limit and converts a stickiness measurement into a throttling
 measurement.
 
-**Still open: nothing can ask for the longer window.** `ExperimentOptions`
-(`cli/commands.ts:908`) has no `stabilityWindowMs`/`stabilityReads` field and
-`cli/index.ts` passes none — **verified now** at the `experimentRun` call site. So
-in practice EXP-002 still measures **24 seconds**, which stays the default
-deliberately (ten minutes × 10 samples is 100 minutes; a feasibility check that
-long gets killed halfway, and a killed run leaves `results.jsonl` half-written
-with no summary). The gap is the flag, not the default. `--stability-window-ms
-600000` is documented behaviour that cannot currently be typed.
+**CLOSED.** `--stability-window <duration>` and `--stability-reads <n>` reach the
+resolver, via `experimentKnobs()` in `cli/samplers.ts`. The PRD's window is
+`--stability-window 10m --samples 3`, and 24s stays the default deliberately (ten
+minutes × 10 samples is 100 minutes; a feasibility check that long gets killed
+halfway, and a killed run leaves `results.jsonl` half-written with no summary).
 
-Where: `cli/samplers.ts` (`DEFAULT_STABILITY_WINDOW_MS`, `PRD_STABILITY_WINDOW_MS`,
-`resolveStabilityWindow`, `stabilityWindowNote`), `cli/commands.ts`
-(`ExperimentOptions`), `cli/index.ts`.
+Two details are the point rather than polish. The duration accepts an `ms`/`s`/
+`m`/`h` suffix and **refuses** what it cannot read: a `--stability-window 10min`
+that fell back to the default would have produced a summary measuring 24 seconds,
+and because `stabilityWindowNote` names the window it actually used, the reader
+would have seen a coherent, confident answer to a question they never asked. And
+the knobs are parsed in `samplers.ts`, not `args.ts` — the knob types belong to
+the sampler that reads them, `ExperimentOptions` does not grow a field per
+experiment, and `args.ts` could not import them anyway (`samplers` → `commands` →
+`args` already, and dependency-cruiser refuses the cycle).
+
+**What is still not done is the live run.** EXP-002 remains `unmeasured` because
+the samplers build agent-browser regardless of `--engine`
+([D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers)),
+so a ten-minute stickiness run through Decodo has to wait for that. The flag is
+no longer what is in the way.
+
+Where: `cli/samplers.ts` (`experimentKnobs`, `DEFAULT_STABILITY_WINDOW_MS`,
+`PRD_STABILITY_WINDOW_MS`, `resolveStabilityWindow`, `stabilityWindowNote`),
+`cli/args.ts` (`parseDurationMs`), `cli/index.ts`.
 
 ### C-2 · The agent-browser contract is still frozen at captured payloads
 
@@ -651,6 +926,24 @@ matters more now than it did, because three of the eight markets have no
 purchasable city-level exit at all
 ([A-1](#a-1--the-core-claim-is-one-purchase-and-one-health-check-fix-away)).
 
+**Two independent databases now put a number on how weak the city signal is, and
+it is weaker than this entry assumed.** Across six live Decodo residential exits,
+ipinfo and geojs agreed on the country every time and disagreed on the city
+repeatedly — including one Norwegian exit placed in **Stavanger** by ipinfo and
+**Bærum** by geojs, roughly 400 km apart, for the same IP. On a direct connection
+the same pair reads Tønsberg and Rykkin.
+
+That has a direct consequence for the 100-session milestone: a **≥90% city-match
+bar measured against one database is measuring that database**, not the proxy. Two
+vendors cannot agree on the city of a single IP, so no single vendor's answer is
+the ground truth the bar implies. The threshold question in
+`.claude/loops/close-gaps/test-plan.md` — does `unverified` count against the 90% —
+should be decided knowing this: the honest reading is that country is the
+measurable axis and city is corroborating evidence, not a pass/fail gate.
+
+City divergence between sources is therefore recorded and **never** a verdict
+(`compareSources`). Only a COUNTRY disagreement is a mismatch.
+
 ### C-5 · `inp` is measured on Playwright now, and nothing asserts on it
 
 **Closed as "structurally unmeasurable".** An `INTERACTION_OBSERVER_SCRIPT` is
@@ -669,10 +962,35 @@ understate INP by up to 104ms. Armed first, the residual error is bounded at one
 frame (16ms), and that bound is stated in the comment. Same doctrine as arming the
 trace and the console listeners before first load.
 
-Still true, and both are small:
+**CLOSED: a check asserts on it.** `inp-below` is in `CheckSchema`, needs only
+`vitals`, and has a `VITAL_FOR_CHECK` entry so it gets the same confirm-the-null
+re-read as LCP.
 
-- **No check asserts on it.** `CheckSchema` has no `inp-below`, so the number is
-  written to `vitals.json` and judged by nobody. Adding one means a
+**Proving it required a new fixture, and that is the finding.** `inp` was `null` on
+every existing fixture *even after a real click*. Chromium reports event-timing
+entries only above a threshold, so a click on a page whose handler does nothing
+expensive is genuinely too fast to produce an entry — `inp: null` is a fact about the
+page, not a failed read. `/slow-interaction` blocks the main thread for ~120ms, which
+sits above the threshold and below Google's 200ms bar, so one page demonstrates a
+measured pass and, at a tighter budget, a measured finding. Both are asserted in the
+e2e against real Chromium; a fake runtime returning a number proves the comparison and
+never that an interaction was timed.
+
+**And `inp-below` is deliberately NOT in any shipped journey.** An unreadable check is
+categorised `instrumentation` and `ERROR` outranks `FAIL`, so asserting INP in a
+general-purpose journey turns a clean run into "we could not verify" on most simple
+pages — the engine blaming itself for a page that had nothing to measure. The check's
+own `unread` reason therefore names BOTH causes, because they need different actions:
+move the check after an interaction, or accept that the page responds too fast to
+measure. Only the first is the journey's fault.
+
+**Residual design question, recorded not answered:** a null INP is a property of the
+page, and the verdict model treats any unread check as our defect. That is right for
+"we tried to read the title and could not" and wrong here. Fixing it means a way for a
+check to declare that its own null is a page fact rather than an instrumentation
+failure — a real change to the verdict model, and not one to make in passing.
+
+The original diagnosis, kept because it was accurate: adding a check means a
   `VITAL_FOR_CHECK` entry (`"inp-below": "inp"`) so the confirm-the-null re-read
   covers an interaction entry delivered a frame or two late — **verified**: that
   record currently holds `lcp-below` and `cls-below` only.
@@ -711,9 +1029,44 @@ fixture we wrote cannot surprise us.
 
 ### C-8 · `emulate` is a Playwright descriptor name applied to two engines, and no axis checks it
 
-Unchanged. All eight mobile profiles carry `emulate: "Pixel 5"`, which is where
-the mobile user agent, `deviceScaleFactor`, `isMobile` and `hasTouch` come from —
-the profile's own `viewport` supplies only the box. But:
+**Partly closed, and the premise had gone stale.** No profile carries `emulate` any
+more — all eight mobile profiles had it reverted, with a measured comment, because
+emulation introduces a layout viewport and makes `window.innerWidth` a property of the
+page's markup (980 without a viewport meta tag, 390 with it), which put the engine's
+most safety-critical axis outside its own control.
+
+**CLOSED: an unknown descriptor name no longer passes silently.** `openContext` threw
+away the `?? {}` fallback and now REFUSES an unrecognised name. Same reasoning as an
+unknown `--engine`: a successful run of something nobody asked for is worse than no
+run. This was the bullet with teeth, because the old form failed invisibly in every
+direction at once — no descriptor applied, `setDevice` still answering `ok` (it
+compares the requested name against the name the context was built with, the same
+string), and the viewport matching anyway.
+
+**CLOSED: a verified axis exists.** `compareDevice` compares the profile's DECLARED
+`userAgent` against `navigator.userAgent`, which was observed on every run and
+compared to nothing. A proven mismatch costs the run its `trustworthy` flag. It is
+asymmetric on purpose: a profile declaring no `userAgent` gets `unverified`, because a
+claim nobody made cannot be verified — and inventing an expectation from `device.kind`
+would report a mismatch on every mobile profile in this repo, all of which
+deliberately carry no descriptor.
+
+**Still open, and it is the honest residual:** an `emulate` name cannot be confirmed
+from the page. A descriptor name is not a substring of the user-agent string it
+produces — "Pixel 5" does not appear in the Android UA Playwright builds from it — so
+`compareDevice` reports `unverified` with that reason rather than guessing at a marker.
+An explicit `userAgent` in the profile is the stronger declaration and is the one that
+can be verified.
+
+**Also still open, and worth saying plainly:** because no mobile profile carries a
+descriptor, geoqa's mobile profiles present a DESKTOP user agent. They are mobile by
+viewport only. A site doing server-side device detection off the UA serves them its
+desktop variant, and the new axis reports `unverified` rather than `mismatch` for
+exactly the reason above — the profile never claimed a mobile UA. Closing that means
+choosing between emulation (and losing viewport control) or an explicit `userAgent` per
+mobile profile (and maintaining UA strings by hand).
+
+The original diagnosis of the three failure modes, kept because it was accurate:
 
 - **On Playwright, an unknown name is silently ignored.** `openContext` does
   `devices[name] ?? {}`, and `setDevice` answers by comparing the requested name
@@ -742,6 +1095,201 @@ asserts locale, timezone, viewport width, geolocation, vitals, egress and the
 evidence package — and nothing at all about the user agent or touch.
 
 ---
+
+### C-9 · A step whose selector a preceding check already proved absent still runs
+
+Found by J03's first live run, and it cost 30 seconds and the run's verdict.
+
+`search.yaml` asserts `selector-visible` on the search box and then `fill`s it.
+On `digilist.no` the box is not visible, so:
+
+```
+✗ has a search box                    [high]  FAIL   — correct
+! type the query — timeout            [high]  ERROR  — 30s, then instrumentation
+```
+
+Both lines are individually honest. Together they are worse than the first alone:
+`ERROR` outranks `FAIL` ([R-19](prd.md)), so a clean, actionable site finding —
+*the search box is not visible* — was reported as **"we could not verify"**, which
+sends a reader to look for a broken proxy. And the 30-second default `fill` timeout
+was spent on an element the run had already established was not there.
+
+There is no step dependency in the journey DSL, deliberately — steps are data and
+a conditional step is a program. So the fix is not "skip the fill": the honest
+options are a shorter timeout for input actions than for navigations, or letting a
+`critical` visibility check be fatal for the steps that name the same selector.
+Both are real design choices and neither should be made in a slice about clicking.
+
+**Not a blocker for J03**, which is proven end to end against the fixtures
+including a real click-through and a dead-link catch. It is a cost paid on any
+journey whose target does not have the element the journey assumes.
+
+Where: `journeys/engine.ts` (step execution, fatality), `browser/playwright.ts`
+(action timeouts).
+
+### C-10 · digilist.no: the search box is reachable at no profile width (live finding)
+
+Not a geoqa gap — a **finding about tenant zero**, recorded here because it is the
+first defect J03 produced and it should not be lost.
+
+`digilist.no` renders its inline search input inside
+`class="hidden md:flex lg:hidden"`, which is visible **only** between 768px and
+1023px. Confirmed by running J03 at both profile widths:
+
+| Profile | Width | Search box |
+|---|---|---|
+| `oslo-desktop` | 1440px | not visible (`lg:hidden`) |
+| `oslo-mobile` | 390px | not visible (base `hidden`) |
+
+So on a phone and on a desktop — every width geoqa models, and the overwhelming
+majority of real traffic — the search field is not reachable. A `<kbd>` hint sits
+next to it, which suggests a keyboard-shortcut palette is the intended desktop
+affordance; a keyboard shortcut is not a substitute for a visible control on a
+touch device.
+
+Worth stating plainly because of how it was found: **the markup contains a search
+input, so any check that looked for presence rather than VISIBILITY would have
+passed this site.** `selector-visible` is why it did not.
+
+### C-11 · A comma-union selector is safe in an assertion and a hazard in a click
+
+Found by J06 reporting **PASS on a deliberately broken override**, which is the
+worst possible way to find anything.
+
+A CSS comma is a **union resolved in DOM order**, not a preference list. For an
+assertion that is exactly right: `selector-visible` on
+`"nav, header nav, [role='navigation']"` asks "does this site have navigation", and
+any match answers it. For a **click** it is wrong, because the browser clicks
+whichever element appears first in the document — not the one the author listed
+first, and not the one they meant.
+
+Measured. J06's onward step was `click "#deeper, a[href^='/']"`. On the fixture the
+nav precedes the content, so the click landed on the nav's **Home** link, the
+journey never reached the page whose language it was checking, and both language
+assertions passed against the wrong page. The broken-override run reported PASS.
+
+All three click journeys had the same latent bug and two of them only worked by
+accident of document order:
+
+| Journey | Was | Now |
+|---|---|---|
+| `language-override` | `#deeper, a[href^='/']` | `main a[href^='/'], article a[href^='/'], #deeper` |
+| `search` | `#results a, .result, [data-result], li a` | `#results a, .result, [data-result]` |
+| `reader` | `a[href^='/']` | `main a[href^='/'], article a[href^='/']` |
+
+`reader`'s is the one to note: a bare `a[href^='/']` clicks the **logo** on almost
+every real site, so "follow a contextual link" would have gone home.
+
+**Open, because the convention is not enforced.** Nothing stops the next journey
+from using a broad union in a click step, and the failure is silent — it does not
+error, it clicks something. A `click`/`fill`/`press` step could be required to
+resolve to a single element, or to warn when its selector matches more than one, in
+the way Playwright's own strict mode does. That is a real engine decision and
+belongs with [C-9](#c-9--a-step-whose-selector-a-preceding-check-already-proved-absent-still-runs),
+not in a journey.
+
+Where: `journeys/*.yaml` (click steps), `browser/playwright.ts` (locator
+resolution), `journeys/spec.ts` (where a per-action selector rule would live).
+
+### C-12 · J06 does not complete on digilist.no, and the reason is not established
+
+Recorded UNRESOLVED on purpose. J06 runs green against the fixtures in both
+directions, and against `digilist.no` it does not finish:
+
+```
+passed   land on the geo-chosen language     https://digilist.no/
+passed   choose the other language           https://digilist.no/en
+errored  navigate onward                     click failed: timeout — 30000ms
+```
+
+The switch works. The onward click — `main a[href^='/'], article a[href^='/'],
+#deeper` — finds no visible, actionable match within 30 seconds on `/en`.
+
+**What this is NOT:** a claim about digilist.no. An earlier pass at this recorded a
+localization defect on the strength of `curl` output, and that reading was WRONG.
+`curl` sees the server shell, and the site is client-rendered: the shell for
+`/en/leie` carries `lang="nb-NO"` and a Norwegian `<title>`, while the page a real
+browser renders carries `lang="en"` and does contain the English chrome. A finding
+derived from the pre-hydration HTML of an SPA is a finding about the framework, not
+the site. Deleted rather than filed, and named here because the mistake is the
+instructive part: **this engine reads through a browser for exactly this reason**,
+and the moment an investigation stepped outside the browser it produced a confident
+wrong answer within minutes.
+
+**What it probably is:** the click selector, again — C-11's other half. A union
+narrowed to visible matches still resolves in document order, and on a hydrating
+SPA the first visible `main a[href^='/']` may be off-screen, covered, or replaced
+between resolution and click. Establishing that needs a headed run against the live
+site, which is a task, not a guess.
+
+Two engine improvements came out of the attempt and are already landed:
+
+- Every ACTION targets the first **visible** match rather than the first DOM match
+  (`browser/playwright-launch.ts`). A union like `[hreflang='en']` otherwise
+  resolves to the `<link>` in `<head>` — invisible, unclickable, 30 seconds, and an
+  instrumentation failure.
+- A navigating step **records the URL it landed on** (`journeys/engine.ts`). The
+  first live failure could not be attributed at all, because a click recorded
+  nothing; the table above is only readable because of that change.
+
+Where: `journeys/language-override.yaml`, `browser/playwright-launch.ts`,
+[C-11](#c-11--a-comma-union-selector-is-safe-in-an-assertion-and-a-hazard-in-a-click).
+
+### B-12 · FIXED — every run in a market shared one egress IP, because a hyphen truncated the sticky key
+
+**The most consequential defect found so far.** It was not about concurrency at all.
+
+A residential vendor's username is a `-`-delimited parameter list:
+`user-<account>-country-no-city-oslo-session-<id>`. So the vendor parses a value up to the
+next hyphen, and **a hyphenated session id is silently truncated at its first one.**
+geoqa's id was `<market>-<epochMs>`, so the effective sticky key was just `<market>`.
+
+Measured, and unambiguous:
+
+```
+session-oslo-1  → 188.92.250.221
+session-oslo-2  → 188.92.250.221     identical
+session-oslo-3  → 188.92.250.221
+session-oslo    → 188.92.250.221     ← the truncated value
+session-oslo1   → 84.210.158.133
+session-oslo2   → 84.209.67.194      distinct
+session-oslo3   → 212.89.117.129
+```
+
+**Consequence: every run in a market had always used the same exit IP.** Not just
+concurrent runs — sequential ones too, across separate browser launches and separate
+processes. The engine claimed a per-session network identity it had never had.
+
+And nothing contradicted it. `egressHeld` compares a run's opening and closing IP, and they
+genuinely did match — it was the same address every time. A guard that asks "did this run
+hold its IP" cannot see "this run holds the IP every other run also holds".
+
+Fixed: the id is now base-36 and alphanumeric (`oslors1`-shaped), and
+`substituteProxyPlaceholders` strips hyphens as well, so an injected `newSessionId`, a
+market id containing a hyphen, or a caller passing its own id cannot reintroduce it. Verified
+— three concurrent Oslo sessions now return three distinct Oslo IPs.
+
+**How three wrong hypotheses were eliminated first**, because the path matters more than the
+answer:
+
+1. *Session-id collision in the same millisecond.* Real, and fixed — but the IPs still
+   shared afterwards, so it was a separate latent bug.
+2. *The vendor collapses same-city keys.* No: four concurrent distinct keys in one city
+   returned four distinct IPs.
+3. *`sessionduration` changes the key's scope.* No: distinct keys work with and without it.
+
+The step that broke it open was noticing that **every market has exactly two profiles**, so
+"same market shares an exit" and "adjacent launches share an exit" were indistinguishable in
+the data. Testing four concurrent runs across four DIFFERENT markets (four distinct IPs) and
+three across ONE market (one IP) separated them — and then three SEQUENTIAL same-market runs
+also sharing removed concurrency from the picture entirely.
+
+**What this invalidates.** Any earlier claim in this repo about per-session rotation *within*
+a market, including the "5 sessions → 5 IPs" note, unless that measurement used a hyphen-free
+key. Rotation *between* markets was never affected. The 100-session milestone had not been
+run, which is now clearly the right call rather than a cautious one.
+
+Where: `network/provider.ts` (`defaultSessionId`, `substituteProxyPlaceholders`).
 
 ## D. Tooling and process gaps
 
@@ -795,12 +1343,23 @@ are deliberately shared across engines.
 Where: `.dependency-cruiser.mjs`, `package.json` (`boundaries`),
 `.github/workflows/ci.yml`.
 
-### D-1c · `proxy verify` still runs on agent-browser
+### D-1e · CLOSED, and it was stale when it was written
 
-`proxy verify --provider http-proxy` ignores `--engine` and uses agent-browser,
-which has no Chrome installed — so it hangs rather than verifying. The Decodo
-verification had to go through `journey run --engine playwright` instead. Only the
-journey path honours the engine flag for proxied runs.
+`proxy verify` has honoured `--engine` since `RuntimeRequest` landed:
+`cli/commands.ts` passes `{ engine, profile }` to `makeRuntime`. **This entry
+contradicted [D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers)
+in the same document**, which already said "closed for `browser verify` and
+`proxy verify`".
+
+Confirmed by running it, not by reading it — `proxy verify --geo bergen-desktop
+--provider http-proxy --engine playwright` returns a full two-axis verification at
+confidence 100 through a live Decodo exit, and did so repeatedly during the
+corroboration work.
+
+Left in place rather than deleted, because the failure it records is a real one and
+it is about this file: two entries describing the same code disagreed, and the
+pessimistic one was believed. A gap register nobody trusts is worse than none, which
+is why slice 1 existed — and this survived it.
 
 ### D-1b · The engine choice is uniform, except for the experiment samplers
 
@@ -820,21 +1379,37 @@ because changing the launch identity of the command that proves the primitives
 would change what EXP-000 measured. `--engine playwrite` is now refused (exit 2)
 instead of silently running agent-browser.
 
-**Still open for the seven experiment samplers.** **Verified now**:
-`cli/samplers.ts` calls `deps.makeRuntime(config)` with no request at lines 90,
-273, 328, 329 and 370, so `experiment run` is agent-browser-only. `ExperimentOptions`
-also carries no `engine` and no `verifyEndpoint`, and lines 99 and 280 use
-`DEFAULT_VERIFY_ENDPOINT` directly, so a configured verify endpoint does not reach
-an experiment either. The change is one field plus five call sites — and it is the
+**CLOSED for the samplers too.** `ExperimentOptions` gained `engine` and
+`verifyEndpoint`, and every runtime an experiment builds now goes through one
+`runtimeFor(deps, options, profile, config)` helper rather than five call sites with
+their own defaults — a per-site default is how EXP-003's two isolated sessions end
+up on different engines while the sample reports one number. The three samplers that
+delegate to `journeyRun` forward both fields, so `--engine` means the same thing
+whether an experiment runs the journey or a human does. Absent still means
+`DEFAULT_ENGINE`, so an experiment re-run without the flag measures what its stored
+results measured.
+
+EXP-000 is the one where this is not merely uniformity: its subject IS the adapter,
+so taking its samples through an engine nobody asked about answered a different
+question than the one printed at the top of the summary.
+
+**Proven by running it.** EXP-002 had never produced a measurement through the
+residential proxy, because the samplers were agent-browser-only and there is no
+Chrome for that engine here — so the experiment could not execute at all. Through
+Playwright and a live Decodo Bergen exit it now reports `ip-stability 100%` over a
+30-second window across 3 reads, and the summary note still says plainly that the
+PRD's ten minutes were not covered.
+
+The original diagnosis, kept because it was accurate: the change was one field plus
+five call sites — and it was the
 same `ExperimentOptions` edit that
-[C-1](#c-1--the-stability-window-is-a-parameter-now-and-no-flag-reaches-it) and
+[C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it) and
 [A-3b](#a-3b--exp-007-exists-now-and-has-never-been-run) are waiting on. An option
 nothing reads is the defect [B-1](#b-1--the-config-file-is-read-now--except-for-two-keys)
 closed, so add the field and the call sites together or neither.
 
-Consequence today: EXP-001 measures egress through agent-browser and the journey
-and matrix paths can use either engine. Both are valid — the experiment proves the
-proxy, the journey proves the browser — but the engine choice is not yet uniform.
+Consequence today: none. The engine choice is uniform across `browser verify`,
+`proxy verify`, `journey run`, `matrix run` and all eight experiment samplers.
 
 ### D-1c · Closed: a trace carries its own format
 
@@ -970,7 +1545,7 @@ The first is not a priority call — it is a red suite. After that the order is
 3. **One `ExperimentOptions` edit closes three entries** — `engine`,
    `verifyEndpoint`, `stabilityWindowMs`, `stabilityReads`, `concurrency`, plus the
    five `makeRuntime` call sites in `samplers.ts` and the flags in `index.ts`. That
-   is [C-1](#c-1--the-stability-window-is-a-parameter-now-and-no-flag-reaches-it),
+   is [C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it),
    [A-3b](#a-3b--exp-007-exists-now-and-has-never-been-run) and the remaining third
    of [D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers).
    Do not substitute defaults at the CLI: `resolveStabilityWindow` and

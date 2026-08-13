@@ -130,6 +130,73 @@ export function flagVars(argv: string[]): Record<string, string> {
 }
 
 /**
+ * A duration flag: bare ms, or with an `ms` / `s` / `m` / `h` suffix.
+ *
+ * `null` for anything unreadable, so a caller can REFUSE rather than fall back.
+ * That distinction is the whole reason this returns a union: the value this
+ * parses is EXP-002's stability window, whose default is 24 seconds against a
+ * PRD asking for ten minutes. A `--stability-window 10min` that silently became
+ * the default would produce a summary measuring 24s — and, because the summary
+ * note names the window it actually used, a reader would see a coherent,
+ * confident, wrong answer to the question they thought they asked.
+ *
+ * Zero and negatives are unreadable too. A zero-length window reports perfect
+ * stability having waited for nothing.
+ */
+export function parseDurationMs(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|min|h)?$/.exec(value.trim());
+  if (!match) return null;
+  const scale = { ms: 1, s: 1_000, m: 60_000, min: 60_000, h: 3_600_000 }[match[2] ?? "ms"] as number;
+  const ms = Number(match[1]) * scale;
+  return ms > 0 ? ms : null;
+}
+
+/**
+ * A URL list, as a `--urls-file` body: one per line, `#` comments, blanks
+ * skipped.
+ *
+ * Every line is validated HERE, before anything launches, and one bad line
+ * refuses the whole file with its line number. The alternative was measured: 430
+ * URLs were driven from a shell loop, and a list whose entries are only checked
+ * as each one is opened turns a typo on line 217 into a scenario that reports
+ * `unmeasured` two hundred pages into an overnight matrix. Same rule as a
+ * mistyped `--market`: refuse the expansion, not the two-hundredth run of it.
+ *
+ * Order is PRESERVED and duplicates are KEPT. Sitemap order is meaningful to
+ * whoever reads the results, and repeating a URL is a legitimate way to ask for a
+ * second sample of one page.
+ */
+export function parseUrlList(text: string): { ok: true; urls: string[] } | { ok: false; errors: string[] } {
+  const urls: string[] = [];
+  const errors: string[] = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    // A trailing `#` comment is not stripped: `#` is legal in a URL fragment, so
+    // cutting at one would silently rewrite the target. Only a whole-line comment
+    // counts.
+    const line = (lines[i] as string).trim();
+    if (line === "" || line.startsWith("#")) continue;
+    let parsed: URL;
+    try {
+      parsed = new URL(line);
+    } catch {
+      errors.push(`line ${i + 1}: "${line}" is not a URL`);
+      continue;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      // Refused by name, because `file:` would make a matrix "pass" against local
+      // disk while claiming to have visited a site.
+      errors.push(`line ${i + 1}: "${line}" is ${parsed.protocol} — only http and https can be visited`);
+      continue;
+    }
+    urls.push(line);
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  if (urls.length === 0) return { ok: false, errors: ["no URLs — every line was blank or a comment"] };
+  return { ok: true, urls };
+}
+
+/**
  * `--engine`, or `null` for a name no adapter answers to.
  *
  * Returning `null` instead of falling back matters: the previous form read
@@ -160,17 +227,82 @@ Usage:
       which the run path writes and this command does not.
 
   geoqa proxy verify --geo <profile> [--provider direct|http-proxy]
-                     [--engine agent-browser|playwright] [--json]
+                     [--engine agent-browser|playwright] [--no-corroborate]
+                     [--json]
       Open a session and report the observed egress identity and browser
       environment, on both axes, with a per-axis verdict.
 
+      A SECOND, independent IP-geo database (ipv4.geojs.io) is read by default and
+      the two readings are reported side by side. Measured: one Decodo ISP exit resolved
+      to Sao Paulo per Decodo's own endpoint and New York per ipinfo, for the same
+      IP. An engine whose whole job is proving where a visitor is cannot treat one
+      lookup as ground truth, because a wrong database looks exactly like a wrong
+      proxy and the two need opposite fixes. Disagreement about the COUNTRY is a
+      mismatch and caps the run's network-identity confidence; disagreement about
+      the city is recorded and is never a defect, because databases name the
+      exchange (this machine reads Tonsberg, Rykkin and Oslo simultaneously).
+      Different IPs across the two reads is neither — it means a dual-stack route
+      or a rotation, so the two locations describe different visitors and are not
+      compared at all. That is why the second source is pinned to IPv4: ipinfo.io
+      publishes no AAAA record, and a dual-stack corroborating host is read over
+      IPv6 by any dual-stack client, which makes the axis permanently unverified.
+      Measured, not assumed.
+
+      --no-corroborate skips the second lookup.
+
   geoqa profile list [--json]
   geoqa journey list [--json]
+  geoqa tenant list [--json]
+
+Multi-tenancy:
+  --tenant <id>    scope the whole invocation to one tenant, from
+                   tenants/<id>.yaml
+
+      Evidence moves to <evidence-root>/<tenantId>/<runId>. A tenant id becomes a
+      directory name, so it is constrained to lowercase letters, digits and inner
+      hyphens, and the RESOLVED path is re-checked to be inside the root — a path
+      that escapes its tenant's root is a cross-tenant read, which is a security
+      defect and not a bug.
+
+      A tenant declares the sites it OWNS and the markets it asked for, and both
+      are refused before anything launches. A run against a site the tenant does
+      not own is either a mistake or this engine being aimed at somebody else's
+      product from residential IPs; a market nobody asked for is a bill. Ownership
+      is compared by ORIGIN, never by prefix: https://acme.no.evil.test starts with
+      https://acme.no as a string.
+
+      A tenant file holds the NAME of an environment variable for its proxy
+      credentials and for its proxy sub-account username, never either value.
+      Credentials come from the environment only, and a sub-account username
+      identifies a billable account at a vendor.
+
+      QUOTA is enforced before anything launches. A tenant declares trafficMb and
+      runsPerDay; traffic is read from the VENDOR (the only authoritative figure,
+      since bytes are counted at the proxy) and the run count is derived from the
+      tenant's own evidence directories, because the vendor has no idea what a run
+      is. A matrix is expanded first so the check knows the real page count: a
+      430-page sweep against a tenant with 100 MB left is refused before the browser
+      starts, instead of dying at page 90 with a 407 that looks like a broken proxy.
+
+      A traffic figure that could NOT be read is unmeasured, never zero. It warns and
+      proceeds rather than blocking — with a vendor-enforced cap per sub-account,
+      exhaustion is isolated to the tenant that caused it, so refusing every tenant's
+      work because a usage API is down would cause more harm than it prevents. The
+      warning says the guard is not in force. The run ceiling still applies, because
+      that number is ours and is always readable.
+
+      When the vendor enforces its own cap the effective ceiling is the LOWER of the
+      two. When it enforces none, geoqa says so: a cap geoqa enforces can be bypassed
+      by a bug in geoqa, and one the vendor enforces cannot.
+
+      Omitting --tenant is not an error: single-target use is still the common case
+      and the shared evidence root is still correct for it. No tenant rule applies
+      then either, which is the honest consequence rather than a silent default.
 
   geoqa journey run --url <url> --geo <profile> --journey <id>
                     [--provider direct|http-proxy]
                     [--engine agent-browser|playwright] [--seed <n>]
-                    [--repeat <n>] [--var k=v]... [--json]
+                    [--repeat <n>] [--var k=v]... [--corroborate] [--json]
       One run, start to finish, in this process. The playwright engine takes
       locale, timezone, coordinates and viewport as context options and GRANTS
       the geolocation permission, so it needs no locale init script.
@@ -179,6 +311,13 @@ Usage:
       Omitted, it is derived from the run id: every run paces differently, and
       any one run replays exactly. Take the seed from a failing run's run.json
       to repeat exactly what it did.
+
+      --corroborate reads a second IP-geo database, as proxy verify does by
+      default. OFF here on purpose: this is one extra probe per RUN, and a
+      430-page sweep would spend 430 of them against a free endpoint's monthly
+      allowance. An engine that exhausts its own corroborating source reports
+      unverified for every later run, which is the failure an exhausted proxy
+      already produced once.
 
       --repeat runs the journey n times (default 1) in ONE browser and ONE
       network session, and MEASURES flakiness instead of masking it. The journey
@@ -195,12 +334,13 @@ Usage:
       registers, submits or books for real. The run says so before starting and
       records it in the evidence.
 
-  geoqa matrix run --url <url> --market <a,b,...> --journey <a,b,...>
+  geoqa matrix run (--url <url> | --urls-file <path>)
+                   --market <a,b,...> --journey <a,b,...>
                    [--device mobile,desktop] [--concurrency <n>]
                    [--provider direct|http-proxy]
                    [--engine agent-browser|playwright] [--seed <n>]
                    [--repeat <n>] [--var k=v]... [--headed]
-                   [--dry-run] [--allow-writes] [--json]
+                   [--dry-run] [--allow-writes] [--corroborate] [--json]
       Market x device x journey, in this process, with a bounded pool. --market
       and --journey are required and both accept commas and repetition;
       --device defaults to mobile,desktop, because a market covered on one
@@ -212,6 +352,18 @@ Usage:
       failing never ends the matrix — it is recorded as its own outcome, and a
       scenario that could not be executed at all is recorded as unmeasured
       rather than dropped, so a gap can never read as a market that was fine.
+
+      --urls-file adds a PAGE axis: one scenario per page per market/device/
+      journey, run inside the same bounded pool. One URL per line, # comments and
+      blank lines skipped, order and duplicates preserved because sitemap order is
+      meaningful and a repeated URL is a second sample. Every line is validated
+      before anything launches and one bad line refuses the whole matrix.
+
+      This axis exists because the first site-wide sweep had no bounded path
+      through the engine at all: 430 pages driven from a shell loop, alongside
+      three other browser fleets, made a selector-visible check report a missing
+      h1 on six pages that demonstrably had one. All six passed re-run alone. A
+      sweep that cannot be bounded eventually invents defects out of its own load.
 
       --dry-run prints the expansion and the scenario count and launches
       nothing. --allow-writes is REQUIRED when any selected journey declares
@@ -226,8 +378,57 @@ Usage:
       browser context and, on agent-browser, a whole Chrome. The result records
       both the bound and the peak actually reached.
 
-  geoqa experiment run <id> [--samples <n>] [--geo <profile>] [--url <url>] [--json]
+  geoqa experiment run <id> [--samples <n>] [--geo <profile>] [--url <url>]
+                            [--stability-window <duration>] [--stability-reads <n>]
+                            [--concurrency <n>] [--json]
       Take n samples and write results.jsonl + summary.json.
+
+      --stability-window (EXP-002) is how long one sample holds a single network
+      session open, as ms or with an s/m/h suffix. Default 24s, because ten
+      minutes x --samples 10 is 100 minutes and a feasibility check that takes an
+      hour and a half gets killed halfway. The PRD asks about ten minutes:
+      --stability-window 10m --samples 3. Every summary names the window it
+      actually measured, so a cheap run can never be read as the expensive claim.
+
+      --stability-reads (default 5) is how many egress readings are spread across
+      that window; raising the window costs wall clock, not probe rate, because
+      ipinfo rate-limiting a long run would turn a stickiness measurement into a
+      throttling measurement.
+
+      --concurrency (EXP-007, default 3) is how many full runs execute at once in
+      one sample — the number matrix run --concurrency is currently guessing.
+
+  geoqa runs list [--url <url>] [--geo <profile>] [--journey <id>]
+                  [--verdict PASS|FAIL|ERROR|PASS_WITH_WARNINGS]
+                  [--since <iso>] [--limit <n>] [--json]
+      The run history, and the REGRESSIONS in it — checks that used to pass and now do
+      not. Exits 1 when there is one, so a scheduled check goes red.
+
+      A regression is scoped to one profile + journey + target, because "the h1 check
+      started failing" is only meaningful for a fixed combination of those three;
+      merging them is how a real regression gets averaged into noise. Only the
+      TRANSITION is reported, so a check that broke on Monday is one entry with a
+      Monday date rather than one per day since. A failure with no earlier pass is not
+      a regression — it may never have worked. And an ERROR run is skipped rather than
+      counted as a failed check: ERROR means geoqa could not read the page, and
+      reporting our own instrumentation failure as the site's regression is the one
+      confusion this project refuses to make.
+
+      --limit applies to the printed list only, never to the summary or the
+      regressions: how many runs there have been, and what broke, are questions about
+      all of them.
+
+  geoqa runs rebuild [--json]
+      Rebuild the index from the runs on disk. Exits 1 if any run directory could not
+      be read, because a gap in the history must not look like a clean rebuild.
+
+      The index at <evidence-root>/runs.jsonl is a DERIVED CACHE, not the truth. Each
+      run's own run.json is the authority on that run, so a corrupt, truncated,
+      hand-edited or deleted index costs nothing permanent — which is why this is a
+      JSONL file over the evidence tree rather than a database that owns the record. A
+      rebuilt entry is poorer than an appended one (run.json carries the journey's
+      verdict, not the assembled confidence report) and says so rather than filling the
+      gaps with defaults that would read as real readings.
 
   geoqa evidence inspect <runId> [--json]
       Show a run's evidence manifest, what is missing, and its completeness.
@@ -277,6 +478,20 @@ Configuration:
   falling back to defaults for a file somebody edited on purpose is the exact
   defect that config surface was built to close. Credentials are refused by
   name — proxy credentials come from GEOQA_PROXY_* environment variables only.
+
+Identity:
+  --geo <profile>            a profile id, e.g. oslo-desktop
+  --country <cc> --city <c>  the same thing by place, resolved against the
+                             profiles that exist. --device (default desktop) and
+                             --visitor anonymous|returning (default anonymous)
+                             pick between them. A first-time visitor is the
+                             neutral subject: it carries nothing in and keeps
+                             nothing out, which is what a place name means when
+                             nobody says otherwise. Naming a place that has no
+                             profile REFUSES and lists the ones there are;
+                             giving both --geo and --country/--city refuses,
+                             because two identities have no correct answer.
+                             matrix run uses --market instead.
 
 Global:
   --json           machine-readable output (the integration contract)
