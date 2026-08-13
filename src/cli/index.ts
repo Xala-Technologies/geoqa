@@ -37,6 +37,8 @@ import {
   keywordsResearch,
   loadUrlList,
   renderDashboardBuild,
+  contentAnalyse,
+  renderContentAnalysis,
   renderGateResult,
   renderKeywordReport,
   renderSiteAnalysis,
@@ -365,6 +367,14 @@ async function main(argv: string[]): Promise<number> {
       ...(args.flags.since !== undefined ? { since: flagString(args, "since", "") } : {}),
     });
     return emit(result.view, renderDashboardBuild(result));
+  }
+
+  if (group === "content" && (action === "analyse" || action === "analyze" || action === undefined)) {
+    const result = contentAnalyse(deps);
+    emit(result, renderContentAnalysis(result));
+    // Red on a near-duplicate: two pages that are substantially the same text compete with each
+    // other in search, and that is a finding somebody has to act on rather than read past.
+    return result.findings.duplicates.length > 0 ? 1 : 0;
   }
 
   if (group === "site" && (action === "analyse" || action === "analyze" || action === undefined)) {

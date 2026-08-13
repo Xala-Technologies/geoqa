@@ -21,7 +21,7 @@ import {
   verifyEgressHeld,
   verifyEnvironment,
 } from "../stages.js";
-import { bad, fakeRuntime, ok, IPINFO_OSLO } from "./fake-runtime.js";
+import { bad, fakeRuntime, ok, BROWSER_ENV_OSLO, IPINFO_OSLO } from "./fake-runtime.js";
 import type { BrowserRuntime } from "../../browser/types.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -628,3 +628,52 @@ describe("verifyEnvironment corroboration", () => {
     expect(spec().corroborateGeo).toBe(false);
   });
 });
+
+describe("content capture", () => {
+  const contentJson = JSON.stringify({
+    wordCount: 640, shingles: ["a b c d e"], headings: ["Heading"], h1Count: 1, internalLinks: ["/faq"], title: "T",
+  });
+
+  /** A runtime that answers the content read as a real browser would. */
+  const withContent = (answer: string | null): BrowserRuntime =>
+    fakeRuntime({
+      evaluate: <T,>(expression: string) =>
+        Promise.resolve(
+          expression.includes("wordCount")
+            ? answer === null
+              ? bad<T>()
+              : ok(answer as unknown as T)
+            : ok(BROWSER_ENV_OSLO as unknown as T),
+        ),
+    });
+
+  it("writes content.json so the site-wide signals have inputs at all", async () => {
+    // Its own artifact rather than a field on run.json, because its value is entirely
+    // cross-run: thin pages, orphans and near-duplicates are comparisons BETWEEN pages.
+    const manifest = await collectEvidence(withContent(contentJson), {
+      spec: spec(),
+      profile: profile(),
+      geo: await geoOf(),
+      journey: journeyResult(),
+      createdAt: "2026-08-12T00:00:00.000Z",
+    });
+    expect(manifest.artifacts.map((a) => a.label)).toContain("content");
+    const written = JSON.parse(readFileSync(path.join(root, "run_1", "content.json"), "utf8")) as { wordCount: number };
+    expect(written.wordCount).toBe(640);
+  });
+
+  it("a failed content read costs the ARTIFACT, never the run", async () => {
+    // The content read is a bonus observation. A run that verified geography and executed its
+    // journey has not failed because a word count could not be taken.
+    const manifest = await collectEvidence(withContent(null), {
+      spec: spec(),
+      profile: profile(),
+      geo: await geoOf(),
+      journey: journeyResult(),
+      createdAt: "2026-08-12T00:00:00.000Z",
+    });
+    expect(manifest.artifacts.map((a) => a.label)).not.toContain("content");
+    // And the manifest is otherwise complete — the run stands.
+    expect(manifest.artifacts.map((a) => a.label)).toContain("run");
+  });
+})

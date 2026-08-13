@@ -1208,6 +1208,31 @@ The docs had drifted behind the code in ways this repo says are worse than no do
 - **Eight stale anchors** left behind when gaps were closed and renamed. All 76 internal links
   now resolve, checked with GitHub's actual slug rules rather than an approximation of them.
 
+## A-9 · CLOSED — the content signals I had to leave out
+
+The gap named its own closing conditions, so I built them. `content.json` per run — word count,
+shingles, headings, `h1` count, same-origin link targets — and `geoqa content analyse` over the
+sweep.
+
+**The artifact holds measurements, not prose.** A page can contain personal data, and an
+evidence tree accumulating the rendered text of every page on a customer's site would be a
+data-protection liability created for a word count.
+
+Verified over 24 real digilist pages: 162–1652 words, 61–70 internal links each, **every page
+exactly one `h1`**, one thin page (`/book-demo`, 162 words — a booking form, which is why the
+report calls it a list to look at rather than a verdict), and **zero near-duplicates**. That
+last result independently confirms the earlier manual finding that digilist's 23 near-duplicate
+slug pairs were cannibalisation candidates by URL and not by content.
+
+Three decisions worth keeping: `innerText` not `textContent` (a big inlined JSON-LD blob would
+otherwise read as substantial content on a visually empty page); a deliberately HIGH duplicate
+threshold, since anything low enough to catch 6–14% similarity would flag every page sharing a
+nav; and orphans scoped to the sweep, stated in the output.
+
+Docs: gaps **A-9** closed; PRD **R-154 / R-155**.
+
+Gate: lint clean · boundaries clean (122 modules / 477 deps) · **1350 tests at 100%** · e2e 30/30.
+
 ## Next
 
 Slice 19 only, and it is **blocked on a decision rather than on work**: a static UI has no auth

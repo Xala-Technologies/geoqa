@@ -69,6 +69,14 @@ import type { KeywordReport } from "../keywords/types.js";
 import type { Market } from "../geo/types.js";
 import { actionableFindings, gateFromRun, gateWithoutRun, type GateResult, type GateThresholds } from "../gate/publish.js";
 import { analyseSite, describeLatencySpread, type SiteReport } from "../analysis/site.js";
+import {
+  analyseContent,
+  parsePageContent,
+  DUPLICATE_SIMILARITY,
+  THIN_PAGE_WORDS,
+  type ContentFindings,
+  type ContentRecord,
+} from "../analysis/content.js";
 import { toDashboardView, type DashboardView } from "../report/view.js";
 import {
   filterHistory,
@@ -1459,6 +1467,82 @@ export function siteAnalyse(deps: CommandDeps, filter: HistoryFilter = {}): Site
     );
   }
   return { report, skipped, warnings };
+}
+
+/**
+ * Read every run's `content.json` back off disk.
+ *
+ * From the evidence rather than the index, because the content is deliberately NOT in
+ * `runs.jsonl`: shingles for hundreds of pages would make the index the largest thing in the
+ * tree, and the index exists to be scanned quickly. A run with no `content.json` is skipped
+ * silently — it is a bonus artifact, and a sweep from before this existed should still analyse.
+ */
+export function readContentRecords(deps: CommandDeps): { records: ContentRecord[]; runsWithout: number } {
+  const records: ContentRecord[] = [];
+  let runsWithout = 0;
+  let dirs: string[] = [];
+  try {
+    dirs = readdirSync(deps.evidenceRoot).filter((d) => d.startsWith("run_"));
+  } catch {
+    return { records: [], runsWithout: 0 };
+  }
+  // Newest run per target wins: a sweep repeated over days should describe the site as it is
+  // now, not average a page against its own history.
+  const byTarget = new Map<string, { runId: string; record: ContentRecord }>();
+  for (const dir of dirs.sort()) {
+    try {
+      const contentFile = path.join(deps.evidenceRoot, dir, "content.json");
+      if (!existsSync(contentFile)) {
+        runsWithout += 1;
+        continue;
+      }
+      const run = JSON.parse(readFileSync(path.join(deps.evidenceRoot, dir, "run.json"), "utf8")) as { target?: string };
+      const content = parsePageContent(JSON.parse(readFileSync(contentFile, "utf8")));
+      if (typeof run.target !== "string" || content === null) {
+        runsWithout += 1;
+        continue;
+      }
+      byTarget.set(run.target, { runId: dir, record: { target: run.target, content } });
+    } catch {
+      runsWithout += 1;
+    }
+  }
+  for (const { record } of byTarget.values()) records.push(record);
+  return { records, runsWithout };
+}
+
+export interface ContentAnalysisResult {
+  findings: ContentFindings;
+  pages: number;
+  runsWithoutContent: number;
+}
+
+export function contentAnalyse(deps: CommandDeps): ContentAnalysisResult {
+  const { records, runsWithout } = readContentRecords(deps);
+  return { findings: analyseContent(records), pages: records.length, runsWithoutContent: runsWithout };
+}
+
+export function renderContentAnalysis(result: ContentAnalysisResult): string {
+  const f = result.findings;
+  const lines = [`${result.pages} page(s) with captured content` + (result.runsWithoutContent > 0 ? `, ${result.runsWithoutContent} run(s) had none` : "")];
+  for (const w of f.warnings) lines.push(`  ! ${w}`);
+  if (f.thin.length > 0) {
+    lines.push(`  ${f.thin.length} page(s) under ${THIN_PAGE_WORDS} words — a list to look at, not a verdict:`);
+    for (const t of f.thin.slice(0, 10)) lines.push(`    ${String(t.wordCount).padStart(5)} words  ${t.target}`);
+  }
+  if (f.duplicates.length > 0) {
+    lines.push(`  ${f.duplicates.length} near-duplicate pair(s) at or above ${DUPLICATE_SIMILARITY} similarity:`);
+    for (const d of f.duplicates.slice(0, 10)) lines.push(`    ${d.similarity}  ${d.a}\n         ${d.b}`);
+  }
+  if (f.orphans.length > 0) {
+    lines.push(`  ${f.orphans.length} page(s) nothing else in this sweep links to:`);
+    for (const o of f.orphans.slice(0, 10)) lines.push(`    ${o}`);
+  }
+  if (f.headingProblems.length > 0) {
+    lines.push(`  ${f.headingProblems.length} page(s) without exactly one h1:`);
+    for (const h of f.headingProblems.slice(0, 10)) lines.push(`    h1 x${h.h1Count}  ${h.target}`);
+  }
+  return lines.join("\n");
 }
 
 export function renderSiteAnalysis(result: SiteAnalysisResult): string {

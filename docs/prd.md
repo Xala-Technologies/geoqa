@@ -172,6 +172,14 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-154** Page content is captured as **measurements, never prose**. A page can contain
+  personal data, and an evidence tree accumulating the rendered text of every page on a
+  customer's site would be a data-protection liability created for a word count. A word count,
+  shingles, headings and link targets answer every content question without any of it being
+  readable.
+- **R-155** A content signal states **what it is scoped to**. An orphan within a sweep is a much
+  weaker claim than an orphan on the site, and a report that blurred the two would send somebody
+  hunting for links that exist.
 - **R-151** A trend **never interpolates**. A run that did not measure a metric contributes a
   gap, not an estimated value, because drawing through it fabricates the one thing the reader is
   looking at. Gaps are counted and reported, so a trend computed from six of forty runs cannot
