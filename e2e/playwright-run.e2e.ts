@@ -163,6 +163,18 @@ describe("a healthy page, end to end", () => {
     }
     expect(result.confidence.evidence).toBe(100);
   });
+
+  it("leaves NO network.har behind, though one was recorded the whole time", () => {
+    // The retention hole this test exists for. `harPath` is armed on every run — a HAR cannot
+    // be started retroactively for the run that turns out to need one — and Playwright flushes
+    // it at close whether anything asked or not. So a passing run, whose whole point is to keep
+    // almost nothing, used to leave a full network recording on disk that no manifest listed.
+    // Nothing would ever have removed it either: pruning walks the manifest.
+    //
+    // "Never call stop" was enough for the trace. The HAR's flush is not ours to skip, so the
+    // pass tier deletes it after the close instead.
+    expect(existsSync(evidenceFile("e2e_healthy", "network.har"))).toBe(false);
+  });
 });
 
 describe("an injected defect, end to end", () => {
@@ -201,18 +213,27 @@ describe("an injected defect, end to end", () => {
     expect(statSync(trace).size).toBeGreaterThan(0);
   });
 
-  it("records what it could NOT collect rather than looking complete", () => {
+  it("KEEPS A HAR, and the manifest no longer reports one it is about to have", () => {
+    // This assertion is the inverse of what it used to be, and the change is the whole point of
+    // the fix. HAR is a context-creation option in Playwright, flushed only when the context
+    // CLOSES — so evidence collected before the close described a file that did not exist yet,
+    // `missing` listed `har`, and fail-tier completeness sat at 88% for a recording that landed
+    // on disk seconds later when the run's `finally` closed the same context.
+    //
+    // `harStop` now closes the context, because on this engine that IS the flush. Collected
+    // last, after every live read, for the same reason.
+    const har = evidenceFile("e2e_missing_cta", "network.har");
+    expect(existsSync(har)).toBe(true);
+    expect(statSync(har).size).toBeGreaterThan(0);
+
     const manifest = JSON.parse(readFileSync(evidenceFile("e2e_missing_cta", "manifest.json"), "utf8")) as {
       tier: string;
       missing: string[];
       completeness: number;
     };
     expect(manifest.tier).toBe("fail");
-    // HAR is a context-creation option in Playwright and is refused mid-session,
-    // so it must show up as genuinely missing — not as a file that exists and
-    // contains nothing.
-    expect(manifest.missing).toContain("har");
-    expect(manifest.completeness).toBeLessThan(100);
+    expect(manifest.missing).not.toContain("har");
+    expect(manifest.completeness).toBe(100);
   });
 });
 

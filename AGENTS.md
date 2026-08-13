@@ -369,6 +369,20 @@ leaves no way to tell which is lying. Occurrences are keyed by `occurrenceKey(st
 — index AND label — because labels are not unique and a label-only key can report
 `reproduced` for a step never seen to fail twice.
 
+**30. The HAR is collected LAST, and `harStop` closes the context.** On Playwright,
+closing IS the flush — there is no flush-on-demand — so the block sits after every
+live read (vitals, console, snapshot, trace, a11y). Its position is load-bearing: a
+HAR collected before the trace takes the trace's context with it. `close()` is
+idempotent on both engines because the flush and `executeRun`'s `finally` both call
+it, and a second `saveStorageState` through a dead context would report a failed save
+for a session saved correctly.
+
+**31. A tier that does not retain the HAR DELETES it after the close.** `harPath` is
+armed on every run — it cannot be started retroactively — and Playwright flushes it
+whether anything asked or not, so a green run left an unlisted network log on disk.
+Unlisted is the worse half: pruning walks the manifest. `pruneUnlistedHar` says so in
+the log, because a deleted file is the one thing a reader cannot go back and check.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

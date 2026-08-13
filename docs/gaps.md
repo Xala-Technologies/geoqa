@@ -610,7 +610,7 @@ nothing about the experiment becomes unreadable.
 
 Where: `evidence/redact.ts`, `evidence/__tests__/redact.test.ts`.
 
-### B-3 · HAR is recorded now, and still absent from every manifest
+### B-3 · CLOSED — the HAR is recorded, listed, flagged, and deleted when unretained
 
 **Recording: closed.** A Playwright context is created with
 `recordHar: { path, mode: "full", content: "omit" }`, armed for **every** run —
@@ -623,38 +623,59 @@ than asked (both paths named, so nobody hunts for a file that will never appear)
 or armed correctly and pending, which says plainly that Playwright writes it when
 the context CLOSES and the file does not exist yet.
 
-**Presence in the manifest: still open, and three consequences follow.**
-`collectEvidence` runs *before* `runtime.close()`, so `describeExisting` sees 0
-bytes and the manifest still reports `har` in `missing`. **Fail-tier completeness
-is still 88%** — now because of ordering rather than because nothing records.
-Verified: `stages.ts:269-272` calls `harStop` then `describeExisting` with no
-close in between.
+**CLOSED: presence in the manifest. `harStop` closes the context, because on this
+engine that IS the flush.** It used to refuse, accurately — Playwright offers no
+flush-on-demand, so `ok` would have described a file nothing had written. Refusing
+accurately turned out not to be the same as being right: `missing` listed `har` on
+every fail-tier run and completeness sat at **88%** for a recording that landed on
+disk seconds later, when the run's own `finally` closed the same context.
 
-Two further consequences, both new and both real:
+Two consequences of that, both handled where they are paid:
 
-- **A pass-tier run now leaves an unlisted `network.har` on disk.** `harPath` is
-  armed unconditionally (`run/context.ts:207`) and Playwright always flushes on
-  close, so the asymmetric retention policy — the whole reason a green run keeps
-  almost nothing — is bypassed for this one artifact. "Never call stop" was
-  sufficient for the trace; for HAR the equivalent is a **delete** after
-  collection for tiers that do not list `har`.
-- **A HAR bypasses redact-at-write.** Bodies are omitted at creation, but request
-  bodies and cookie headers are not, so a form or login journey's HAR can hold a
-  filled value — the one thing R-63 says must never reach disk. It needs the same
-  derived `risk` flag the screenshots get (`screenshotRisk({hadForm, authenticated})`),
-  and `privacyNote`'s wording widened beyond screenshots. The alternative, if a new
-  privacy surface is unwanted, is to arm `harPath` only for journeys declaring
-  `writes: false` — which needs the journey, not just the spec, at
-  `buildRuntime` time.
+- **The `har` block is collected LAST**, after vitals, console, network, snapshot,
+  trace and a11y. Its position is load-bearing, not a matter of reading order — a
+  HAR collected before the trace would have taken the trace's context with it.
+- **`close()` is idempotent on both engines.** `harStop` closes and the `finally`
+  closes again. Playwright tolerates a repeated `context.close()`; `saveStorageState`
+  does not, and would have reported a failed save for a session saved correctly the
+  first time — the exact false alarm B-7 exists to prevent. agent-browser's would
+  have re-run the CLI against a dead daemon.
 
-Fix for the presence half: do the live reads first, then `await runtime.close()`
-for tiers containing `har`, then describe the file, then build the manifest. Note
-`PlaywrightRuntime.close()` is called again from `executeRun`'s `finally`;
-Playwright tolerates a double `context.close()` but agent-browser's path would
-re-run, so that needs a guard.
+E2E now asserts fail-tier completeness is **100** and the HAR is non-empty.
 
-Where: `browser/playwright.ts` (`harPendingDetail`, `HAR_NOT_ARMED`),
-`browser/playwright-launch.ts`, `run/context.ts`, `run/stages.ts`.
+**CLOSED: the pass-tier retention hole.** `harPath` is armed unconditionally, and
+Playwright flushes on close whether anything asked or not, so a green run — whose
+whole point is to keep almost nothing — left a full network recording on disk that no
+manifest listed. An *unlisted* file is the worse half: pruning walks the manifest, so
+nothing would ever have removed it. "Never call stop" was sufficient for the trace and
+is not sufficient here, because the flush is not ours to skip. `pruneUnlistedHar` runs
+after the close, deletes a HAR the manifest does not list, and SAYS SO in the log — a
+deleted file is the one thing a reader cannot go back and check. A failed delete is
+reported as a retention problem, never as a failed run. E2E asserts a passing run
+leaves no `network.har`.
+
+**CLOSED: the HAR carries the same risk flag as a screenshot, and needs it more.**
+`screenshotRisk` is now `artifactRisk`, because it stopped being about screenshots.
+Bodies are omitted at creation but REQUEST bodies and `Cookie` headers are not, so a
+login journey's HAR can hold a filled credential — and unlike an image, which needs a
+human to read it, a HAR is grep-able. `privacyNote` was widened from "screenshot(s)"
+to "artifact(s)": a reader who trusted the old wording would have shared a file
+holding a request body because the sentence only warned about images.
+
+**One conflict this created, resolved explicitly.** `keepOpen` says "do not close the
+session" and a har tier now says "close it to flush the HAR". A `keepOpen` run collects
+NO HAR: the manifest reports it missing, which is true — the file does not exist — and
+the run logs the reason rather than leaving it to be inferred from a completeness
+number. Handing a caller that said it still needed the session a dead one is the worse
+half of the trade, and describing a file nothing wrote is the worst of the three.
+
+Still true and unsolvable rather than unfinished, the same as B-6: the flag bounds the
+problem, it does not remove it. Nothing detects personal data inside a HAR any more
+than inside an image.
+
+Where: `browser/playwright.ts` (`harStop`, `close`), `browser/agent-browser.ts`
+(`close`), `run/stages.ts` (`pruneUnlistedHar`, collection order), `run/execute.ts`,
+`evidence/redact.ts` (`artifactRisk`), `evidence/manifest.ts` (`privacyNote`).
 
 ### B-4 · Reproducibility is fed and now CORROBORATED; only the durable path is left
 
@@ -725,8 +746,8 @@ naming them. Proven end to end against a real submitted form.
 
 Still true, and unsolvable rather than unfinished: nothing detects personal data
 *in* an image. The flag bounds the problem; it does not remove it. And see
-[B-3](#b-3--har-is-recorded-now-and-still-absent-from-every-manifest) — the HAR is
-a second artifact with the same problem and no flag yet.
+[B-3](#b-3--closed--the-har-is-recorded-listed-flagged-and-deleted-when-unretained) —
+the HAR is a second artifact with the same problem, and it carries the same flag now.
 
 ### B-7 · A returning visitor is restored now, and nothing says when it was not
 
@@ -1706,18 +1727,18 @@ The first is not a priority call — it is a red suite. After that the order is
 5. **A-1 proper** (provision, or check the office address) — with B-8 fixed, the
    last thing standing between the code and the central claim. `infra/` makes it an
    afternoon and about $28/month rather than a project.
-6. **B-3's HAR residue** — the collection reorder, the pass-tier delete, and the
-   privacy flag. The delete is the urgent third: a green run is currently leaving an
-   unlisted network log on disk, which is the one thing the asymmetric retention
-   policy exists to prevent.
+6. ~~**B-3's HAR residue**~~ — DONE. The collection reorder, the pass-tier delete and
+   the privacy flag all landed together; `harStop` closes the context because on
+   Playwright that is the flush, and fail-tier completeness is 100 rather than 88.
 7. **B-7's honesty half** — surface the `unmet` warning and record the restored
    flag in `run.json`, then add one `returning` profile and an e2e case. The
    mechanism without the warning is a run that can claim a returning visitor it
    never was.
 8. **C-8** (`emulate` unchecked) — one e2e assertion. Without it, "mobile" means a
    viewport width on the engine that serves every experiment.
-9. **B-4's residue** — carry the attempt count into `run.json`, then give the
-   durable path the same repeat wiring the CLI has.
+9. **B-4's residue** — the attempt count is in `run.json` now and occurrences are
+   keyed per step; what is left is giving the durable path the same repeat wiring the
+   CLI has, which waits on D-2.
 10. **D-2's durable half** — a Temporal client, and a decision about whether the
     matrix workflow adopts the in-process runner's bound. Worth doing after EXP-007
     has a number, not before.

@@ -362,3 +362,17 @@ describe("visibleCount", () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe("close", () => {
+  it("closes once, and answers ok without touching the daemon a second time", async () => {
+    // `executeRun`'s finally closes, and so does any caller that closed explicitly. Re-running
+    // `close` against a daemon that has already gone reports a transport failure for a close
+    // that succeeded.
+    const { rt, calls } = make({});
+    expect((await rt.close()).ok).toBe(true);
+    const again = await rt.close();
+    expect(again.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("close");
+  });
+});

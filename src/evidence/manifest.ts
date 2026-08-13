@@ -8,7 +8,7 @@
  * clean — `completeness` and `missing` exist so it does not.
  */
 import type { JourneyVerdict } from "../journeys/engine.js";
-import type { ScreenshotRisk } from "./redact.js";
+import type { ArtifactRisk } from "./redact.js";
 
 /**
  * The version of the consumed JSON shapes: this manifest AND `GeoQaRunResult`.
@@ -56,7 +56,7 @@ export interface Artifact {
   bytes: number;
   mime: string;
   /** Only meaningful for screenshots. */
-  risk?: ScreenshotRisk;
+  risk?: ArtifactRisk;
 }
 
 export interface EvidenceManifest {
@@ -159,9 +159,13 @@ export function buildManifest(input: BuildManifestInput): EvidenceManifest {
     artifacts: input.artifacts,
     missing: missingArtifacts(tier, input.artifacts),
     completeness: completenessOf(tier, input.artifacts),
+    // Widened past screenshots deliberately. It used to say "screenshot(s)", which was true
+    // when they were the only flagged artifact and became a way of understating the problem
+    // once a HAR carried the same flag: a reader who trusts the note would have shared a file
+    // holding a request body because the sentence only warned about images.
     privacyNote:
       flagged.length > 0
-        ? `${flagged.length} screenshot(s) taken on a page with a form or an authenticated session — review before sharing: ${flagged
+        ? `${flagged.length} artifact(s) captured on a page with a form or an authenticated session — review before sharing: ${flagged
             .map((a) => a.path)
             .join(", ")}`
         : null,
