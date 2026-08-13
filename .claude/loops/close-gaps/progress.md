@@ -188,8 +188,79 @@ Docs: C-4 extended with the measurement; PRD gains **R-105 / R-106**.
 Gate: lint clean · boundaries clean (94 modules / 372 deps) · **997 tests at 100%**
 lines/statements/functions · e2e 18/18.
 
-## Next: slice 2c
+## Slice 2c · J03 internal search, and clicking — DONE
 
-J03, an internal-search journey, and clicking — no journey clicks anything today,
-so J03's "open result" and J05's "follow a contextual link" are not merely
-unwritten, the capability is unexercised end to end.
+`journeys/search.yaml` (26 steps) and a click added to `reader.yaml` at
+`probability: 0.33`. Before this, **no journey clicked anything** — `runtime.click`
+was exercised only by adapter tests against a fake, and a fake click always
+succeeds: it cannot say whether the browser followed the link, whether the next
+page loaded, or whether the checks after it ran against the page they were written
+for.
+
+New fixtures: `/search` (GETs to a different path, so results are a real
+navigation), `/search-results` (three clickable results), `/search-result`,
+`/search-empty`, `/search-dead` + `/search-dead-results`.
+
+**The dead-link fixture is the proof.** Its `no-http-4xx` finding sits on a step
+that runs AFTER the click, so it cannot appear unless the browser really
+navigated. e2e asserts `FAIL`, category `http`, and zero instrumentation findings —
+the site's defect, not ours. 25/25 e2e.
+
+`/search-empty` covers the opposite error: an empty result set is a **correct**
+answer to a query. A runner that reported every fruitless search as a finding
+manufactures defects out of its own inputs, so the query is a `--var` and the
+count check is only asserted when the caller knows the term matches.
+
+### J03 found a real defect on its first live run
+
+`digilist.no` renders its inline search input inside
+`class="hidden md:flex lg:hidden"` — visible **only** between 768px and 1023px.
+Confirmed by running J03 at both profile widths:
+
+| Profile | Width | Search box |
+|---|---|---|
+| `oslo-desktop` | 1440px | not visible (`lg:hidden`) |
+| `oslo-mobile` | 390px | not visible (base `hidden`) |
+
+So on a phone and on a desktop — every width geoqa models — the search field is
+unreachable. A `<kbd>` hint beside it suggests a keyboard palette is the intended
+desktop affordance, which is not a substitute for a visible control on a touch
+device. Recorded as **C-10**.
+
+Note how it was found: **the markup contains a search input, so any check testing
+presence rather than VISIBILITY would have passed this site.**
+
+### And it exposed an engine limitation
+
+The same run cost 30 seconds and its verdict. After `selector-visible` correctly
+FAILED, the `fill` on the same selector still ran and timed out — so `ERROR`
+outranked `FAIL` (R-19) and a clean, actionable finding was reported as "we could
+not verify", which sends a reader hunting for a broken proxy.
+
+Recorded as **C-9** rather than half-fixed. There is no step dependency in the
+journey DSL, deliberately — steps are data and a conditional step is a program. The
+honest options are a shorter timeout for input actions than for navigations, or
+letting a critical visibility check be fatal for steps naming the same selector.
+Both are real design choices and neither belongs in a slice about clicking.
+
+### Two brittle tests rewritten
+
+Both broke on a correct change, which is how a test stops being trusted:
+
+- `spec.test.ts` asserted an exact journey roster. Now asserts CONTAINMENT of the
+  journeys something else depends on, plus "nothing but YAML" — still catches a
+  deletion, no longer fails on an addition. It had already broken twice in one day.
+- The reader e2e hardcoded 20 steps. Now derives the count from the journey file,
+  and additionally asserts a `skipped` step is present — which is the actual claim
+  (optional steps are recorded, never dropped).
+
+Docs: gaps C-9, C-10; PRD **R-107 / R-108**.
+
+Gate: lint clean · boundaries clean (94 modules / 372 deps) · **1004 tests at 100%**
+lines/statements/functions · e2e **25/25**.
+
+## Next: slice 2d
+
+J06, manual language override: Oslo IP → Norwegian homepage → select English →
+navigate internally → English persists. Expressible with existing steps plus
+`storageState` for the returning half.

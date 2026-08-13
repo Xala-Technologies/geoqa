@@ -114,6 +114,98 @@ export function fixtureBody(path: string): { status: number; html: string } | nu
       };
     case "/contact-sent":
       return { status: 200, html: shell("Takk", `${HEADING}<p id="confirmation">Takk for meldingen din.</p>${LINKS}`) };
+    /**
+     * Site search, its results, and one result's page.
+     *
+     * Here because **no journey clicked anything**. `browse.yaml` has zero click
+     * steps, so "open a result" (J03) and "follow a contextual link" (J05) were not
+     * merely unwritten — the click primitive was never exercised through a real
+     * navigation in any test above the runtime adapters. A search flow is the
+     * cheapest way to exercise it honestly: type, submit, land somewhere new, click
+     * a result, land somewhere new again. Three real navigations, each verifiable.
+     *
+     * The form is a GET to a different path, so the results page is a genuine
+     * navigation rather than in-place DOM mutation. The query survives as
+     * `?q=...`, which the router strips — deliberately, because a fixture that
+     * varied its body by query would be answering a different question on every
+     * run.
+     *
+     * Not defects, so absent from `DEFECTS`.
+     */
+    case "/search":
+      return {
+        status: 200,
+        html: shell(
+          "Søk",
+          `${HEADING}<form method="get" action="/search-results" role="search">
+             <input type="search" name="q" id="q" placeholder="Søk">
+             <button type="submit" id="do-search">Søk</button>
+           </form>${LINKS}`,
+        ),
+      };
+    case "/search-results":
+      return {
+        status: 200,
+        html: shell(
+          "Søkeresultater",
+          `${HEADING}<select id="sort" name="sort"><option value="relevance">Relevans</option><option value="date">Dato</option></select>
+           <ul id="results">
+             <li><a class="result" href="/search-result">Første treff</a></li>
+             <li><a class="result" href="/healthy">Andre treff</a></li>
+             <li><a class="result" href="/contact">Tredje treff</a></li>
+           </ul>${LINKS}`,
+        ),
+      };
+    /**
+     * A search whose results are DEAD LINKS.
+     *
+     * Two jobs. It is a defect worth detecting on a real site — a results page that
+     * renders three perfectly good-looking links to pages that 404 — and it is the
+     * only positive proof available that a click actually NAVIGATED: the
+     * `no-http-4xx` finding it produces sits on a step that runs after the click,
+     * so the finding cannot appear unless the browser really followed the link. A
+     * fake click always succeeds and would report exactly nothing here.
+     */
+    case "/search-dead":
+      return {
+        status: 200,
+        html: shell(
+          "Søk",
+          `${HEADING}<form method="get" action="/search-dead-results" role="search">
+             <input type="search" name="q" id="q" placeholder="Søk">
+             <button type="submit" id="do-search">Søk</button>
+           </form>${LINKS}`,
+        ),
+      };
+    case "/search-dead-results":
+      return {
+        status: 200,
+        html: shell(
+          "Søkeresultater",
+          `${HEADING}<ul id="results">
+             <li><a class="result" href="/status-404">Treff som ikke finnes</a></li>
+           </ul>${LINKS}`,
+        ),
+      };
+    case "/search-result":
+      return { status: 200, html: shell("Treff", `${HEADING}<p id="detail">Detaljene for treffet.</p>${LINKS}`) };
+    /**
+     * A search that legitimately found nothing.
+     *
+     * The results REGION is present and empty, which is the whole point: an empty
+     * result set is a correct answer to a query, not a defect. A journey that
+     * asserted a minimum result count against every search would report this page
+     * as broken — so J03 asserts the region exists and only counts results on a
+     * query whose term is known to match, which is why the term is a variable.
+     */
+    case "/search-empty":
+      return {
+        status: 200,
+        html: shell(
+          "Ingen treff",
+          `${HEADING}<ul id="results"></ul><p id="empty-state">Ingen treff for søket ditt.</p>${LINKS}`,
+        ),
+      };
     case "/healthy":
       return { status: 200, html: shell("Healthy", `${HEADING}<p>Alt i orden.</p>${LINKS}`) };
     case "/status-404":

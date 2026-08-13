@@ -22,6 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startFixtureServer, type FixtureServer } from "../src/fixtures/server.js";
+import { loadJourney } from "../src/journeys/spec.js";
 import { directProvider } from "../src/network/provider.js";
 import { executeRun } from "../src/run/execute.js";
 import { traceArtifactFormat } from "../src/run/stages.js";
@@ -48,8 +49,8 @@ afterAll(async () => {
 const spec = (over: Partial<RunSpec> & { runId: string; target: string }): RunSpec => ({
   engine: "playwright",
   // Off, so the e2e never reaches a third-party endpoint: it drives the local
-  // fixture server and a corroborating lookup would make every run depend on
-  // ipwho.is being up.
+  // fixture server, and a corroborating lookup would make every run depend on a
+  // third party being up.
   corroborateGeo: false,
   // Fixed, so a run that pauses or takes an optional step does the same thing on
   // every CI machine. That reproducibility is the whole point of seeding.
@@ -72,6 +73,28 @@ const run = (over: Partial<RunSpec> & { runId: string; target: string }): Promis
   executeRun({ spec: spec(over), provider: directProvider() });
 
 const evidenceFile = (runId: string, file: string): string => path.join(evidenceRoot, runId, file);
+
+/**
+ * The per-step record, read back off disk.
+ *
+ * `GeoQaRunResult` carries findings, and a step that PASSED produces none — so
+ * the only way to assert that a step ran, and ran in the right order, is the
+ * evidence. Which is the right place for it: if the evidence cannot answer "did
+ * this step happen", neither can anybody reading it later.
+ */
+const journeySteps = (runId: string): { action: string; label: string; outcome: string }[] =>
+  (
+    JSON.parse(readFileSync(evidenceFile(runId, "run.json"), "utf8")) as {
+      journey: { steps: { action: string; label: string; outcome: string }[] };
+    }
+  ).journey.steps;
+
+/** How many steps a journey file declares, so no test hardcodes a count. */
+const declaredStepCount = (file: string): number => {
+  const loaded = loadJourney(path.join(journeysDir, file), (p) => readFileSync(p, "utf8"));
+  if (!loaded.ok) throw new Error(loaded.errors.join("\n"));
+  return loaded.value.steps.length;
+};
 
 describe("a healthy page, end to end", () => {
   let result: GeoQaRunResult;
@@ -266,10 +289,14 @@ describe("human pacing, end to end", () => {
       }
     ).journey;
     expect(journey.seed).toBe(4);
-    // Optional steps are RECORDED as skipped, never dropped: the step list is
-    // the same length whichever way the draws went.
-    expect(journey.steps).toHaveLength(20);
+    // Optional steps are RECORDED as skipped, never dropped: the executed list is
+    // exactly as long as the file declares, whichever way the draws went. Derived
+    // from the journey rather than hardcoded — a literal count here broke the suite
+    // for a correct change to the journey, and a test that fails when the thing it
+    // guards is working gets ignored.
+    expect(journey.steps).toHaveLength(declaredStepCount("reader.yaml"));
     expect(journey.steps.some((s) => s.action === "pause" && s.outcome === "passed")).toBe(true);
+    expect(journey.steps.some((s) => s.outcome === "skipped")).toBe(true);
   });
 });
 
@@ -340,5 +367,109 @@ describe("a page that logs a console error, end to end", () => {
     expect(finding).toBeDefined();
     expect(finding?.category).toBe("javascript");
     expect(finding?.observed).toContain("fixture: console");
+  });
+});
+
+describe("the search journey, end to end — the first journey that CLICKS", () => {
+  /**
+   * The capability this proves, and why a unit test could not.
+   *
+   * No journey in this repo clicked anything: `browse.yaml` has zero click steps,
+   * so `runtime.click` was exercised only by adapter-level tests against a fake.
+   * A fake click always "succeeds" — it cannot tell you whether the browser
+   * followed a link, whether the next page loaded, or whether the step ordering
+   * lets a check run against the page it was written for. Three real navigations
+   * here: land, submit a search, open a result.
+   */
+  let result: GeoQaRunResult;
+
+  beforeAll(async () => {
+    result = await run({
+      runId: "e2e_search",
+      target: `${fixtures.origin}/search`,
+      journeyPath: path.join(journeysDir, "search.yaml"),
+      // The term is a variable because an empty result set is a CORRECT answer to a
+      // query, so the count check is only honest when the caller knows the term
+      // matches. The fixture returns three results for anything.
+      vars: { query: "booking" },
+    });
+  });
+
+  it("passes, having typed, submitted and clicked through to a result", () => {
+    expect(result.verdict).toBe("PASS");
+    expect(result.findings).toEqual([]);
+  });
+
+  it("reports NO instrumentation findings — a real browser answered every read", () => {
+    // If the click could not be performed at all, THIS is where it shows up, and
+    // it would be our defect rather than the site's.
+    expect(result.findings.filter((f) => f.category === "instrumentation")).toEqual([]);
+  });
+
+  it("left the search page, clicked a result, and verified the page it landed on", () => {
+    // The failure this journey exists to catch renders perfectly: the box accepts
+    // input, the button submits, and the visitor is still where they started.
+    // Everything after the click describes the RESULT page — step ordering through a
+    // real navigation is precisely what a fake click cannot verify.
+    const steps = journeySteps("e2e_search");
+    const outcome = (label: string): string | undefined => steps.find((step) => step.label === label)?.outcome;
+    expect(outcome("went to a results page")).toBe("passed");
+    expect(outcome("open the first result")).toBe("passed");
+    expect(outcome("the result page has a heading")).toBe("passed");
+    expect(outcome("the result is not a dead link")).toBe("passed");
+    // One click step, and it really is a click.
+    expect(steps.filter((step) => step.action === "click")).toHaveLength(1);
+  });
+
+  it("captured a screenshot of the RESULT page, which only exists past the click", () => {
+    // A passing step leaves no trace in `GeoQaRunResult` — only failures become
+    // findings. The screenshots are the artifact that proves the ordering: three
+    // labels, taken before the search, on the results page, and on the page reached
+    // by clicking. The last one cannot be written unless the click's downstream
+    // steps ran.
+    for (const file of ["before-search.png", "results.png", "result-page.png"]) {
+      expect(existsSync(evidenceFile("e2e_search", file)), file).toBe(true);
+      expect(statSync(evidenceFile("e2e_search", file)).size, file).toBeGreaterThan(0);
+    }
+  });
+
+  it("holds one egress identity across all three navigations", () => {
+    // A journey with more navigations has more chances to rotate, so this is a
+    // stronger reading of `egressHeld` than the single-page journeys give.
+    expect(result.geo.network.egressHeld.verdict).toBe("match");
+  });
+});
+
+describe("a results page whose links are dead", () => {
+  it("reports the dead result — the only positive proof the click NAVIGATED", async () => {
+    // `no-http-4xx` here sits on a step that runs AFTER the click, so this finding
+    // cannot appear unless the browser really followed the link. A fake click always
+    // succeeds and would report nothing. It is also a defect worth catching on a
+    // real site: a results page that renders perfectly and offers three 404s.
+    const dead = await run({
+      runId: "e2e_search_dead",
+      target: `${fixtures.origin}/search-dead`,
+      journeyPath: path.join(journeysDir, "search.yaml"),
+      vars: { query: "booking" },
+    });
+    expect(dead.verdict).toBe("FAIL");
+    const finding = dead.findings.find((f) => f.stepLabel === "the result is not a dead link");
+    expect(finding).toBeDefined();
+    expect(finding?.category).toBe("http");
+    // OUR defect would be an instrumentation category. This is the site's.
+    expect(dead.findings.filter((f) => f.category === "instrumentation")).toEqual([]);
+  });
+});
+
+describe("a search that legitimately found nothing", () => {
+  it("is NOT reported as a defect by the checks that do not count results", () => {
+    // An empty result set is a correct answer to a query. The engine must be able
+    // to visit that page and say nothing is wrong with it — otherwise every search
+    // for an absent term becomes a false finding, which is the exact class of
+    // failure that made six good digilist.no pages look broken.
+    return run({ runId: "e2e_search_empty", target: `${fixtures.origin}/search-empty` }).then((empty) => {
+      expect(empty.verdict).toBe("PASS");
+      expect(empty.findings).toEqual([]);
+    });
   });
 });

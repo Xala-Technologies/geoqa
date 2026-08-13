@@ -53,6 +53,48 @@ describe("fixtureBody", () => {
   it("returns null for an unknown path", () => {
     expect(fixtureBody("/nope")).toBeNull();
   });
+
+  describe("the search flow", () => {
+    it("submits to a DIFFERENT path, so the results page is a real navigation", () => {
+      // In-place DOM mutation would let a journey "search" without the browser ever
+      // navigating, which is precisely the capability these fixtures exist to prove.
+      expect(fixtureBody("/search")?.html).toContain('action="/search-results"');
+      expect(fixtureBody("/search")?.html).toContain('type="search"');
+    });
+
+    it("offers clickable results whose links leave the results page", () => {
+      const html = fixtureBody("/search-results")?.html ?? "";
+      expect(html).toContain('class="result"');
+      expect(html).toContain('href="/search-result"');
+      expect(fixtureBody("/search-result")?.status).toBe(200);
+      expect(fixtureBody("/search-result")?.html).toContain("<h1>");
+    });
+
+    it("has an empty state whose results REGION is present and whose list is empty", () => {
+      // An empty result set is a correct answer to a query, not a defect. A journey
+      // must be able to visit this page and find nothing wrong with it.
+      const html = fixtureBody("/search-empty")?.html ?? "";
+      expect(html).toContain('id="results"></ul>');
+      expect(html).toContain('id="empty-state"');
+      expect(html).toContain("<h1>");
+    });
+
+    it("has a dead-results variant, which is the only positive proof a click navigated", () => {
+      // The 4xx finding sits on a step that runs AFTER the click, so it cannot
+      // appear unless the browser really followed the link.
+      expect(fixtureBody("/search-dead")?.html).toContain('action="/search-dead-results"');
+      expect(fixtureBody("/search-dead-results")?.html).toContain('href="/status-404"');
+    });
+
+    it("keeps every search route OUT of DEFECTS — only the dead links are a defect", () => {
+      // DEFECTS is the list EXP-006 iterates, and each entry must break exactly one
+      // thing. A search page that works is not a defect, and listing it would make
+      // the experiment expect a finding that should never appear.
+      for (const p of ["/search", "/search-results", "/search-result", "/search-empty", "/search-dead", "/search-dead-results"]) {
+        expect(DEFECTS.some((d) => d.path === p), p).toBe(false);
+      }
+    });
+  });
 });
 
 describe("startFixtureServer", () => {

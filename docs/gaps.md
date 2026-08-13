@@ -742,6 +742,61 @@ evidence package — and nothing at all about the user agent or touch.
 
 ---
 
+### C-9 · A step whose selector a preceding check already proved absent still runs
+
+Found by J03's first live run, and it cost 30 seconds and the run's verdict.
+
+`search.yaml` asserts `selector-visible` on the search box and then `fill`s it.
+On `digilist.no` the box is not visible, so:
+
+```
+✗ has a search box                    [high]  FAIL   — correct
+! type the query — timeout            [high]  ERROR  — 30s, then instrumentation
+```
+
+Both lines are individually honest. Together they are worse than the first alone:
+`ERROR` outranks `FAIL` ([R-19](prd.md)), so a clean, actionable site finding —
+*the search box is not visible* — was reported as **"we could not verify"**, which
+sends a reader to look for a broken proxy. And the 30-second default `fill` timeout
+was spent on an element the run had already established was not there.
+
+There is no step dependency in the journey DSL, deliberately — steps are data and
+a conditional step is a program. So the fix is not "skip the fill": the honest
+options are a shorter timeout for input actions than for navigations, or letting a
+`critical` visibility check be fatal for the steps that name the same selector.
+Both are real design choices and neither should be made in a slice about clicking.
+
+**Not a blocker for J03**, which is proven end to end against the fixtures
+including a real click-through and a dead-link catch. It is a cost paid on any
+journey whose target does not have the element the journey assumes.
+
+Where: `journeys/engine.ts` (step execution, fatality), `browser/playwright.ts`
+(action timeouts).
+
+### C-10 · digilist.no: the search box is reachable at no profile width (live finding)
+
+Not a geoqa gap — a **finding about tenant zero**, recorded here because it is the
+first defect J03 produced and it should not be lost.
+
+`digilist.no` renders its inline search input inside
+`class="hidden md:flex lg:hidden"`, which is visible **only** between 768px and
+1023px. Confirmed by running J03 at both profile widths:
+
+| Profile | Width | Search box |
+|---|---|---|
+| `oslo-desktop` | 1440px | not visible (`lg:hidden`) |
+| `oslo-mobile` | 390px | not visible (base `hidden`) |
+
+So on a phone and on a desktop — every width geoqa models, and the overwhelming
+majority of real traffic — the search field is not reachable. A `<kbd>` hint sits
+next to it, which suggests a keyboard-shortcut palette is the intended desktop
+affordance; a keyboard shortcut is not a substitute for a visible control on a
+touch device.
+
+Worth stating plainly because of how it was found: **the markup contains a search
+input, so any check that looked for presence rather than VISIBILITY would have
+passed this site.** `selector-visible` is why it did not.
+
 ## D. Tooling and process gaps
 
 ### D-1 · The layer map is enforced by a tool now, and it has already earned it

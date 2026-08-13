@@ -38,6 +38,21 @@ steps:
 
   - { action: screenshot, label: after-reading, fullPage: true }
   - { action: assert, check: selector-count-min, selector: "a[href^='/']", value: 3, severity: medium, label: has somewhere to go next }
+
+  # And a third of readers actually GO there.
+  #
+  # This step is why the journey is named for a reader rather than a scroller. A
+  # session that reads one page and leaves proves the page renders; a session that
+  # follows a contextual link proves the page is part of a site. The internal-only
+  # selector is deliberate — following an outbound link would measure somebody
+  # else's server and attribute the result here.
+  #
+  # `probability: 0.33` rather than always: a set of runs where some sessions go
+  # deeper and some do not is representative, and eleven identical robots are not.
+  # The draw is seeded, so any one run replays exactly.
+  - { action: click, selector: "a[href^='/']", probability: 0.33, label: follow a contextual link }
+  - { action: pause, minMs: 1400, maxMs: 3800, probability: 0.33, label: read the next page }
+  - { action: assert, check: no-http-4xx, severity: high, probability: 0.33, label: the link was not dead }
   - { action: assert, check: no-page-errors, severity: high }
   - { action: assert, check: no-console-errors, severity: medium }
   - { action: assert, check: lcp-below, value: 2500, severity: medium }

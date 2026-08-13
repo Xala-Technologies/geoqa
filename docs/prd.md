@@ -152,6 +152,18 @@ unmeasured guess until EXP-007 runs.
   being reported — an element mid-animation and an asynchronously emitted LCP
   otherwise produce defects that do not exist.
 
+- **R-107** At least one journey **clicks**, and its click is verified by a real
+  navigation rather than by a successful call. A fake click always succeeds: it
+  cannot say whether the browser followed the link, whether the next page loaded,
+  or whether the checks after it ran against the page they were written for. The
+  proof is a results page whose links are dead — a 4xx finding on a step that runs
+  after the click cannot appear unless the browser really navigated.
+- **R-108** An empty result set is a **correct answer**, not a defect. A search for
+  a term a site does not contain returns nothing, so a journey may only assert a
+  minimum result count when the caller supplies a term known to match — which is why
+  the query is a variable. A runner that reported every fruitless search as a
+  finding would be manufacturing defects out of its own inputs.
+
 ### Honest verdicts
 
 - **R-17** A failed assertion (read the page, it was wrong) and a broken tool
