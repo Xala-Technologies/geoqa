@@ -22,21 +22,86 @@ export function compareCountry(requested: string, observed: string | null): Axis
 }
 
 /**
- * City comparison is deliberately loose. Egress-identity databases name the
- * suburb that hosts the exchange, not the city a human would say — the real
- * Norway baseline reads "Lysaker", which is Bærum, not Oslo, for an
- * unmistakably Oslo-area connection. Requiring string equality would report a
- * mismatch for a perfectly good session, so a city that cannot be confirmed is
- * `unverified` and never `mismatch`: we can prove a city right, not wrong.
+ * How far an egress may be from the requested city and still be that city.
+ *
+ * 50 km, and the number comes from the 102-session milestone rather than from taste. The
+ * readings that arrived were, by distance from the city requested:
+ *
+ *   Solna 6 km · Kista 12 km · Skui 15 km · Potsdam 25 km   ← the same urban area
+ *   Gjøvik 100 km · Linköping 200 km · Gothenburg 400 km · Munich 500 km · Gällivare 1100 km
+ *
+ * There is a clean gap between 25 and 100, and 50 sits in it. A metropolitan area is tens of
+ * kilometres across; nothing at 100 km is the city you asked for.
  */
-export function compareCity(requested: string, observed: string | null): AxisResult {
+export const CITY_RADIUS_KM = 50;
+
+/**
+ * Great-circle distance in kilometres.
+ *
+ * Haversine rather than a flat approximation: the markets this runs against span 60°N to 52°N,
+ * where a degree of longitude is 55–69 km, so treating degrees as square would misjudge an
+ * east–west offset by a quarter at Tromsø's latitude.
+ */
+export function distanceKm(a: [number, number], b: [number, number]): number {
+  const R = 6371;
+  const toRad = (deg: number): number => (deg * Math.PI) / 180;
+  const dLat = toRad(b[0] - a[0]);
+  const dLon = toRad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLon / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.min(1, Math.sqrt(h))));
+}
+
+/**
+ * Is the egress in the city we asked for?
+ *
+ * **Measured by DISTANCE when coordinates are available, and that replaces a string comparison
+ * that could not tell a suburb from another country.**
+ *
+ * The old rule was: equal names match, one containing the other matches, anything else is
+ * `unverified` — never `mismatch`, on the grounds that egress databases name the exchange's
+ * suburb rather than the city ("Lysaker" for an unmistakably Oslo connection). That reasoning
+ * was right about suburbs and wrong about everything else, and the 102-session milestone showed
+ * exactly how wrong: **Skui (15 km from Oslo) and Gällivare (1100 km from Stockholm) both
+ * reported `unverified`.** 28 of 102 sessions were non-exact, half of them genuinely the wrong
+ * city, and the axis reported the same word for both. A "city match" rate computed from it was
+ * unusable in either direction — 72.5% counting only exact names, 100% counting everything not
+ * proven wrong, and the honest figure was 86.2%.
+ *
+ * With coordinates the three verdicts finally mean what they say:
+ *
+ * - `match` — within {@link CITY_RADIUS_KM}. Named suburbs stop being a problem, because Kista
+ *   is 12 km from Stockholm whatever it is called.
+ * - `mismatch` — beyond it. This is now REACHABLE, and it should be: a proxy that sold Stockholm
+ *   and delivered Gällivare has failed, and calling that "unproven" protected the vendor rather
+ *   than the measurement.
+ * - `unverified` — no coordinates from either side, so nothing can be computed.
+ *
+ * The name comparison stays as the fallback for when coordinates are missing, with its original
+ * asymmetry intact: without a distance we still cannot prove a city wrong.
+ */
+export function compareCity(
+  requested: string,
+  observed: string | null,
+  requestedCoordinates?: [number, number] | undefined,
+  observedCoordinates?: [number, number] | null | undefined,
+): AxisResult {
+  if (requestedCoordinates !== undefined && observedCoordinates !== undefined && observedCoordinates !== null) {
+    const km = distanceKm(requestedCoordinates, observedCoordinates);
+    const where = observed === null ? "the egress" : `egress city ${observed}`;
+    return km <= CITY_RADIUS_KM
+      ? matched(`${where} is ${km}km from ${requested}, within the ${CITY_RADIUS_KM}km that makes it the same place`)
+      : mismatched(
+          `${where} is ${km}km from ${requested} — beyond the ${CITY_RADIUS_KM}km radius, so this is a different city rather than a differently-named suburb`,
+        );
+  }
+
   if (observed === null) return unverified("egress city was never read");
   const a = observed.trim().toLowerCase();
   const b = requested.trim().toLowerCase();
   if (a === b) return matched(`egress city ${observed}`);
   if (a.includes(b) || b.includes(a)) return matched(`egress city ${observed} contains ${requested}`);
   return unverified(
-    `egress city ${observed} is not ${requested} — metro areas are named by exchange, so this is unproven, not wrong`,
+    `egress city ${observed} is not ${requested}, and no coordinates were available to measure the distance — metro areas are named by exchange, so without a distance this is unproven rather than wrong`,
   );
 }
 
@@ -274,7 +339,10 @@ export function verifyGeo(
   browser: BrowserObservation,
 ): GeoVerification {
   const country = compareCountry(profile.market.country, network.country);
-  const city = compareCity(profile.market.city, network.city);
+  // Coordinates from both sides when they exist, so the verdict is a distance rather than a
+  // string comparison. The profile always has them; the observation has them when the identity
+  // endpoint reported them.
+  const city = compareCity(profile.market.city, network.city, profile.market.coordinates, network.coordinates);
   const language = compareLanguage(profile.market.language, browser.language);
   const timezone = compareTimezone(profile.market.timezone, browser.timezone);
   const viewport = compareViewport(profile.device.viewport, browser.viewport);

@@ -19,7 +19,7 @@ const geo = (
   profileId: "oslo-mobile",
   network: {
     requested: { country: "NO", city: "Oslo" },
-    observed: { ip: null, country: "NO", city: "Oslo", region: null, org: null, timezone: null, latencyMs: null },
+    observed: { ip: null, country: "NO", city: "Oslo", region: null, org: null, timezone: null, coordinates: null, latencyMs: null },
     country: over.country ?? axis("match"),
     city: over.city ?? axis("match"),
     egressHeld: over.egressHeld ?? axis("match"),

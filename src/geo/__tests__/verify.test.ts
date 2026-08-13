@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { UNKNOWN_BROWSER, UNKNOWN_NETWORK } from "../observe.js";
 import type { BrowserObservation, GeoProfile, NetworkObservation } from "../types.js";
 import {
+  CITY_RADIUS_KM,
   compareCity,
   compareCountry,
+  distanceKm,
   compareDevice,
   compareEgressHeld,
   compareLanguage,
@@ -32,11 +34,18 @@ const OSLO_PROFILE: GeoProfile = {
   visitorType: "anonymous",
 };
 
-/** The real Norway baseline: note the city is Lysaker, not Oslo. */
+/**
+ * The real Norway baseline: note the city is Lysaker, not Oslo.
+ *
+ * The coordinates are the real ones ipinfo returned for this IP. Lysaker is ~7km from Oslo, so
+ * with a distance check this is a MATCH — which is the whole point of the change: the name never
+ * mattered, the distance always did.
+ */
 const NORWAY_BASELINE: NetworkObservation = {
   ip: "213.52.15.251",
   country: "NO",
   city: "Lysaker",
+  coordinates: [59.8927, 10.619],
   region: "Akershus",
   org: "AS2116 GLOBALCONNECT AS",
   timezone: "Europe/Oslo",
@@ -78,16 +87,96 @@ describe("compareCity", () => {
     expect(compareCity("Greater Oslo", "Oslo").verdict).toBe("match");
   });
 
-  it("calls the real Lysaker/Oslo case UNVERIFIED, never a mismatch", () => {
+  it("calls the real Lysaker/Oslo case a MATCH once it can measure the distance", () => {
+    // The case the old asymmetry existed for, and the change that makes the asymmetry
+    // unnecessary. Lysaker is ~7km from Oslo — an exchange suburb, always was the same place.
+    // The name never mattered; the distance always did.
+    const measured = compareCity("Oslo", "Lysaker", [59.9139, 10.7522], [59.8927, 10.619]);
+    expect(measured.verdict).toBe("match");
+    expect(measured.reasons[0]).toContain("within the 50km");
+  });
+
+  it("still refuses to call a city wrong with NO coordinates to measure", () => {
     // The genuine baseline. An exchange suburb is not proof the session is in
     // the wrong place, so we can prove a city right but not wrong.
     const r = compareCity("Oslo", "Lysaker");
     expect(r.verdict).toBe("unverified");
-    expect(r.reasons[0]).toContain("unproven, not wrong");
+    expect(r.reasons[0]).toContain("unproven rather than wrong");
   });
 
   it("is unverified when nothing was read", () => {
     expect(compareCity("Oslo", null).verdict).toBe("unverified");
+  });
+});
+
+describe("compareCity by DISTANCE — what the 102-session milestone forced", () => {
+  // Real coordinates for the cities the milestone actually observed.
+  const OSLO_C: [number, number] = [59.9139, 10.7522];
+  const STOCKHOLM_C: [number, number] = [59.3293, 18.0686];
+  const BERLIN_C: [number, number] = [52.52, 13.405];
+
+  it("computes a real great-circle distance", () => {
+    // Haversine rather than a flat approximation: at these latitudes a degree of longitude is
+    // 55–69km, so treating degrees as square misjudges an east–west offset badly.
+    expect(distanceKm(OSLO_C, [59.8927, 10.619])).toBeLessThan(15); // Lysaker
+    expect(distanceKm(STOCKHOLM_C, [59.403, 17.9448])).toBeLessThan(15); // Kista
+    expect(distanceKm(BERLIN_C, [48.1351, 11.582])).toBeGreaterThan(450); // Munich
+    expect(distanceKm(OSLO_C, OSLO_C)).toBe(0);
+  });
+
+  it("MATCHES a differently-named suburb, which the name comparison could not", () => {
+    // Kista is 12km from Stockholm whatever it is called. Twelve of 34 Stockholm sessions
+    // landed on names like this and were all reported `unverified`.
+    for (const [name, coords] of [
+      ["Kista", [59.403, 17.9448]],
+      ["Solna", [59.36, 18.0]],
+      ["Huddinge", [59.2371, 17.9818]],
+    ] as [string, [number, number]][]) {
+      const r = compareCity("Stockholm", name, STOCKHOLM_C, coords);
+      expect(r.verdict, name).toBe("match");
+      expect(r.reasons[0]).toContain("within the 50km");
+    }
+  });
+
+  it("MISMATCHES a genuinely different city — a verdict the old rule could never reach", () => {
+    // The half of the non-exact readings that were real failures. A proxy that sold Stockholm
+    // and delivered Gällivare has failed, and calling that "unproven" protected the vendor
+    // rather than the measurement.
+    for (const [requested, origin, name, coords] of [
+      ["Stockholm", STOCKHOLM_C, "Gällivare", [67.1333, 20.6667]],
+      ["Stockholm", STOCKHOLM_C, "Gothenburg", [57.7089, 11.9746]],
+      ["Berlin", BERLIN_C, "Munich", [48.1351, 11.582]],
+      ["Oslo", OSLO_C, "Trondheim", [63.4305, 10.3951]],
+    ] as [string, [number, number], string, [number, number]][]) {
+      const r = compareCity(requested, name, origin, coords);
+      expect(r.verdict, name).toBe("mismatch");
+      expect(r.reasons[0]).toContain("different city rather than a differently-named suburb");
+    }
+  });
+
+  it("puts the radius in the gap the data left, not at a round number for its own sake", () => {
+    // Observed: Solna 6, Kista 12, Skui 15, Potsdam 25 · then Gjøvik 100, Linköping 200,
+    // Gothenburg 400, Munich 500, Gällivare 1100. Nothing landed between 25 and 100km.
+    expect(CITY_RADIUS_KM).toBeGreaterThan(25);
+    expect(CITY_RADIUS_KM).toBeLessThan(100);
+    // Gjøvik at ~100km is NOT Oslo, and the old rule would have called it unproven.
+    expect(compareCity("Oslo", "Gjøvik", OSLO_C, [60.7957, 10.6915]).verdict).toBe("mismatch");
+  });
+
+  it("falls back to the NAME comparison when either side has no coordinates", () => {
+    // Without a distance we still cannot prove a city wrong, which was the original insight and
+    // is still correct — it was only ever over-applied.
+    expect(compareCity("Oslo", "Lysaker", OSLO_C, null).verdict).toBe("unverified");
+    expect(compareCity("Oslo", "Lysaker").verdict).toBe("unverified");
+    expect(compareCity("Oslo", "Oslo", undefined, [59.9, 10.7]).verdict).toBe("match");
+  });
+
+  it("measures the distance even when the endpoint reported no city NAME", () => {
+    // A reading with coordinates and no name is still a location, and refusing to use it would
+    // discard the more reliable of the two fields.
+    const r = compareCity("Oslo", null, OSLO_C, [59.8927, 10.619]);
+    expect(r.verdict).toBe("match");
+    expect(r.reasons[0]).toContain("the egress is");
   });
 });
 
@@ -155,7 +244,9 @@ describe("verifyGeo", () => {
   it("keeps the two axes separate in the result", () => {
     const v = verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, NORWEGIAN_BROWSER);
     expect(v.network.country.verdict).toBe("match");
-    expect(v.network.city.verdict).toBe("unverified");
+    // The baseline carries real coordinates, so Lysaker measures 7km from Oslo and MATCHES —
+    // it was always the same place and only the name disagreed.
+    expect(v.network.city.verdict).toBe("match");
     expect(v.browser.language.verdict).toBe("match");
     expect(v.browser.timezone.verdict).toBe("match");
     expect(v.network.requested).toEqual({ country: "NO", city: "Oslo" });
@@ -168,7 +259,10 @@ describe("verifyGeo", () => {
   });
 
   it("is NOT trustworthy when any axis is merely unverified", () => {
-    const v = verifyGeo(OSLO_PROFILE, NORWAY_BASELINE, NORWEGIAN_BROWSER);
+    // Coordinates stripped, so the city falls back to a name comparison and is unproven —
+    // which is the state this rule is about.
+    const v = verifyGeo(OSLO_PROFILE, { ...NORWAY_BASELINE, coordinates: null }, NORWEGIAN_BROWSER);
+    expect(v.network.city.verdict).toBe("unverified");
     expect(v.trustworthy).toBe(false);
     expect(v.confidence).toBeGreaterThan(70);
   });
