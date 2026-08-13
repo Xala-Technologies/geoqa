@@ -2000,10 +2000,8 @@ caller's import graph and `client.ts` remains fully covered — the same split
 `prepare` activity resolve the proxy inside the workflow, so the exit selection is part
 of the durable history rather than a decision this process made and forgot.
 
-**Honest about what is NOT proven:** no durable sweep has run against a real browser and
-a real site. The client, the queue, the workflow and the refusal are all exercised; what
-a full durable run does to the evidence tree is not. That needs a worker running beside
-a real target.
+**Proven end to end since**, by `e2e/durable-run.e2e.ts` — which is also what found
+[D-6](#d-6--closed--a-durable-run-was-split-across-four-browsers-and-its-evidence-described-none-of-them).
 
 **Still open, and now clearly scoped:** the durable path runs ONE attempt per scenario
 ([B-4](#b-4--reproducibility-is-fed-and-now-corroborated-only-the-durable-path-is-left))
@@ -2051,9 +2049,66 @@ their own tests precisely because each is asserted against what it does.
 callers to reach them, so a seventh behaviour added to one side fails there rather than
 in somebody's overnight sweep. It also asserts neither mode re-implements the merge.
 
-**Still not proven:** no durable sweep has run against a real browser and a real site.
-The parity is structural and unit-level; what a full durable run writes to an evidence
-tree remains unexercised.
+**Proven end to end since.** `e2e/durable-run.e2e.ts` runs a durable sweep against a real
+Temporal server, a real Chromium and a real fixture — and it immediately found
+[D-6](#d-6--closed--a-durable-run-was-split-across-four-browsers-and-its-evidence-described-none-of-them),
+which the structural parity guard could not see: both modes called the same functions,
+and what differed was what the runtime handed to them had seen.
+
+### D-6 · CLOSED — a durable run was split across FOUR browsers, and its evidence described none of them
+
+The finding an end-to-end test produced within minutes of existing, and that no unit test
+or structural guard could have.
+
+`playwrightOpener` launches a **new browser on every use**, and each activity built its
+own runtime from the spec. So `verifyGeoActivity`, `runJourneyActivity`,
+`verifyEgressHeldActivity` and `collectEvidenceActivity` each got a different one.
+Measured against a real Chromium and a real fixture:
+
+| Reading | Durable (before) | Local | Why |
+|---|---|---|---|
+| `egressHeld` | `unverified` | `match` | the closing probe ran in a context that never visited the site |
+| `vitals.lcp` | **null** | a real number | evidence was collected from a blank context |
+
+The second is the serious one. **A durable run wrote an evidence package describing a
+browser that had never been anywhere**, and reported `PASS` while doing it — the exact
+shape of claim this engine exists to refuse, produced by the engine itself.
+
+"One journey is one network session" is the invariant the whole geographic claim rests
+on, and a run split across four browsers has no single session for it to be true of.
+
+**The cause was a comment, and it was accurate when written.** `activities.ts` said:
+*rebuilding the runtime per activity is not a workaround, it is the correct model here —
+agent-browser is a daemon, so the browser survives between activities and is addressed by
+its launch flags rather than held as a handle.* True of agent-browser. **False of
+Playwright**, which launches a browser per opener call. The browser seam makes the two
+look identical from above — which is its entire purpose — so a fact about one engine was
+recorded as a fact about the model, and the engine that serves every experiment is the
+one it was false for.
+
+**Closed by making the run ONE activity, and that activity is literally `executeRun`.**
+Not a re-sequencing of it — the same function the CLI calls. A browser session cannot
+cross an activity boundary on either engine, because an activity may be retried on a
+different worker; the daemon only made that survivable by accident. `prepare` stays
+separate because it opens no browser, which is what keeps the exit selection in the
+durable history.
+
+This also makes [D-5](#d-5--closed--the-durable-path-silently-did-six-fewer-things-than-the-local-one)
+structurally impossible: there is no second copy of the run left to drift. Six retired
+activities were **deleted** rather than left exported — re-wiring them would rebuild this
+defect, and an export nothing reads is the [B-1](#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site)
+mistake in a new place.
+
+**The cost, stated plainly.** Per-step retry granularity: a flaky geo read used to retry
+alone and now restarts the run. That granularity was never sound — a retried step ran in
+a fresh browser, which is this defect — so what looked like fine-grained durability was
+fine-grained incorrectness. The durability that matters at matrix scale is per-scenario,
+and each run is still its own child workflow with its own history.
+
+**Proven end to end.** `e2e/durable-run.e2e.ts` runs a durable sweep through a real
+Temporal server, a real worker with the REAL activities, a real Chromium and a real
+fixture, and asserts the durable path reports what the in-process path reports:
+`egressHeld` `match`, a real LCP, evidence confidence 100, and the same verdicts.
 
 ### D-3 · Closed: the JSON contract carries a version
 

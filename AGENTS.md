@@ -447,6 +447,14 @@ not be started, so the omission was never executed. `temporal/__tests__/parity.t
 guards it structurally: a behavioural test cannot catch this class, since both modes pass
 their own tests by construction.
 
+**40. A durable run is ONE activity, and that activity is `executeRun`.** A browser
+session cannot cross an activity boundary — an activity may be retried on another worker
+— so a run split across activities is split across browsers. It was: four of them, and
+the evidence described a context that had never visited the site (gaps D-6). The cause
+was a comment true of agent-browser (a daemon) recorded as a property of the model, and
+false for Playwright, which launches a browser per opener call. `prepare` stays separate
+because it opens no browser.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

@@ -39,46 +39,21 @@ const { prepare } = proxyActivities<typeof activities>({
  * verification that keeps failing is usually telling the truth about the
  * network, and burning six attempts to hear it again wastes the run's budget.
  */
-const { verifyGeoActivity } = proxyActivities<typeof activities>({
-  startToCloseTimeout: "3 minutes",
-  retry: { maximumAttempts: 2, initialInterval: "5 seconds" },
-});
+
 
 /**
- * The journey does NOT retry. It is the measurement, and a silent second
- * attempt would quietly convert a real intermittent site failure into a pass —
- * destroying the one signal the run exists to produce. Flakiness is measured by
- * running the journey N times ON PURPOSE and reporting the rate, never by
- * retrying until it is green.
- */
-const { runJourneyActivity } = proxyActivities<typeof activities>({
-  startToCloseTimeout: "10 minutes",
-  retry: { maximumAttempts: 1 },
-});
-
-/**
- * The closing egress check and the run's bookkeeping.
+ * The whole run, and it does NOT retry.
  *
- * Retried twice like the other reads: an unreadable closing probe is our defect and worth one
- * more attempt, and `recordOutcome` writes a cooldown and a history line, both of which are
- * derived caches — `geoqa runs rebuild` reconstructs the second from the evidence on disk.
+ * A silent second attempt would quietly convert a real intermittent site failure into a pass,
+ * destroying the one signal the run exists to produce. Flakiness is measured by running the
+ * journey N times ON PURPOSE and reporting the rate — `repeat` — never by retrying until green.
+ *
+ * The timeout covers a browser launch, a geo verification, N journey attempts, the closing
+ * egress read and the evidence write, so it is generous: this is one activity because a browser
+ * session cannot cross an activity boundary (gaps D-6), not because the work is small.
  */
-const { verifyEgressHeldActivity, recordOutcome } = proxyActivities<typeof activities>({
-  startToCloseTimeout: "3 minutes",
-  retry: { maximumAttempts: 2, initialInterval: "2 seconds" },
-});
-
-const { collectEvidenceActivity, assemble } = proxyActivities<typeof activities>({
-  startToCloseTimeout: "3 minutes",
-  retry: { maximumAttempts: 2, initialInterval: "2 seconds" },
-});
-
-/**
- * Cleanup must still run when the run has already failed, so it gets its own
- * short timeout and no retries — a browser that will not close will not close.
- */
-const { closeSession } = proxyActivities<typeof activities>({
-  startToCloseTimeout: "1 minute",
+const { executeRunActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: "30 minutes",
   retry: { maximumAttempts: 1 },
 });
 
@@ -105,71 +80,35 @@ export async function geoQaRunWorkflow(input: GeoQaRunInput): Promise<GeoQaWorkf
     ...(input.cooldownPath ? { cooldownPath: input.cooldownPath } : {}),
   });
 
-  let manifest: EvidenceManifest | null = null;
-  try {
-    const geo = await verifyGeoActivity(spec);
-    const ran = await runJourneyActivity({ spec, ...(input.repeat !== undefined ? { repeat: input.repeat } : {}) });
-
-    /**
-     * Did the egress hold for the whole run?
-     *
-     * This step did not exist here, which meant a durable run never verified the invariant its
-     * whole geographic claim rests on: one journey is one network session. A rotating exit
-     * mid-run was invisible, and the run reported a clean verdict for observations it could not
-     * attribute to the site.
-     *
-     * The activity returns the MERGED geo and journey rather than an axis this workflow would
-     * then fold in — `withExtraStep` reaches `spec.ts` and therefore zod and the filesystem, and
-     * workflow code is bundled into a deterministic sandbox. Same constraint that put the
-     * concurrency pool in its own import-free module.
-     */
-    const held = await verifyEgressHeldActivity({ spec, geo, ran });
-    const verifiedGeo = held.geo;
-    const journey = held.journey;
-    const reproducibility = held.reproducibility;
-
-    manifest = await collectEvidenceActivity({
-      spec,
-      geo: verifiedGeo,
-      journey,
-      createdAt: input.startedAt,
-      ...(reproducibility.attempts > 1 ? { reproducibility } : {}),
-    });
-    const result = await assemble({
-      spec,
-      geo: verifiedGeo,
-      journey,
-      manifest,
-      createdAt: input.startedAt,
-      // Workflow code may not read the clock; the duration a human cares about
-      // is the one Temporal already records on the execution itself.
-      durationMs: 0,
-      attempts: reproducibility.attempts,
-      occurrences: reproducibility.occurrences,
-    });
-
-    // The cooldown write and the history append — neither of which a durable run did, so a
-    // vendor that failed was never frozen and the run never entered `runs.jsonl` at all.
-    await recordOutcome({
-      spec,
-      result,
-      providerName: input.providerName,
-      egressWasRight: verifiedGeo.network.country.verdict !== "mismatch",
-      // A workflow may not read the clock, so the time comes from the input the run was started
-      // with. A cooldown window measured from a replayed `Date.now()` would differ between the
-      // original execution and its replay, which is the determinism rule this sandbox enforces.
-      nowMs: Date.parse(input.startedAt),
-      ...(input.cooldownPath ? { cooldownPath: input.cooldownPath } : {}),
-      ...(input.cooldownMs !== undefined ? { cooldownMs: input.cooldownMs } : {}),
-      ...(input.tenantId !== undefined ? { tenantId: input.tenantId } : {}),
-      seed: spec.seed,
-    });
-    return { result, warnings };
-  } finally {
-    // The manifest goes with it so an unretained HAR is deleted — armed on every run, flushed at
-    // close regardless, and listed by no manifest on a passing tier.
-    await closeSession({ spec, manifest });
-  }
+  /**
+   * TWO activities, and the second is the entire run.
+   *
+   * This used to be six steps, each building its own runtime — and `playwrightOpener` launches a
+   * new browser on every use, so each step got a DIFFERENT one. The closing egress read ran in a
+   * context that never visited the site, and evidence was collected from a blank one: measured
+   * against a real Chromium, `vitals.json` recorded a null LCP for a page that had demonstrably
+   * rendered (gaps D-6).
+   *
+   * A browser session cannot cross an activity boundary — an activity may be retried on another
+   * worker — so there is no arrangement of per-step activities that fixes it. The run has to be
+   * one activity, and it is literally `executeRun`: the same function the CLI calls, not a
+   * re-sequencing of it. That makes the D-5 class of drift structurally impossible, because
+   * there is no second copy left to diverge.
+   *
+   * `prepare` stays separate because it touches no browser: it resolves the exit and writes the
+   * init script, and keeping it its own activity is what puts the proxy selection in the durable
+   * history rather than inside the run it configures.
+   */
+  const result = await executeRunActivity({
+    spec,
+    providerName: input.providerName,
+    startedAt: input.startedAt,
+    ...(input.repeat !== undefined ? { repeat: input.repeat } : {}),
+    ...(input.cooldownPath ? { cooldownPath: input.cooldownPath } : {}),
+    ...(input.cooldownMs !== undefined ? { cooldownMs: input.cooldownMs } : {}),
+    ...(input.tenantId !== undefined ? { tenantId: input.tenantId } : {}),
+  });
+  return { result, warnings };
 }
 
 export interface MatrixInput {

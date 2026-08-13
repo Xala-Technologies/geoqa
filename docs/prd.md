@@ -501,6 +501,14 @@ unmeasured guess until EXP-007 runs.
   behaviourally. Both modes pass their own tests precisely because each is asserted
   against what it does; what catches a divergence is naming the shared functions and
   requiring both callers to reach them.
+- **R-176** A browser session cannot cross a durability boundary, so the run that owns one
+  is **one unit of work**. An activity may be retried on a different worker; a run split
+  across activities is a run split across browsers, and its evidence then describes a
+  context that never visited the site. Per-step retry granularity is not worth
+  fine-grained incorrectness.
+- **R-177** A claim about "the engine" is a claim about **every** engine. A fact true of
+  one adapter and recorded as a property of the model is invisible from above the seam —
+  which is the seam's purpose — and stays wrong until something measures the other one.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never
