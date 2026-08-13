@@ -1489,7 +1489,6 @@ readings, because "one market measured" and "every market identical" are differe
 and a market's reading is the MEDIAN across its repeats rather than the latest, because a
 single slow run is noise and "latest" means whichever finished last.
 
-## D. Tooling and process gaps
 
 ### C-13 · CLOSED — an empty text read is confirmed, then refused rather than blamed on the page
 
@@ -1608,34 +1607,6 @@ document's declared language.
 
 Where: `journeys/localization.yaml`, `journeys/assertions.ts`.
 
-### C-17 · CLOSED — an errored step was filed under the category the journey declared
-
-Found by writing the e2e assertion for C-13, which stated the intended rule and failed.
-
-`categoryFor` read the step's DECLARED category before the errored check:
-
-```ts
-if (step.category) return step.category;      // ← ran first
-if (step.outcome === "errored") return "instrumentation";
-```
-
-`classify.ts` opens by stating the opposite: *a step we could not read never becomes a
-site finding.* `localization.yaml` declares `category: localization` on both of its
-text checks, so a run where the engine looked before the page rendered produced a pile
-of **localization defects** titled "Could not verify: …". Somebody investigates the
-site; our defect stays invisible — the exact failure the split exists to prevent, in
-the journey this project is named for.
-
-The inconsistency that gave it away is one function below: `severityFor` has always
-overridden the step's declared severity for an errored step, with a comment saying why.
-Category now does the same.
-
-[R-13](prd.md) is unchanged and this honours it as written — a step may override the
-category **derived from its check kind**. `instrumentation` is derived from the
-OUTCOME, and no journey author can know in advance that a step will be unreadable.
-
-Where: `findings/classify.ts` (`categoryFor`).
-
 ### C-16 · xala.no, the second live target: what the journeys found
 
 Not geoqa gaps — **findings about the second site**, recorded so they are not lost,
@@ -1666,6 +1637,36 @@ lesson arriving again from a new direction: **a measurement taken at the wrong m
 is not a weaker version of the right answer, it is a different and confident wrong
 one.** The rule that saved it was comparing against a second subject before believing
 the first.
+
+### C-17 · CLOSED — an errored step was filed under the category the journey declared
+
+Found by writing the e2e assertion for C-13, which stated the intended rule and failed.
+
+`categoryFor` read the step's DECLARED category before the errored check:
+
+```ts
+if (step.category) return step.category;      // ← ran first
+if (step.outcome === "errored") return "instrumentation";
+```
+
+`classify.ts` opens by stating the opposite: *a step we could not read never becomes a
+site finding.* `localization.yaml` declares `category: localization` on both of its
+text checks, so a run where the engine looked before the page rendered produced a pile
+of **localization defects** titled "Could not verify: …". Somebody investigates the
+site; our defect stays invisible — the exact failure the split exists to prevent, in
+the journey this project is named for.
+
+The inconsistency that gave it away is one function below: `severityFor` has always
+overridden the step's declared severity for an errored step, with a comment saying why.
+Category now does the same.
+
+[R-13](prd.md) is unchanged and this honours it as written — a step may override the
+category **derived from its check kind**. `instrumentation` is derived from the
+OUTCOME, and no journey author can know in advance that a step will be unreadable.
+
+Where: `findings/classify.ts` (`categoryFor`).
+
+## D. Tooling and process gaps
 
 ### D-1 · The layer map is enforced by a tool now, and it has already earned it
 
@@ -1909,35 +1910,39 @@ Nothing schedules a prune either; that is the same missing scheduler as
 The first is not a priority call — it is a red suite. After that the order is
 "make the next phase honest rather than bigger".
 
-1. **B-10** (e2e asserts `trace.json`) — `pnpm test:e2e` fails. One filename, plus
-   the manifest assertion that would have caught it.
+1. ~~**B-10**~~ — DONE. The e2e derives the trace filename from
+   `traceArtifactFormat`, so it cannot disagree with the collector again.
 2. ~~**B-1's residue**~~ — DONE. `evidence.retention` reaches both the collector and
    the manifest, the cooldown store is reachable from the CLI at all for the first
    time, the browser caps reach `journey run`, the dead `ProviderOptions.cooldownMs`
    is gone and the `.gitignore` rationale is corrected.
-3. **One `ExperimentOptions` edit closes three entries** — `engine`,
-   `verifyEndpoint`, `stabilityWindowMs`, `stabilityReads`, `concurrency`, plus the
-   five `makeRuntime` call sites in `samplers.ts` and the flags in `index.ts`. That
-   is [C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it),
-   [A-3b](#a-3b--exp-007-exists-now-and-has-never-been-run) and the remaining third
-   of [D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers).
-   Do not substitute defaults at the CLI: `resolveStabilityWindow` and
-   `resolveConcurrency` own the defaults and the refusals.
-4. **B-8** (a placeholder URL cannot start a run) — a few lines, and it is the
-   first thing a provisioned exit hits. Doing it afterwards means diagnosing "not
-   configured" on a proxy that is configured, on day one.
+3. ~~**One `ExperimentOptions` edit closes three entries**~~ — DONE. `engine`,
+   `verifyEndpoint` and the stability knobs all reach the samplers through one
+   `runtimeFor` helper; C-1 and D-1b are closed and EXP-002 has produced a real
+   measurement through a live exit. Only A-3b's full run still waits on traffic.
+4. ~~**B-8**~~ — DONE 2026-08-13. Placeholders are replaced with an inert token
+   before parsing, so a template can start a run; the reasoning was wrong where it
+   counted, since placeholders live in the USERNAME and the gateway host and port
+   are literal.
 5. **A-1 proper** (provision, or check the office address) — with B-8 fixed, the
    last thing standing between the code and the central claim. `infra/` makes it an
    afternoon and about $28/month rather than a project.
 6. ~~**B-3's HAR residue**~~ — DONE. The collection reorder, the pass-tier delete and
    the privacy flag all landed together; `harStop` closes the context because on
    Playwright that is the flush, and fail-tier completeness is 100 rather than 88.
-7. **B-7's honesty half** — surface the `unmet` warning and record the restored
-   flag in `run.json`, then add one `returning` profile and an e2e case. The
-   mechanism without the warning is a run that can claim a returning visitor it
-   never was.
-8. **C-8** (`emulate` unchecked) — one e2e assertion. Without it, "mobile" means a
-   viewport width on the engine that serves every experiment.
+7. **B-7's last half** — the warning is surfaced and `run.json` records
+   `{declared, restored, unmet}`; the `returning` profile exists. What is left is
+   the **e2e**: run one profile twice against a fixture that sets a cookie and
+   assert the second run sees it. It needs a two-run harness this suite does not
+   have — every existing case is a single run. **This is the only remaining
+   code-closable item in the whole document.**
+8. **C-8 and C-15 both need a DECISION, not an implementation.** C-8: mobile
+   profiles are mobile by viewport only and present a desktop UA — closing it means
+   choosing emulation (and losing `window.innerWidth` control, measured at 980 vs
+   390) or hand-maintained `userAgent` strings. C-15: the localization check reads
+   rendered text and the language marker lives in an attribute — closing it means
+   either a new attribute-reading check or a journey that names a marker appearing
+   in visible copy, and only the first tests the document's declared language.
 9. **B-4's residue** — the attempt count is in `run.json` now and occurrences are
    keyed per step; what is left is giving the durable path the same repeat wiring the
    CLI has, which waits on D-2.
