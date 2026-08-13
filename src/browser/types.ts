@@ -114,6 +114,16 @@ export interface BrowserRuntime {
   getUrl(): Promise<BrowserResult<string>>;
   count(selector: string): Promise<BrowserResult<number>>;
   isVisible(selector: string): Promise<BrowserResult<boolean>>;
+  /**
+   * How many VISIBLE elements a selector matches.
+   *
+   * For the evidence rather than for a check. A union in a click step is legitimate and
+   * ambiguous at once — `#results a, .result` taking the first of three results is exactly what
+   * a journey means — so this cannot refuse anything. But a CSS comma resolves in DOCUMENT
+   * order rather than as a preference list, and a report that recorded neither the count nor
+   * the landing URL could not tell that apart from clicking the nav. See gaps C-11.
+   */
+  visibleCount(selector: string): Promise<BrowserResult<number>>;
   snapshot(options?: SnapshotOptions): Promise<BrowserResult<string>>;
 
   /** Interaction. */

@@ -104,6 +104,15 @@ export interface PwLocator {
   innerText(): Promise<string>;
   count(): Promise<number>;
   isVisible(): Promise<boolean>;
+  /**
+   * How many VISIBLE elements this selector matches.
+   *
+   * Distinct from `count()`, which counts every match including hidden ones. On the seam
+   * because the EVIDENCE needs it: a union in a click step is legitimate and ambiguous at the
+   * same time, and recording the count is what lets a report tell "the first of three search
+   * results" from "the nav link that happened to come first in the document". See gaps C-11.
+   */
+  visibleCount(): Promise<number>;
   click(): Promise<void>;
   ariaSnapshot(): Promise<string>;
   fill(value: string): Promise<void>;
@@ -449,6 +458,18 @@ export class PlaywrightRuntime implements BrowserRuntime {
 
   async count(selector: string): Promise<BrowserResult<number>> {
     return this.withSession(`playwright:count ${selector}`, (s) => s.page.locator(selector).count());
+  }
+
+  /**
+   * How many VISIBLE elements a selector matches — for the evidence, not for a check.
+   *
+   * No retry and no settle, unlike `isVisible` below, and the asymmetry is deliberate: absence
+   * is a CLAIM about the page and a claim has to survive a settle, whereas this is a count taken
+   * at one instant to annotate an action taken at that same instant. Re-reading it later would
+   * describe a different page.
+   */
+  visibleCount(selector: string): Promise<BrowserResult<number>> {
+    return this.withSession(`playwright:visibleCount ${selector}`, (s) => s.page.locator(selector).visibleCount());
   }
 
   /**

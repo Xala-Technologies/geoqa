@@ -42,6 +42,7 @@ export function fakeRuntime(over: Partial<BrowserRuntime> = {}): BrowserRuntime 
     getUrl: () => Promise.resolve(ok("https://digilist.no/")),
     count: () => Promise.resolve(ok(9)),
     isVisible: () => Promise.resolve(ok(true)),
+    visibleCount: () => Promise.resolve(ok(1)),
     snapshot: () => Promise.resolve(ok("- heading")),
     evaluate: <T,>() => Promise.resolve(ok(BROWSER_ENV_OSLO as unknown as T)),
     click: () => Promise.resolve(ok(null)),

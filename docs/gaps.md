@@ -1120,7 +1120,7 @@ evidence package — and nothing at all about the user agent or touch.
 
 ---
 
-### C-9 · A step whose selector a preceding check already proved absent still runs
+### C-9 · CLOSED — an action step no longer spends a navigation budget on a missing element
 
 Found by J03's first live run, and it cost 30 seconds and the run's verdict.
 
@@ -1139,17 +1139,31 @@ sends a reader to look for a broken proxy. And the 30-second default `fill` time
 was spent on an element the run had already established was not there.
 
 There is no step dependency in the journey DSL, deliberately — steps are data and
-a conditional step is a program. So the fix is not "skip the fill": the honest
-options are a shorter timeout for input actions than for navigations, or letting a
-`critical` visibility check be fatal for the steps that name the same selector.
-Both are real design choices and neither should be made in a slice about clicking.
+a conditional step is a program. So the fix was never "skip the fill". Of the two
+honest options — a shorter timeout for input actions, or letting a `critical`
+visibility check be fatal for later steps naming the same selector — the **first**
+is the one taken, and the second is deliberately refused.
 
-**Not a blocker for J03**, which is proven end to end against the fixtures
-including a real click-through and a dead-link catch. It is a cost paid on any
-journey whose target does not have the element the journey assumes.
+**What it does now.** `DEFAULT_ACTION_TIMEOUT_MS = 8_000` in
+`browser/playwright-launch.ts`, applied to `click`, `fill`, `selectOption` and
+`check`. Navigations keep the long budget: a cold page on a residential proxy in
+Bodø legitimately takes ten seconds to load, and shortening *that* would invent
+timeouts on healthy sites. An **action** is different — the element it names either
+resolved during the load or it is not coming, and waiting 30 seconds to be told so
+converts a clean site finding into 30 seconds of nothing.
 
-Where: `journeys/engine.ts` (step execution, fatality), `browser/playwright.ts`
-(action timeouts).
+**Why not selector-based fatality.** It reads well and it is wrong. A journey may
+legitimately assert a selector absent and then act on a *different* element that
+happens to share the string, and more importantly it makes one step's verdict
+silently change another step's execution — which is a conditional step wearing a
+disguise, and the DSL refuses those on purpose.
+
+The verdict conflation this produced ([R-19](prd.md): `ERROR` outranks `FAIL`) is
+unchanged and correct. What changed is its cost: the same journey against the same
+broken site now reports the FAIL in 8 seconds rather than 30, and the shorter wait
+is visible in the step detail rather than inferred.
+
+Where: `browser/playwright-launch.ts` (`DEFAULT_ACTION_TIMEOUT_MS`).
 
 ### C-10 · digilist.no: the search box is reachable at no profile width (live finding)
 
@@ -1175,7 +1189,7 @@ Worth stating plainly because of how it was found: **the markup contains a searc
 input, so any check that looked for presence rather than VISIBILITY would have
 passed this site.** `selector-visible` is why it did not.
 
-### C-11 · A comma-union selector is safe in an assertion and a hazard in a click
+### C-11 · CLOSED — an ambiguous action is RECORDED, not refused
 
 Found by J06 reporting **PASS on a deliberately broken override**, which is the
 worst possible way to find anything.
@@ -1204,13 +1218,38 @@ accident of document order:
 `reader`'s is the one to note: a bare `a[href^='/']` clicks the **logo** on almost
 every real site, so "follow a contextual link" would have gone home.
 
-**Open, because the convention is not enforced.** Nothing stops the next journey
-from using a broad union in a click step, and the failure is silent — it does not
-error, it clicks something. A `click`/`fill`/`press` step could be required to
-resolve to a single element, or to warn when its selector matches more than one, in
-the way Playwright's own strict mode does. That is a real engine decision and
-belongs with [C-9](#c-9--a-step-whose-selector-a-preceding-check-already-proved-absent-still-runs),
-not in a journey.
+**Closed by recording it, and the choice of *record* over *refuse* is the whole
+decision.** Playwright's strict mode is the obvious fix and it is the wrong one
+here: `#results a, .result` matching three search results and acting on the first
+is *exactly what that journey means*, and a strict-mode engine would error on a
+correct journey. The failure this gap describes is not that a selector matched
+several elements — it is that the report could not tell "the first of three search
+results" from "the nav link that happened to come first", because it printed the
+same line for both.
+
+So `runJourney` now asks `visibleCount(selector)` before every step that targets an
+element (`click`, `fill`, `select`, `check` — `press` sends a key to the page and
+`scroll` moves the viewport, so neither chooses from a set), and when the answer is
+greater than one it appends to that step's detail:
+
+```
+matched 3 visible elements and acted on the first — a CSS comma resolves in
+document order, not as a preference list
+```
+
+Three properties of that note are deliberate. It counts **visible** elements, not
+all matches, because a click cannot land on a hidden one and counting them would
+make an unambiguous click look ambiguous. It says nothing at all when the count is
+1, because a note on every row buries the rows that matter. And when the engine
+**cannot** count it says nothing rather than guessing — `agent-browser` has no
+visible-only count and refuses the call by name, which is the same honesty rule the
+rest of the system runs on.
+
+The journey selectors fixed in the table above stay fixed; this makes the next one
+visible instead of silent.
+
+Where: `journeys/engine.ts` (`ambiguityNote`, `TARGETED_ACTIONS`),
+`browser/playwright.ts` and `browser/agent-browser.ts` (`visibleCount`).
 
 Where: `journeys/*.yaml` (click steps), `browser/playwright.ts` (locator
 resolution), `journeys/spec.ts` (where a per-action selector rule would live).
@@ -1257,7 +1296,8 @@ Two engine improvements came out of the attempt and are already landed:
   nothing; the table above is only readable because of that change.
 
 Where: `journeys/language-override.yaml`, `browser/playwright-launch.ts`,
-[C-11](#c-11--a-comma-union-selector-is-safe-in-an-assertion-and-a-hazard-in-a-click).
+[C-11](#c-11--closed--an-ambiguous-action-is-recorded-not-refused). The ambiguity
+note landed there now records exactly this shape when it happens.
 
 ### B-12 · FIXED — every run in a market shared one egress IP, because a hyphen truncated the sticky key
 

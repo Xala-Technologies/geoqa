@@ -747,6 +747,21 @@ unmeasured guess until EXP-007 runs.
   the level of a single number. An artifact that can only be produced at
   context-creation time is likewise **armed always and kept selectively**; it can
   never be started retroactively for the run that turned out to need it.
+- **R-156** An **action** step and a **navigation** step get different timeout
+  budgets. A cold page behind a residential proxy legitimately takes ten seconds,
+  so shortening a navigation would invent timeouts on healthy sites; but the
+  element an action names either resolved during that load or is not coming, and
+  spending the navigation budget on it converts a clean site finding into thirty
+  seconds of nothing. Worse than the wasted time: `ERROR` outranks `FAIL`
+  ([R-19](#honest-verdicts)), so the long wait ends by relabelling *the search box
+  is not visible* as *we could not verify*.
+- **R-157** A step whose selector could have matched **more than one visible
+  element** says so in its own detail. It is not refused: a union that takes the
+  first of three search results is what that journey means, and a strict-mode
+  engine would error on a correct journey. What is refused is the report that
+  cannot tell that step from one which clicked whichever element happened to come
+  first in the document. The count is of **visible** elements only, it is silent at
+  one, and an engine that cannot count says nothing rather than guessing.
 
 ## 4. Quality requirements
 

@@ -345,6 +345,22 @@ gets believed, so `0` for a null LCP would undo the whole verdict model at the l
 step. Zero stays a REAL reading where zero is meaningful: a CLS of 0 means nothing
 moved.
 
+**27. An action's timeout is not a navigation's.** `DEFAULT_ACTION_TIMEOUT_MS =
+8_000` for `click`/`fill`/`selectOption`/`check`; navigations keep the long budget.
+A cold page on a residential proxy legitimately takes ten seconds, so a short
+navigation timeout would invent failures on healthy sites — but an element an action
+names either resolved during that load or is not coming. The 30 seconds this
+replaces were not merely wasted: `ERROR` outranks `FAIL`, so they ended by
+relabelling *the search box is not visible* as *we could not verify*.
+
+**28. An ambiguous action is RECORDED, never refused.** A `click`/`fill`/`select`/
+`check` whose selector matched more than one VISIBLE element gets a note in its step
+detail. Strict mode is the tempting fix and it is wrong: `#results a, .result`
+taking the first of three results is what that journey means. The defect is a report
+that reads identically whether the click hit the first search result or the nav link
+that happened to come first in the document. Visible-only, silent at one match, and
+an engine that cannot count (`agent-browser`) says nothing rather than guessing.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.
