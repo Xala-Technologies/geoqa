@@ -157,6 +157,8 @@ export const DEFAULT_VISIBILITY_TIMEOUT_MS = 5_000;
 const asLocator = (page: Page, selector: string, visibilityTimeoutMs: number): PwLocator => {
   const all = page.locator(selector);
   const one = all.first();
+  // The element an ACTION should reach. See the comment on `click` below.
+  const visible = all.filter({ visible: true }).first();
   return {
     innerText: () => one.innerText(),
     count: () => all.count(),
@@ -190,11 +192,33 @@ const asLocator = (page: Page, selector: string, visibilityTimeoutMs: number): P
         return false;
       }
     },
-    click: () => one.click(),
+    /**
+     * Every ACTION targets the first VISIBLE match, not the first DOM match.
+     *
+     * Two failures, both measured, both from the same cause. `click` used
+     * `all.first()`, which is the first element in document order regardless of
+     * whether a human could see it — so a union like
+     * `"#to-english, [hreflang='en'], a[href*='/en']"` resolved to the
+     * `<link hreflang="en">` in `<head>` on digilist.no: not visible, not
+     * clickable, and a 30-second actionability timeout reported as an
+     * instrumentation failure. And `fill`/`selectOption`/`check` used the
+     * UNNARROWED locator, so a selector matching more than one element raised a
+     * strict-mode violation rather than filling the box the author meant.
+     *
+     * Filtering to visible is what an author means in every case: nobody writes a
+     * click step for an element the visitor cannot see. It also makes the failure
+     * honest — "no visible match" instead of "this specific hidden node was not
+     * actionable".
+     *
+     * It does NOT rescue a bad selector. A union in a click step still resolves in
+     * document order among the visible matches, which is gaps C-11 and is a
+     * journey-authoring rule, not something an adapter can decide.
+     */
+    click: () => visible.click(),
     ariaSnapshot: () => one.ariaSnapshot(),
-    fill: (value) => all.fill(value),
-    selectOption: (values) => all.selectOption(values),
-    check: () => all.check(),
+    fill: (value) => visible.fill(value),
+    selectOption: (values) => visible.selectOption(values),
+    check: () => visible.check(),
   };
 };
 

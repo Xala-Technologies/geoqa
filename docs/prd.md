@@ -158,6 +158,32 @@ unmeasured guess until EXP-007 runs.
   or whether the checks after it ran against the page they were written for. The
   proof is a results page whose links are dead — a 4xx finding on a step that runs
   after the click cannot appear unless the browser really navigated.
+- **R-109** A persistence claim is asserted **positively as well as negatively**. A
+  `text-absent` check is trivially true on a page that never contained the word, so
+  a negative assertion alone cannot prove that a language, a session or a choice
+  survived — measured: an override journey asserting only the absence of a
+  Norwegian marker reported PASS against a deliberately broken override, because the
+  marker existed on the landing page and nowhere else. A vacuous check is worse than
+  a missing one: it occupies the place where a reader believes a claim is made.
+- **R-111** Every ACTION resolves to the first **visible** match, not the first
+  match in document order. Nobody writes a click step for an element the visitor
+  cannot see, and a union like `[hreflang='en']` otherwise resolves to a `<link>` in
+  `<head>`: invisible, unclickable, thirty seconds of actionability timeout, and an
+  instrumentation failure standing where a real reading should be. The same applies
+  to `fill`, `select` and `check`, which additionally raised a strict-mode violation
+  on any selector matching more than one element.
+- **R-112** A step that can NAVIGATE records the URL it landed on. Without it a
+  click records nothing, and any check that fails afterwards cannot be attributed —
+  a live run failed a language-persistence check and the evidence could not say
+  which page had been reached, so a site defect and a badly chosen marker were
+  indistinguishable. Evidence that cannot answer "where were we" cannot answer the
+  question it was collected for.
+- **R-110** A selector in a **click, fill or press** step names ONE element, not a
+  family. A CSS comma is a union resolved in document order rather than a preference
+  list, so a broad union clicks whichever element appears first in the page — which
+  is a logo on most sites, and was the nav's Home link on the fixture that exposed
+  it. The same union is correct in an ASSERTION, where "does this site have
+  navigation" is answered by any match.
 - **R-108** An empty result set is a **correct answer**, not a defect. A search for
   a term a site does not contain returns nothing, so a journey may only assert a
   minimum result count when the caller supplies a term known to match — which is why

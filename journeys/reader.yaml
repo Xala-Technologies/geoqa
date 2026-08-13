@@ -50,7 +50,10 @@ steps:
   # `probability: 0.33` rather than always: a set of runs where some sessions go
   # deeper and some do not is representative, and eleven identical robots are not.
   # The draw is seeded, so any one run replays exactly.
-  - { action: click, selector: "a[href^='/']", probability: 0.33, label: follow a contextual link }
+  # Content-scoped, because a bare `a[href^='/']` resolves in DOM order and would
+  # click the logo on almost every real site — a "contextual link" that goes home.
+  # See gaps C-11.
+  - { action: click, selector: "main a[href^='/'], article a[href^='/']", probability: 0.33, label: follow a contextual link }
   - { action: pause, minMs: 1400, maxMs: 3800, probability: 0.33, label: read the next page }
   - { action: assert, check: no-http-4xx, severity: high, probability: 0.33, label: the link was not dead }
   - { action: assert, check: no-page-errors, severity: high }

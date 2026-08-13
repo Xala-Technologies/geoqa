@@ -787,3 +787,43 @@ describe("mergeAttempts", () => {
     expect(findings[0]?.confidence).toBeGreaterThan(92);
   });
 });
+
+describe("a navigating step records where it landed", () => {
+  it("records the URL after a click, press, open and reload — and NOT after a fill", async () => {
+    // A live J06 run failed on "the chosen language survived" and the evidence could
+    // not say which page the click had reached, so the failure was indistinguishable
+    // from a badly chosen marker. Half an hour went into answering a question the run
+    // should have answered itself.
+    const urls = ["/landed-open", "/landed-click", "/landed-press", "/landed-reload"];
+    let call = 0;
+    const rt = runtime({
+      getUrl: () => Promise.resolve(ok(urls[Math.min(call++, urls.length - 1)] as string)),
+    });
+    const result = await runJourney(rt, journey([
+      { action: "open", url: "https://x", label: "open" },
+      { action: "fill", selector: "#q", value: "secret", label: "fill" },
+      { action: "click", selector: "#go", label: "click" },
+      { action: "press", key: "Enter", label: "press" },
+      { action: "reload", label: "reload" },
+    ]), opts);
+
+    const observedFor = (label: string): string | null =>
+      result.steps.find((s) => s.label === label)?.observed ?? null;
+    expect(observedFor("open")).toBe("/landed-open");
+    expect(observedFor("click")).toBe("/landed-click");
+    expect(observedFor("press")).toBe("/landed-press");
+    expect(observedFor("reload")).toBe("/landed-reload");
+    // A fill cannot navigate, so a URL there is noise — and a fill must never
+    // render anything of its own.
+    expect(observedFor("fill")).toBeNull();
+  });
+
+  it("leaves the URL null rather than failing the step when it cannot be read", async () => {
+    // The observation is a debugging aid. Losing it must never cost a step that
+    // otherwise succeeded — that would turn a missing convenience into our defect.
+    const rt = runtime({ getUrl: () => Promise.resolve(bad()) });
+    const result = await runJourney(rt, journey([{ action: "click", selector: "#go", label: "click" }]), opts);
+    expect(result.steps[0]?.outcome).toBe("passed");
+    expect(result.steps[0]?.observed).toBeNull();
+  });
+})

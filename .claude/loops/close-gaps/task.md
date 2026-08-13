@@ -114,7 +114,7 @@ against, 90% is likely unreachable and the threshold is wrong.
 - [x] **2c · J03 internal-search journey, and clicking.** No journey clicks
       anything — `browse.yaml` has zero click steps. J03 (search → results →
       filter → open result) and J05's "follow a contextual link" both need it.
-- [ ] **2d · J06 manual language override.** Oslo IP → Norwegian homepage →
+- [x] **2d · J06 manual language override.** Oslo IP → Norwegian homepage →
       select English → navigate → English persists. Expressible with existing
       steps plus `storageState`; cheap, and it exposes bad geo-redirects.
 - [ ] **3 · D-1c: `proxy verify` honours `--engine`.** Runs on agent-browser

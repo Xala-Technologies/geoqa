@@ -54,6 +54,56 @@ describe("fixtureBody", () => {
     expect(fixtureBody("/nope")).toBeNull();
   });
 
+  describe("the language override", () => {
+    it("serves the local language by default and the chosen one on a cookie", () => {
+      // Path-based and cookie-based, because sites do one or the other and a journey
+      // that only knew one would report a working site as broken.
+      expect(fixtureBody("/lang")?.html).toContain("nb-NO");
+      expect(fixtureBody("/lang", "lang=en")?.html).toContain("en-GB");
+      expect(fixtureBody("/en/lang")?.html).toContain("en-GB");
+    });
+
+    it("SETS the choice as a cookie, or the next unprefixed page geo-redirects back", () => {
+      expect(fixtureBody("/en/lang")?.headers?.["set-cookie"]).toContain("lang=en");
+      // And the broken variant deliberately does not.
+      expect(fixtureBody("/en/lang-ignored")?.headers).toBeUndefined();
+    });
+
+    it("carries the choice onto an UNPREFIXED page — the returning-visitor half", () => {
+      expect(fixtureBody("/lang-deeper")?.html).toContain("nb-NO");
+      expect(fixtureBody("/lang-deeper", "lang=en")?.html).toContain("en-GB");
+      expect(fixtureBody("/en/lang-deeper")?.html).toContain("en-GB");
+    });
+
+    it("reads the cookie exactly, so a lookalike value is not a choice", () => {
+      // `lang=en-GB` and `mylang=en` are not `lang=en`. A loose match here would make
+      // the fixture answer English for a visitor who never chose it, and then the
+      // journey would be testing the fixture's bug rather than the site's.
+      expect(fixtureBody("/lang", "lang=nb")?.html).toContain("nb-NO");
+      expect(fixtureBody("/lang", "other=1; lang=en")?.html).toContain("en-GB");
+      expect(fixtureBody("/lang", "mylang=en")?.html).toContain("nb-NO");
+    });
+
+    it("puts language-specific words in the chrome of EVERY page of that language", () => {
+      // The measured reason: a marker that exists only on the landing page makes a
+      // `text-absent` persistence check vacuous one click later, and a broken
+      // override then reports PASS.
+      for (const path of ["/lang", "/lang-deeper", "/lang-broken"]) {
+        expect(fixtureBody(path)?.html, path).toContain("Om oss");
+      }
+      for (const path of ["/en/lang", "/en/lang-deeper", "/en/lang-ignored"]) {
+        expect(fixtureBody(path)?.html, path).toContain("About us");
+      }
+    });
+
+    it("keeps the onward content link inside <main>, so a click can be content-scoped", () => {
+      // A CSS comma resolves in DOM order, so an unscoped click selector reaches the
+      // nav first. Gaps C-11: that made a broken override report PASS.
+      expect(fixtureBody("/lang")?.html).toContain("<main>");
+      expect(fixtureBody("/en/lang-ignored")?.html).toContain("<main>");
+    });
+  });
+
   describe("the search flow", () => {
     it("submits to a DIFFERENT path, so the results page is a real navigation", () => {
       // In-place DOM mutation would let a journey "search" without the browser ever

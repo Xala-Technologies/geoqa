@@ -259,8 +259,89 @@ Docs: gaps C-9, C-10; PRD **R-107 / R-108**.
 Gate: lint clean · boundaries clean (94 modules / 372 deps) · **1004 tests at 100%**
 lines/statements/functions · e2e **25/25**.
 
-## Next: slice 2d
+## Slice 2d · J06 manual language override — DONE
 
-J06, manual language override: Oslo IP → Norwegian homepage → select English →
-navigate internally → English persists. Expressible with existing steps plus
-`storageState` for the returning half.
+`journeys/language-override.yaml`, and fixtures covering both real mechanisms:
+**path prefix** (`/en/lang`, what digilist does) and **cookie** (`lang=en`, so an
+unprefixed page also answers in English — the returning-visitor half, demonstrated
+inside one run with no `storageState`). `fixtureBody` now takes the request cookie
+and can return headers, which is what a stateless path-per-page server needed to
+express a choice that survives a navigation. Same seam unlocks the cookie-banner
+scenario later.
+
+e2e asserts **both directions**: PASS when the choice survives, FAIL (critical,
+`localization`) when a geo-redirect undoes it on the next click. 28/28.
+
+This slice cost three wrong turns and each one is worth more than the journey.
+
+### 1 · A negative assertion alone proved nothing
+
+The first version asserted only `text-absent: Velkommen` after the override.
+`Velkommen` is on the fixture's homepage and nowhere else, so one click later the
+check was **trivially true on a page that never contained the word** — and a
+deliberately broken override reported **PASS**. A vacuous check is worse than a
+missing one: it occupies the place where a reader believes a claim is made. Fixed
+with a paired positive `text-contains` on an arriving marker, and both markers moved
+into site chrome present on every page of their language. **R-109**.
+
+### 2 · A CSS comma is resolved in DOM order, not as a preference list
+
+Even with both checks, the broken run still reported PASS. The onward click was
+`#deeper, a[href^='/']`, and the nav precedes the content — so it clicked **Home**,
+the journey never reached the page whose language it was checking, and both
+assertions passed against the wrong page.
+
+All three click journeys had it, two working only by accident of document order:
+
+| Journey | Was | Now |
+|---|---|---|
+| `language-override` | `#deeper, a[href^='/']` | `main a[href^='/'], article a[href^='/'], #deeper` |
+| `search` | `#results a, .result, [data-result], li a` | `#results a, .result, [data-result]` |
+| `reader` | `a[href^='/']` | `main a[href^='/'], article a[href^='/']` |
+
+`reader`'s is the one to note: a bare `a[href^='/']` clicks the **logo** on almost
+every real site, so "follow a contextual link" would have gone home. Recorded as
+**C-11**, open — nothing enforces the convention, and the failure is silent.
+
+### 3 · Actions targeted the first DOM match, not the first visible one
+
+`click` used `all.first()`. On digilist the switcher union
+`[hreflang='en'], a[href*='/en']` resolves to the `<link hreflang="en">` in
+`<head>` — invisible, unclickable, 30 seconds, reported as instrumentation. And
+`fill`/`select`/`check` used the unnarrowed locator, so any multi-match selector
+raised a strict-mode violation instead of filling the box the author meant. All four
+now target the first visible match. **R-111**.
+
+### And an evidence gap that made the investigation possible
+
+The first live failure could not be attributed **at all**: a click recorded nothing,
+so "the language did not survive" and "the marker was badly chosen" were
+indistinguishable. A navigating step now records the URL it landed on — `click`,
+`press`, `open`, `reload`, and deliberately not `fill`. **R-112**.
+
+### The digilist result, recorded as UNRESOLVED
+
+```
+passed   land on the geo-chosen language     https://digilist.no/
+passed   choose the other language           https://digilist.no/en
+errored  navigate onward                     click failed: timeout — 30000ms
+```
+
+**And a correction: I filed a localization defect against digilist and it was
+wrong.** It rested on `curl` output showing `lang="nb-NO"` and a Norwegian title on
+`/en/leie`. The site is client-rendered — a real browser renders that page with
+`lang="en"` and the English chrome intact. A finding taken from the pre-hydration
+shell of an SPA is a finding about the framework. Withdrawn, and named in **C-12**,
+because the mistake is the instructive part: this engine reads through a browser for
+exactly this reason, and the one investigation that stepped outside the browser
+produced a confident wrong answer within minutes.
+
+Docs: gaps **C-11**, **C-12**; PRD **R-109 … R-112**.
+
+Gate: lint clean · boundaries clean (94 modules / 372 deps) · **1013 tests at 100%**
+lines/statements/functions · e2e **28/28**.
+
+## Next: slice 3
+
+D-1c — `proxy verify` honours `--engine`. It runs on agent-browser regardless and
+hangs with no Chrome, which cost an hour during the Decodo work.

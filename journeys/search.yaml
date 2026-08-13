@@ -22,12 +22,21 @@ description: >
   and the result-count check fails honestly rather than misleadingly. Supply the
   term.
 
-  Selectors are unions rather than one exact match, the same way `browse.yaml`
-  handles navigation: a search box is `input[type=search]` on some sites, `name=q`
-  on others and `role=searchbox` on a few, and a QA runner that only knows one of
-  them reports "no search on this site" about a site that has one. Selectors are
-  not interpolated today, which is a real limit for a tenant whose markup none of
-  these unions match — noted rather than worked around.
+  Selectors are unions where the step is an ASSERTION: a search box is
+  `input[type=search]` on some sites, `name=q` on others and `role=searchbox` on a
+  few, and a runner that only knows one of them reports "no search on this site"
+  about a site that has one. A union answers "does this exist" correctly.
+
+  A union is NOT safe in a click step, and the click below is deliberately narrow
+  because of it. A CSS comma is resolved in document order, not as a preference
+  list, so a broad fallback clicks whichever element happens to come first in the
+  page — a nav item on most real sites. That failure is silent: it does not error,
+  it clicks the wrong thing and every check afterwards describes the wrong page.
+  See `docs/gaps.md` C-11, which was found by a sibling journey reporting PASS on a
+  deliberately broken site.
+
+  Selectors are not interpolated today, which is a real limit for a tenant whose
+  markup none of these unions match — noted rather than worked around.
 writes: false
 steps:
   - { action: open, url: "{target}", label: land on the page }
@@ -77,7 +86,10 @@ steps:
   - { action: scroll, direction: down, px: 600, probability: 0.5, label: look further down the results }
 
   # THE CLICK. Everything above exists to make this step meaningful.
-  - { action: click, selector: "#results a, .result, [data-result], li a", label: open the first result }
+  # Scoped to the results, deliberately. A CSS comma resolves in DOM order rather
+  # than as a preference list, so a broad `li a` fallback would click whichever list
+  # item appears first in the document — a nav item on most real sites. See C-11.
+  - { action: click, selector: "#results a, .result, [data-result]", label: open the first result }
   - { action: assert, check: title-exists, severity: critical, label: the result page has a title }
   - { action: assert, check: no-http-4xx, severity: critical, label: the result is not a dead link }
   - { action: assert, check: no-http-5xx, severity: critical }

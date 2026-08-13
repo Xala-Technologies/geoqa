@@ -797,6 +797,90 @@ Worth stating plainly because of how it was found: **the markup contains a searc
 input, so any check that looked for presence rather than VISIBILITY would have
 passed this site.** `selector-visible` is why it did not.
 
+### C-11 · A comma-union selector is safe in an assertion and a hazard in a click
+
+Found by J06 reporting **PASS on a deliberately broken override**, which is the
+worst possible way to find anything.
+
+A CSS comma is a **union resolved in DOM order**, not a preference list. For an
+assertion that is exactly right: `selector-visible` on
+`"nav, header nav, [role='navigation']"` asks "does this site have navigation", and
+any match answers it. For a **click** it is wrong, because the browser clicks
+whichever element appears first in the document — not the one the author listed
+first, and not the one they meant.
+
+Measured. J06's onward step was `click "#deeper, a[href^='/']"`. On the fixture the
+nav precedes the content, so the click landed on the nav's **Home** link, the
+journey never reached the page whose language it was checking, and both language
+assertions passed against the wrong page. The broken-override run reported PASS.
+
+All three click journeys had the same latent bug and two of them only worked by
+accident of document order:
+
+| Journey | Was | Now |
+|---|---|---|
+| `language-override` | `#deeper, a[href^='/']` | `main a[href^='/'], article a[href^='/'], #deeper` |
+| `search` | `#results a, .result, [data-result], li a` | `#results a, .result, [data-result]` |
+| `reader` | `a[href^='/']` | `main a[href^='/'], article a[href^='/']` |
+
+`reader`'s is the one to note: a bare `a[href^='/']` clicks the **logo** on almost
+every real site, so "follow a contextual link" would have gone home.
+
+**Open, because the convention is not enforced.** Nothing stops the next journey
+from using a broad union in a click step, and the failure is silent — it does not
+error, it clicks something. A `click`/`fill`/`press` step could be required to
+resolve to a single element, or to warn when its selector matches more than one, in
+the way Playwright's own strict mode does. That is a real engine decision and
+belongs with [C-9](#c-9--a-step-whose-selector-a-preceding-check-already-proved-absent-still-runs),
+not in a journey.
+
+Where: `journeys/*.yaml` (click steps), `browser/playwright.ts` (locator
+resolution), `journeys/spec.ts` (where a per-action selector rule would live).
+
+### C-12 · J06 does not complete on digilist.no, and the reason is not established
+
+Recorded UNRESOLVED on purpose. J06 runs green against the fixtures in both
+directions, and against `digilist.no` it does not finish:
+
+```
+passed   land on the geo-chosen language     https://digilist.no/
+passed   choose the other language           https://digilist.no/en
+errored  navigate onward                     click failed: timeout — 30000ms
+```
+
+The switch works. The onward click — `main a[href^='/'], article a[href^='/'],
+#deeper` — finds no visible, actionable match within 30 seconds on `/en`.
+
+**What this is NOT:** a claim about digilist.no. An earlier pass at this recorded a
+localization defect on the strength of `curl` output, and that reading was WRONG.
+`curl` sees the server shell, and the site is client-rendered: the shell for
+`/en/leie` carries `lang="nb-NO"` and a Norwegian `<title>`, while the page a real
+browser renders carries `lang="en"` and does contain the English chrome. A finding
+derived from the pre-hydration HTML of an SPA is a finding about the framework, not
+the site. Deleted rather than filed, and named here because the mistake is the
+instructive part: **this engine reads through a browser for exactly this reason**,
+and the moment an investigation stepped outside the browser it produced a confident
+wrong answer within minutes.
+
+**What it probably is:** the click selector, again — C-11's other half. A union
+narrowed to visible matches still resolves in document order, and on a hydrating
+SPA the first visible `main a[href^='/']` may be off-screen, covered, or replaced
+between resolution and click. Establishing that needs a headed run against the live
+site, which is a task, not a guess.
+
+Two engine improvements came out of the attempt and are already landed:
+
+- Every ACTION targets the first **visible** match rather than the first DOM match
+  (`browser/playwright-launch.ts`). A union like `[hreflang='en']` otherwise
+  resolves to the `<link>` in `<head>` — invisible, unclickable, 30 seconds, and an
+  instrumentation failure.
+- A navigating step **records the URL it landed on** (`journeys/engine.ts`). The
+  first live failure could not be attributed at all, because a click recorded
+  nothing; the table above is only readable because of that change.
+
+Where: `journeys/language-override.yaml`, `browser/playwright-launch.ts`,
+[C-11](#c-11--a-comma-union-selector-is-safe-in-an-assertion-and-a-hazard-in-a-click).
+
 ## D. Tooling and process gaps
 
 ### D-1 · The layer map is enforced by a tool now, and it has already earned it

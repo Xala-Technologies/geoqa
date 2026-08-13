@@ -473,3 +473,65 @@ describe("a search that legitimately found nothing", () => {
     });
   });
 });
+
+describe("a manual language override", () => {
+  /**
+   * The vars every run needs, and the markers are the point.
+   *
+   * Both are in the nav of every page of their language and of no page of the
+   * other. "Velkommen" was the first choice and it is on the homepage only, which
+   * made the persistence check vacuous one click later — the broken-override run
+   * reported PASS. A marker has to live in the site chrome.
+   */
+  const vars = { leavingMarker: "Om oss", arrivingMarker: "About us", overrideUrlPattern: "/en/" };
+
+  it("PASSES when the visitor's choice survives the next navigation", async () => {
+    const result = await run({
+      runId: "e2e_lang_ok",
+      target: `${fixtures.origin}/lang`,
+      journeyPath: path.join(journeysDir, "language-override.yaml"),
+      vars,
+    });
+    expect(result.verdict).toBe("PASS");
+    expect(result.findings).toEqual([]);
+    const steps = journeySteps("e2e_lang_ok");
+    const outcome = (label: string): string | undefined => steps.find((step) => step.label === label)?.outcome;
+    expect(outcome("the site chose the local language")).toBe("passed");
+    expect(outcome("the switch navigated")).toBe("passed");
+    expect(outcome("the chosen language SURVIVED the next navigation")).toBe("passed");
+    // Two clicks: the switcher and the onward link. Both real navigations.
+    expect(steps.filter((step) => step.action === "click")).toHaveLength(2);
+  });
+
+  it("FAILS when a geo-redirect silently undoes the choice on the next click", async () => {
+    // Without this the journey asserts nothing. The switch works, and then
+    // `/en/lang-ignored` sets no cookie and links onward unprefixed, so the visitor
+    // is returned to Norwegian — the exact bug, and invisible to every other check:
+    // 200, a heading, and the wrong language.
+    const result = await run({
+      runId: "e2e_lang_lost",
+      target: `${fixtures.origin}/lang-broken`,
+      journeyPath: path.join(journeysDir, "language-override.yaml"),
+      vars,
+    });
+    expect(result.verdict).toBe("FAIL");
+    const finding = result.findings.find((f) => f.stepLabel === "the chosen language SURVIVED the next navigation");
+    expect(finding).toBeDefined();
+    expect(finding?.category).toBe("localization");
+    expect(finding?.severity).toBe("critical");
+    // The site's defect, not ours.
+    expect(result.findings.filter((f) => f.category === "instrumentation")).toEqual([]);
+  });
+
+  it("carries the choice on a COOKIE too, so an unprefixed page answers in English", async () => {
+    // The returning-visitor half, demonstrated inside one run and with no
+    // storageState: `/lang-deeper` has no `/en/` prefix, so it can only answer in
+    // English by reading the cookie the switch set.
+    const cookieJourney = journeySteps("e2e_lang_ok");
+    expect(cookieJourney.find((step) => step.label === "navigate onward")?.outcome).toBe("passed");
+    const page = await fetch(`${fixtures.origin}/lang-deeper`, { headers: { cookie: "lang=en" } });
+    expect(await page.text()).toContain("en-GB");
+    const withoutCookie = await fetch(`${fixtures.origin}/lang-deeper`);
+    expect(await withoutCookie.text()).toContain("nb-NO");
+  });
+});

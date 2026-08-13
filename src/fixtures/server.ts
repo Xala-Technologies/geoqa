@@ -56,10 +56,46 @@ const shell = (title: string, body: string): string =>
   `<title>${title}</title></head><body>${body}</body></html>`;
 
 const LINKS = ["/a", "/b", "/c"].map((h) => `<a href="${h}">lenke ${h}</a>`).join(" ");
+
+/**
+ * Language-specific site chrome, on EVERY page of that language.
+ *
+ * The words matter and they are chosen, not decorative. A persistence claim is
+ * asserted with a marker word, and a marker that appears only on the HOMEPAGE
+ * makes the claim vacuous one click later: `text-absent` is trivially true on a
+ * page that never had the word. Measured — the first version of this fixture used
+ * "Velkommen", which is on the homepage and nowhere else, and the broken-override
+ * run reported PASS. `Om oss` and `About us` are in the nav of every page of their
+ * language and of no page of the other.
+ */
+const NB_CHROME = `<nav><a href="/lang">Hjem</a> <a href="/om-oss">Om oss</a></nav>`;
+const EN_CHROME = `<nav><a href="/en/lang">Home</a> <a href="/en/about">About us</a></nav>`;
 const HEADING = "<h1>Fixture</h1>";
 
-/** The body for each defect path. Pure, so the routing table is testable. */
-export function fixtureBody(path: string): { status: number; html: string } | null {
+/**
+ * What a fixture answers with.
+ *
+ * `headers` exists for `Set-Cookie`, and therefore for the one thing a stateless
+ * path-per-page server could not express: a CHOICE a visitor made that has to
+ * survive a navigation. A language override is exactly that, and so is a dismissed
+ * cookie banner — the highest-value untested scenario on the plan.
+ */
+export interface FixtureResponse {
+  status: number;
+  html: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * The body for each fixture path. Pure, so the routing table is testable.
+ *
+ * `cookie` is the raw request header, and reading it is what lets a fixture answer
+ * differently for a returning visitor without any server state. Pure still: the
+ * same path and the same cookie always produce the same page.
+ */
+export function fixtureBody(path: string, cookie = ""): FixtureResponse | null {
+  /** Did the visitor already choose English? */
+  const prefersEnglish = /(?:^|;\s*)lang=en(?:;|$)/.test(cookie);
   switch (path) {
     // Chrome requests this unprompted on every navigation. Letting it 404 puts
     // an http finding on EVERY fixture including the control, which is how the
@@ -253,6 +289,104 @@ export function fixtureBody(path: string): { status: number; html: string } | nu
            </script>`,
         ),
       };
+    /**
+     * A manual language override, and whether it survives the next click.
+     *
+     * The scenario: a visitor on a Norwegian IP gets Norwegian, chooses English,
+     * navigates internally, and should still be reading English. It is worth a
+     * fixture because the failure is invisible to every other check — the page
+     * renders, returns 200, has a heading, and is simply in the wrong language,
+     * which a geo-redirect that runs on every request will happily do forever.
+     *
+     * Both real mechanisms are exercised, because sites use one or the other and a
+     * journey that only knew one would report a working site as broken:
+     *
+     * - **Path prefix** (`/en/lang`), which is what digilist.no does.
+     * - **Cookie** (`lang=en`), so `/lang-deeper` with no prefix ALSO answers in
+     *   English once the choice has been made. That is the returning-visitor half,
+     *   and it needs no `storageState` to demonstrate within one run.
+     *
+     * `<p id="locale">` carries the resolved locale as text, so an assertion can
+     * name the claim exactly rather than hunting for a translated word that might
+     * legitimately appear in either language.
+     */
+    case "/lang":
+      return prefersEnglish
+        ? {
+            status: 200,
+            html: shell(
+              "Home",
+              `${EN_CHROME}<h1>Welcome</h1><p id="locale">en-GB</p><p>English, because you chose it.</p>
+               <main><a href="/lang-deeper" id="deeper">Read more</a></main>`,
+            ),
+          }
+        : {
+            status: 200,
+            html: shell(
+              "Hjem",
+              `${NB_CHROME}<h1>Velkommen</h1><p id="locale">nb-NO</p><p>Norsk, fordi du er i Norge.</p>
+               <a href="/en/lang" id="to-english">English</a>
+               <main><a href="/lang-deeper" id="deeper">Les mer</a></main>`,
+            ),
+          };
+    case "/en/lang":
+      return {
+        status: 200,
+        // The cookie is the override. Without it the next unprefixed page would
+        // geo-redirect straight back to Norwegian, which is the bug this fixture
+        // stands in for.
+        headers: { "set-cookie": "lang=en; Path=/; SameSite=Lax" },
+        html: shell(
+          "Home",
+          `${EN_CHROME}<h1>Welcome</h1><p id="locale">en-GB</p><p>English, because you chose it.</p>
+           <main><a href="/en/lang-deeper" id="deeper">Read more</a>
+           <a href="/lang-deeper" id="deeper-unprefixed">Read more (no prefix)</a></main>`,
+        ),
+      };
+    case "/en/lang-deeper":
+      return {
+        status: 200,
+        html: shell("Details", `${EN_CHROME}<h1>Details</h1><p id="locale">en-GB</p><p>Still English.</p>${LINKS}`),
+      };
+    case "/lang-deeper":
+      return prefersEnglish
+        ? { status: 200, html: shell("Details", `${EN_CHROME}<h1>Details</h1><p id="locale">en-GB</p><p>Still English.</p>${LINKS}`) }
+        : { status: 200, html: shell("Detaljer", `${NB_CHROME}<h1>Detaljer</h1><p id="locale">nb-NO</p><p>Fortsatt norsk.</p>${LINKS}`) };
+    /**
+     * The same flow with the override BROKEN — the geo-redirect wins.
+     *
+     * `/lang-broken` is the entry point and it has to be: a journey that lands on
+     * the geo-chosen language cannot start on the English page. Pointed at
+     * `/en/lang-ignored` directly, the run reported ERROR rather than FAIL —
+     * the switcher is not on that page, so the visibility check failed and the
+     * click could not be performed. Which is gaps C-9 biting a second time, in my
+     * own test design this time: a step whose selector a preceding check already
+     * proved absent still runs, and "we could not verify" outranks the real
+     * finding.
+     *
+     * `/en/lang-ignored` sets no cookie and links onward unprefixed, so the
+     * visitor is silently returned to Norwegian on the next click. A journey that
+     * asserts the override persisted must FAIL here, or it asserts nothing.
+     */
+    case "/lang-broken":
+      return {
+        status: 200,
+        html: shell(
+          "Hjem",
+          `${NB_CHROME}<h1>Velkommen</h1><p id="locale">nb-NO</p><p>Norsk, fordi du er i Norge.</p>
+           <a href="/en/lang-ignored" id="to-english">English</a>
+           <main><a href="/lang-deeper" id="deeper">Les mer</a></main>`,
+        ),
+      };
+    case "/en/lang-ignored":
+      return {
+        status: 200,
+        html: shell(
+          "Home",
+          `${EN_CHROME}<h1>Welcome</h1><p id="locale">en-GB</p><p>English, for now.</p>
+           <main><a href="/lang-deeper" id="deeper">Read more</a></main>`,
+        ),
+      };
     case "/no-links":
       return { status: 200, html: shell("No links", `${HEADING}<p>Ingen lenker.</p>`) };
     default:
@@ -285,13 +419,13 @@ export function startFixtureServer(): Promise<FixtureServer> {
       res.end(fixture?.html ?? "");
       return;
     }
-    const fixture = fixtureBody(path);
+    const fixture = fixtureBody(path, req.headers.cookie ?? "");
     if (!fixture) {
       res.writeHead(404, { "content-type": "text/plain" });
       res.end("no fixture");
       return;
     }
-    res.writeHead(fixture.status, { "content-type": "text/html; charset=utf-8" });
+    res.writeHead(fixture.status, { "content-type": "text/html; charset=utf-8", ...fixture.headers });
     res.end(fixture.html);
   });
 
