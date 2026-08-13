@@ -172,6 +172,18 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-144** Site analysis answers the question a crawler from one datacentre cannot: does
+  this page behave differently **depending on where the visitor is**? Verdict divergence
+  across markets, the latency spread with its factor, and pages measured in some markets but
+  not all — because a page nobody measured in a market is not a page that works there.
+- **R-145** A signal that cannot be computed from the evidence is **not approximated**. Thin
+  pages, orphans and near-duplicate cannibalisation need page text and the link graph, and a
+  run records neither; a thin-page report built on a guess about page length is worse than
+  none, because somebody would rewrite a page over it. The evidence change that would close
+  it is recorded instead.
+- **R-146** An `ERROR` run is **excluded from every cross-market comparison** and counted in
+  a warning. Including it would make our own instrumentation failure look like a market where
+  the site behaves differently.
 - **R-141** Publishing is **gated on a verdict the producer did not compute**, and geoqa's
   half of that pipeline is the gate alone. Generation and publishing stay outside: a
   generator living inside the verifier would collapse the separation that makes the verdict

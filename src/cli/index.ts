@@ -37,6 +37,8 @@ import {
   loadUrlList,
   renderGateResult,
   renderKeywordReport,
+  renderSiteAnalysis,
+  siteAnalyse,
   resolveTenant,
   tenantList,
   checkTenantScope,
@@ -354,6 +356,17 @@ async function main(argv: string[]): Promise<number> {
     // scenarios is zero evidence.
     if (result.result === null) return 0;
     return result.result.verdict === "FAIL" || result.result.verdict === "ERROR" ? 1 : 0;
+  }
+
+  if (group === "site" && (action === "analyse" || action === "analyze" || action === undefined)) {
+    const result = siteAnalyse(deps, {
+      ...(args.flags.journey !== undefined ? { journeyId: flagString(args, "journey", "") } : {}),
+      ...(args.flags.since !== undefined ? { since: flagString(args, "since", "") } : {}),
+    });
+    emit(result, renderSiteAnalysis(result));
+    // Red when geography changed the outcome anywhere: that is the finding this analysis
+    // exists to surface, and a scheduled check should not have to read the output to know.
+    return result.report.geographicallyDivergent.length > 0 ? 1 : 0;
   }
 
   if (group === "gate" && (action === "check" || action === undefined)) {

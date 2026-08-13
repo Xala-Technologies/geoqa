@@ -40,6 +40,8 @@ import {
   keywordsResearch,
   renderGateResult,
   renderKeywordReport,
+  renderSiteAnalysis,
+  siteAnalyse,
   resolveEvidenceRoot,
   resolveProfileId,
   resolveTenant,
@@ -1799,5 +1801,80 @@ describe("gateCheck", () => {
     );
     expect(rendered).toContain("UNKNOWN");
     expect(rendered).not.toContain("run run_");
+  });
+})
+
+describe("siteAnalyse", () => {
+  const line = (over: Record<string, unknown>): string =>
+    JSON.stringify({
+      schemaVersion: 1, runId: "run_1000_x", tenantId: null, target: "https://a.test/x",
+      profileId: "oslo-desktop", journeyId: "sweep", verdict: "PASS",
+      startedAt: "2026-08-13T10:00:00.000Z", durationMs: 1, seed: 1, engine: "playwright", evidenceId: null,
+      findings: { total: 0, bySeverity: {}, byCategory: {}, labels: [] },
+      confidence: { overall: 100, geo: 100, browser: 100, journey: 100, evidence: 100 },
+      geo: { requestedCountry: "NO", requestedCity: "Oslo", observedCountry: "NO", observedCity: "Oslo", country: "match", city: "match", egressHeld: "match", agreement: "unverified" },
+      latencyMs: null, vitals: { lcp: null, cls: null, ttfb: null, inp: null },
+      ...over,
+    });
+
+  const withIndex = (text: string): CommandDeps => {
+    const store: Record<string, string> = { [path.join(evidenceRoot, "runs.jsonl")]: text };
+    return deps({
+      historyFs: {
+        exists: (p) => p in store,
+        read: (p) => store[p] as string,
+        append: () => {},
+        write: () => {},
+        mkdir: () => {},
+        listDirs: () => [],
+      },
+    });
+  };
+
+  it("compares markets from the run index and reports the latency gap", () => {
+    const result = siteAnalyse(
+      withIndex(
+        `${line({ profileId: "oslo-desktop", vitals: { lcp: null, cls: null, ttfb: 148, inp: null } })}\n` +
+          `${line({ profileId: "bodo-desktop", vitals: { lcp: null, cls: null, ttfb: 1923, inp: null } })}\n`,
+      ),
+    );
+    expect(result.report.markets).toEqual(["bodo", "oslo"]);
+    expect(result.report.widestLatencyGaps[0]?.ttfbSpreadMs).toBe(1775);
+    const rendered = renderSiteAnalysis(result);
+    expect(rendered).toContain("a crawler from one datacentre sees none of this");
+    expect(rendered).toContain("13x");
+  });
+
+  it("WARNS when there is only one market, because the cross-market half is the point", () => {
+    const result = siteAnalyse(withIndex(`${line({})}\n`));
+    expect(result.warnings.join(" ")).toContain("nothing to compare ACROSS markets");
+  });
+
+  it("surfaces a geographic divergence in the rendering", () => {
+    const result = siteAnalyse(
+      withIndex(`${line({ profileId: "oslo-desktop" })}\n${line({ profileId: "bodo-desktop", verdict: "FAIL" })}\n`),
+    );
+    const rendered = renderSiteAnalysis(result);
+    expect(rendered).toContain("GEOGRAPHY CHANGED THE OUTCOME");
+    expect(rendered).toContain("bodo=FAIL");
+  });
+
+  it("reports a coverage gap, because an unmeasured market is not a working market", () => {
+    const result = siteAnalyse(
+      withIndex(`${line({ profileId: "oslo-desktop", target: "https://a.test/x" })}\n${line({ profileId: "bodo-desktop", target: "https://a.test/y" })}\n`),
+    );
+    expect(renderSiteAnalysis(result)).toContain("NOT measured in every market");
+  });
+
+  it("points at the rebuild when index lines could not be parsed", () => {
+    const result = siteAnalyse(withIndex(`${line({})}\n{"half\n`));
+    expect(result.skipped).toBe(1);
+    expect(result.warnings.join(" ")).toContain("runs rebuild");
+  });
+
+  it("renders an empty history without claiming anything", () => {
+    const rendered = renderSiteAnalysis(siteAnalyse(withIndex("")));
+    expect(rendered).toContain("0 page(s) across 0 market(s)");
+    expect(rendered).not.toContain("GEOGRAPHY CHANGED");
   });
 })

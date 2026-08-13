@@ -68,6 +68,7 @@ import { opportunities, researchKeywords } from "../keywords/research.js";
 import type { KeywordReport } from "../keywords/types.js";
 import type { Market } from "../geo/types.js";
 import { actionableFindings, gateFromRun, gateWithoutRun, type GateResult, type GateThresholds } from "../gate/publish.js";
+import { analyseSite, describeLatencySpread, type SiteReport } from "../analysis/site.js";
 import {
   filterHistory,
   findRegressions,
@@ -1390,6 +1391,58 @@ export function renderPruneResult(result: EvidencePruneResult): string {
       : `  applied: deleted ${execution.deletedRunIds.length} run(s), reclaimed ${formatBytes(execution.reclaimedBytes)}`,
   );
   for (const failure of execution.failed) lines.push(`  FAILED ${failure.runId}: ${failure.error}`);
+  return lines.join("\n");
+}
+
+// ── site analysis ────────────────────────────────────────────────────────
+
+export interface SiteAnalysisResult {
+  report: SiteReport;
+  /** Index lines that could not be parsed. */
+  skipped: number;
+  warnings: string[];
+}
+
+/**
+ * Analyse a site across markets, from the run history.
+ *
+ * Reads the same index `runs list` does — so this needs no crawl of its own and cannot
+ * disagree with the run records. A sweep produces the data; this interprets it.
+ */
+export function siteAnalyse(deps: CommandDeps, filter: HistoryFilter = {}): SiteAnalysisResult {
+  const { records, skipped } = readHistory(deps.evidenceRoot, deps.historyFs ?? nodeHistoryFs);
+  const report = analyseSite(filterHistory(records, filter));
+  const warnings = [...report.warnings];
+  if (skipped > 0) warnings.push(`${skipped} unparseable index line(s) skipped — "geoqa runs rebuild" reconstructs the index from the evidence`);
+  if (report.markets.length < 2) {
+    warnings.push(
+      `only ${report.markets.length} market(s) in the history, so there is nothing to compare ACROSS markets — which is the half of this analysis no other tool can do. Run a matrix over two or more markets first.`,
+    );
+  }
+  return { report, skipped, warnings };
+}
+
+export function renderSiteAnalysis(result: SiteAnalysisResult): string {
+  const { report } = result;
+  const lines = [`${report.pages} page(s) across ${report.markets.length} market(s): ${report.markets.join(", ") || "none"}`];
+  for (const w of result.warnings) lines.push(`  ! ${w}`);
+
+  if (report.geographicallyDivergent.length > 0) {
+    lines.push(`  ${report.geographicallyDivergent.length} page(s) where GEOGRAPHY CHANGED THE OUTCOME:`);
+    for (const page of report.geographicallyDivergent.slice(0, 10)) {
+      const verdicts = Object.entries(page.markets).map(([id, m]) => `${id}=${m.verdict}`).join(" ");
+      lines.push(`    ${page.target}`);
+      lines.push(`      ${verdicts}`);
+    }
+  }
+  if (report.widestLatencyGaps.length > 0) {
+    lines.push("  widest latency gaps between markets — a crawler from one datacentre sees none of this:");
+    for (const page of report.widestLatencyGaps.slice(0, 8)) lines.push(`    ${describeLatencySpread(page)}`);
+  }
+  if (report.coverageGaps.length > 0) {
+    lines.push(`  ${report.coverageGaps.length} page(s) NOT measured in every market — a page nobody measured in a market is not a page that works there:`);
+    for (const gap of report.coverageGaps.slice(0, 8)) lines.push(`    ${gap.target} — missing ${gap.missing.join(", ")}`);
+  }
   return lines.join("\n");
 }
 
