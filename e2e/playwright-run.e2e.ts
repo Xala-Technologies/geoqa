@@ -47,6 +47,10 @@ afterAll(async () => {
 
 const spec = (over: Partial<RunSpec> & { runId: string; target: string }): RunSpec => ({
   engine: "playwright",
+  // Off, so the e2e never reaches a third-party endpoint: it drives the local
+  // fixture server and a corroborating lookup would make every run depend on
+  // ipwho.is being up.
+  corroborateGeo: false,
   // Fixed, so a run that pauses or takes an optional step does the same thing on
   // every CI machine. That reproducibility is the whole point of seeding.
   seed: 20_260_812,

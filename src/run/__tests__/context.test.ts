@@ -37,6 +37,7 @@ const spec = (over: Partial<RunSpec> = {}): RunSpec => ({
   runId: "run_1",
   engine: "agent-browser",
   seed: 7,
+  corroborateGeo: false,
   target: "https://digilist.no",
   profilePath: path.join(repoRoot, "profiles", "oslo-mobile.yaml"),
   journeyPath: path.join(repoRoot, "journeys", "landing-page.yaml"),

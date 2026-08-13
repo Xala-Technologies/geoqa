@@ -632,6 +632,24 @@ matters more now than it did, because three of the eight markets have no
 purchasable city-level exit at all
 ([A-1](#a-1--the-core-claim-is-one-purchase-and-one-health-check-fix-away)).
 
+**Two independent databases now put a number on how weak the city signal is, and
+it is weaker than this entry assumed.** Across six live Decodo residential exits,
+ipinfo and geojs agreed on the country every time and disagreed on the city
+repeatedly — including one Norwegian exit placed in **Stavanger** by ipinfo and
+**Bærum** by geojs, roughly 400 km apart, for the same IP. On a direct connection
+the same pair reads Tønsberg and Rykkin.
+
+That has a direct consequence for the 100-session milestone: a **≥90% city-match
+bar measured against one database is measuring that database**, not the proxy. Two
+vendors cannot agree on the city of a single IP, so no single vendor's answer is
+the ground truth the bar implies. The threshold question in
+`.claude/loops/close-gaps/test-plan.md` — does `unverified` count against the 90% —
+should be decided knowing this: the honest reading is that country is the
+measurable axis and city is corroborating evidence, not a pass/fail gate.
+
+City divergence between sources is therefore recorded and **never** a verdict
+(`compareSources`). Only a COUNTRY disagreement is a mismatch.
+
 ### C-5 · `inp` is measured on Playwright now, and nothing asserts on it
 
 **Closed as "structurally unmeasurable".** An `INTERACTION_OBSERVER_SCRIPT` is

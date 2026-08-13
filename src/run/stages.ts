@@ -10,10 +10,10 @@
  * Every stage takes its dependencies as arguments rather than importing them,
  * so each is testable without a browser, a proxy or a workflow engine.
  */
-import { observeBrowser, observeEgressIp, observeNetwork } from "../geo/observe.js";
+import { observeBrowser, observeEgressIp, observeNetwork, observeNetworkVia, GEOJS_SOURCE } from "../geo/observe.js";
 import { loadGeoProfile } from "../geo/profile.js";
 import type { AxisResult, GeoProfile, GeoVerification } from "../geo/types.js";
-import { compareEgressHeld, verifyGeo } from "../geo/verify.js";
+import { compareEgressHeld, verifyGeo, withCorroboration } from "../geo/verify.js";
 import type { BrowserRuntime } from "../browser/types.js";
 import { runJourney, type JourneyResult, type StepResult } from "../journeys/engine.js";
 import { loadJourney, resolveSteps, type Journey } from "../journeys/spec.js";
@@ -83,10 +83,23 @@ export async function verifyEnvironment(
   runtime: BrowserRuntime,
   profile: GeoProfile,
   verifyEndpoint: string,
+  /**
+   * Read a second IP-geo database and report whether the two agree.
+   *
+   * OFF by default here, unlike `proxy verify`. This function runs once per RUN,
+   * and a 430-page sweep would spend 430 extra probes against a free endpoint's
+   * monthly allowance — an engine that exhausts its own corroborating source
+   * reports `unverified` for every subsequent run, which is the shape of failure
+   * an exhausted proxy already produced once. Opt in for the runs where the
+   * geographic claim is the point.
+   */
+  corroborate = false,
 ): Promise<GeoVerification> {
   const network = await observeNetwork(runtime, verifyEndpoint);
   const browser = await observeBrowser(runtime);
-  return verifyGeo(profile, network, browser);
+  const verified = verifyGeo(profile, network, browser);
+  if (!corroborate) return verified;
+  return withCorroboration(verified, await observeNetworkVia(runtime, GEOJS_SOURCE));
 }
 
 /**

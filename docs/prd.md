@@ -110,6 +110,24 @@ unmeasured guess until EXP-007 runs.
   descriptor, so the declared box always wins over the descriptor's — the viewport
   is a verified axis (R-5) and must mean what the profile says.
 
+- **R-105** Egress geography is corroborated by a **second, independent IP-geo
+  database**, and a disagreement about the COUNTRY caps the run's network-identity
+  confidence. Measured: one Decodo ISP exit resolved to São Paulo per Decodo's own
+  endpoint and New York per ipinfo, for the same IP. Either reading alone is
+  confident and coherent, and one is wrong — a wrong database looks exactly like a
+  wrong proxy, and the two need opposite fixes. A different vendor, never a mirror:
+  two endpoints reading one MaxMind snapshot would agree about being wrong.
+- **R-106** Corroboration compares **country only**, and never compares two
+  readings taken from **different IPs**. Both restrictions exist to stop the engine
+  manufacturing findings out of its own instrumentation, which is the failure mode
+  it exists to detect in others. Cities diverge between databases as a matter of
+  course — one live Norwegian exit was placed in Stavanger and Bærum by two
+  sources, 400 km apart — so city divergence is recorded and never a verdict. And
+  because `ipinfo.io` publishes no AAAA record, a dual-stack corroborating host is
+  read over IPv6 while the primary is read over IPv4: two addresses, two visitors,
+  nothing comparable. The corroborating host is pinned to IPv4 for that reason,
+  which was measured after a real run reported two different addresses.
+
 ### Journeys
 
 - **R-10** A journey is a YAML list of actions and checks. It is **deterministic**:
@@ -401,26 +419,26 @@ unmeasured guess until EXP-007 runs.
   form, registration or booking per scenario, and the operator is told the number
   and must pass an explicit flag before anything launches. A dry run states the
   count for free.
-- **R-90** A site-wide sweep runs **inside the bounded pool**, as a page axis on the
+- **R-101** A site-wide sweep runs **inside the bounded pool**, as a page axis on the
   matrix (`--urls-file`), never as a shell loop around the CLI. The first sweep was
   430 pages driven from a loop alongside three other browser fleets, and it made a
   `selector-visible` check report a missing `h1` on six pages that demonstrably had
   one — all six passed re-run alone. An engine whose own load can manufacture a
   site defect is worse than no engine, so the URL list belongs where the
   concurrency bound, the per-scenario seed and the write consent already apply.
-- **R-91** A URL list is **fully validated before anything launches**, with the line
+- **R-102** A URL list is **fully validated before anything launches**, with the line
   number of every bad entry, and one bad line refuses the whole matrix — the same
   rule as a mistyped `--market` (R-84). A non-http scheme is refused by name: a
   `file:` URL would let a matrix pass against local disk while claiming to have
   visited a site. Order and duplicates are preserved, because sitemap order is
   meaningful to whoever reads the results and a repeated URL is a legitimate second
   sample.
-- **R-92** Two pages sharing a profile, a journey and a millisecond get **distinct
+- **R-103** Two pages sharing a profile, a journey and a millisecond get **distinct
   run ids**. A run id is `run_<ms>_<slug>` and becomes an evidence directory name,
   so without this the second page overwrites the first page's manifest — a sweep
   losing runs while reporting a full count. The scenario's index disambiguates, not
   its URL: a URL contains `/` and `:`.
-- **R-93** An identity may be named by **place** (`--country`, `--city`, `--device`)
+- **R-104** An identity may be named by **place** (`--country`, `--city`, `--device`)
   and not only by profile id, and the place is **resolved against the profiles that
   exist** — a place with no profile refuses and lists the ones there are. Naming
   both a profile and a place refuses rather than ranking them: two identities have

@@ -189,6 +189,8 @@ async function main(argv: string[]): Promise<number> {
   if (group === "proxy" && action === "verify") {
     const result = await proxyVerify(deps, {
       profileId,
+      // Default ON here and OFF for runs — the reasoning is on `GeoVerifyOptions`.
+      corroborate: !flagBool(args, "no-corroborate"),
       providerName,
       engine,
       verifyEndpoint,
@@ -197,6 +199,15 @@ async function main(argv: string[]): Promise<number> {
     const human = [
       `${result.profileId} via ${result.provider}${result.proxy ? ` (${result.proxy})` : ""} on ${result.engine}`,
       `  network  country=${v.network.country.verdict} city=${v.network.city.verdict}  observed ${v.network.observed.country}/${v.network.observed.city} ${v.network.observed.org ?? ""}`,
+      // Both readings, side by side, whatever the verdict. When two databases
+      // disagree the reader is left holding "which of these is wrong", and one
+      // number cannot answer it.
+      ...(v.network.corroborating === null
+        ? []
+        : [
+            `  sources  agreement=${v.network.agreement.verdict}  ipinfo ${v.network.observed.country}/${v.network.observed.city}  vs  geojs ${v.network.corroborating.country}/${v.network.corroborating.city}`,
+            ...v.network.agreement.reasons.map((r) => `           ${r}`),
+          ]),
       `  browser  language=${v.browser.language.verdict} timezone=${v.browser.timezone.verdict} viewport=${v.browser.viewport.verdict}  observed ${v.browser.observed.language}/${v.browser.observed.timezone}/${v.browser.observed.viewport?.width ?? "?"}px`,
       `  confidence ${v.confidence}${v.trustworthy ? "" : " (NOT fully verified)"}`,
       ...result.warnings.map((w) => `  ! ${w}`),
@@ -215,6 +226,7 @@ async function main(argv: string[]): Promise<number> {
       vars: flagVars(argv),
       headed: flagBool(args, "headed"),
       repeat: flagNumber(args, "repeat", 1),
+      corroborate: flagBool(args, "corroborate"),
       ...(args.flags.seed !== undefined ? { seed: flagNumber(args, "seed", 0) } : {}),
     });
     emit(result, renderRunResult(result));
@@ -244,6 +256,7 @@ async function main(argv: string[]): Promise<number> {
       concurrency: flagNumber(args, "concurrency", DEFAULT_MATRIX_CONCURRENCY),
       dryRun: flagBool(args, "dry-run"),
       allowWrites: flagBool(args, "allow-writes"),
+      corroborate: flagBool(args, "corroborate"),
       ...(args.flags.seed !== undefined ? { seed: flagNumber(args, "seed", 0) } : {}),
     });
     emit(result, renderMatrixResult(result));

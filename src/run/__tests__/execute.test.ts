@@ -31,6 +31,7 @@ const base = (
   runId: "run_1",
   engine: "agent-browser",
   seed: 7,
+  corroborateGeo: false,
   target: "https://digilist.no",
   profilePath,
   journeyPath,

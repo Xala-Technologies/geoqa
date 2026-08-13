@@ -43,10 +43,10 @@ import {
   type ExperimentSummary,
   type MetricResult,
 } from "../experiments/harness.js";
-import { observeBrowser, observeNetwork, DEFAULT_VERIFY_ENDPOINT } from "../geo/observe.js";
+import { observeBrowser, observeNetwork, observeNetworkVia, DEFAULT_VERIFY_ENDPOINT, GEOJS_SOURCE } from "../geo/observe.js";
 import { loadGeoProfile, toSessionConfig, type ParseResult } from "../geo/profile.js";
 import type { GeoProfile } from "../geo/types.js";
-import { verifyGeo } from "../geo/verify.js";
+import { verifyGeo, withCorroboration } from "../geo/verify.js";
 import { loadJourney } from "../journeys/spec.js";
 import { seedFrom } from "../journeys/random.js";
 import { redactProxyUrl, selectProvider, type TcpProbe } from "../network/provider.js";
@@ -205,6 +205,7 @@ export function verificationSpec(
     initScriptPath: config.initScripts?.[0] ?? null,
     headed: config.headed ?? false,
     // Inert: read by no branch of buildRuntime.
+    corroborateGeo: false,
     profilePath: "",
     journeyPath: "",
     target: "",
@@ -473,6 +474,18 @@ export interface GeoVerifyOptions {
   providerName?: string;
   verifyEndpoint?: string;
   engine?: RunEngine;
+  /**
+   * Read a SECOND, independent IP-geo database and report whether the two agree.
+   *
+   * Default ON for this command, because "where is this session" is the entire
+   * question it answers, it runs once, and one extra page load is nothing against
+   * a wrong answer. `journey run` and `matrix run` default it OFF for the opposite
+   * reason: they are where volume lives, a 430-page sweep would be 430 extra
+   * probes against a free endpoint's monthly allowance, and an engine that
+   * exhausts its own corroborating source starts reporting `unverified` for every
+   * run — the failure Decodo's 407 already taught once.
+   */
+  corroborate?: boolean;
 }
 
 export async function proxyVerify(deps: CommandDeps, options: GeoVerifyOptions): Promise<GeoVerifyResult> {
@@ -510,12 +523,19 @@ export async function proxyVerify(deps: CommandDeps, options: GeoVerifyOptions):
     warnings.push(...(await applyDeviceProfile(runtime, profile)));
     const network = await observeNetwork(runtime, options.verifyEndpoint ?? DEFAULT_VERIFY_ENDPOINT);
     const browser = await observeBrowser(runtime);
+    const verified = verifyGeo(profile, network, browser);
+    // The corroborating read comes AFTER the browser observation, not between the
+    // two network reads: a second navigation resets nothing here, but it does add
+    // wall clock, and the browser axes should be read as close to the primary
+    // identity as the sequence allows.
+    const verification =
+      options.corroborate === false ? verified : withCorroboration(verified, await observeNetworkVia(runtime, GEOJS_SOURCE));
     return {
       profileId: profile.id,
       provider: provider.name,
       proxy: redactProxyUrl(session.session.proxyUrl),
       engine,
-      verification: verifyGeo(profile, network, browser),
+      verification,
       warnings,
     };
   } finally {
@@ -528,6 +548,8 @@ export async function proxyVerify(deps: CommandDeps, options: GeoVerifyOptions):
 export interface JourneyRunOptions {
   url: string;
   profileId: string;
+  /** Read a second IP-geo database and report whether the two agree. */
+  corroborate?: boolean;
   journeyId: string;
   providerName?: string;
   vars?: Record<string, string>;
@@ -570,6 +592,7 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
       // Default derived from the run id: each run paces differently, and any one
       // run replays exactly. `--seed` from a failing run's run.json repeats it.
       seed: options.seed ?? seedFrom(runId),
+      corroborateGeo: options.corroborate === true,
       target: options.url,
       profilePath: profilePath(deps, options.profileId),
       journeyPath: journeyPath(deps, options.journeyId),
@@ -637,6 +660,16 @@ export interface MatrixRunOptions {
    * keeps the single-`--url` shape.
    */
   targets?: string[];
+  /**
+   * Read a second IP-geo database per scenario and report whether the two agree.
+   *
+   * Off by default, and the default matters more here than anywhere else: this is
+   * one extra probe PER SCENARIO, so a 430-page sweep is 430 of them against a
+   * free endpoint's monthly allowance. An engine that exhausts its own
+   * corroborating source reports `unverified` for every later run — the shape of
+   * failure an exhausted proxy already produced once.
+   */
+  corroborate?: boolean;
   providerName?: string;
   engine?: RunEngine;
   vars?: Record<string, string>;
@@ -780,6 +813,7 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
           runId,
           engine,
           seed: scenarioSeed(baseSeed, scenario.key),
+          corroborateGeo: options.corroborate === true,
           // The scenario's own page when the matrix carries a URL axis. Without
           // this the axis expanded, every scenario got its own key and seed, and
           // all of them visited `--url` — a sweep reporting 430 clean pages

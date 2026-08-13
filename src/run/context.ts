@@ -58,6 +58,17 @@ export interface RunSpec {
   seed: number;
   headed: boolean;
   verifyEndpoint: string;
+  /**
+   * Read a second IP-geo database at verification time and report whether the two
+   * agree.
+   *
+   * On the spec rather than a stage argument, for the reason `seed` and `engine`
+   * are: a Temporal Activity rebuilds every stage from serialisable arguments, and
+   * a corroboration decision taken inside a stage would differ between a local run
+   * and a durable one — which would make two runs of the same spec produce
+   * different `agreement` verdicts and neither of them wrong.
+   */
+  corroborateGeo: boolean;
 }
 
 export function runEvidenceDir(spec: Pick<RunSpec, "evidenceRoot" | "runId">): string {

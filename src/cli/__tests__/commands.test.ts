@@ -8,7 +8,7 @@ import type { EvidenceManifest } from "../../evidence/manifest.js";
 import { DEFAULT_POLICY, type DirSize, type PruneFs } from "../../evidence/prune.js";
 import type { GeoQaRunResult } from "../../findings/types.js";
 import type { ExecuteOptions } from "../../run/execute.js";
-import { fakeRuntime, bad, ok } from "../../run/__tests__/fake-runtime.js";
+import { fakeRuntime, bad, ok, IPINFO_OSLO } from "../../run/__tests__/fake-runtime.js";
 import {
   browserVerify,
   defaultDeps,
@@ -1202,5 +1202,35 @@ describe("matrixRun with a page axis", () => {
       dryRun: true,
     });
     expect(renderMatrixResult(result)).not.toContain("URL axis");
+  });
+});
+
+describe("proxyVerify corroboration", () => {
+  const twoSources = (second: string) => {
+    const bodies = [IPINFO_OSLO, second];
+    let call = 0;
+    return () => fakeRuntime({ getText: () => Promise.resolve(ok(bodies[call++] ?? "")) });
+  };
+
+  it("reads a second IP-geo source BY DEFAULT — this command's whole question is where the session is", async () => {
+    const agreeing = JSON.stringify({ ip: "213.52.15.251", country_code: "NO", city: "Oslo" });
+    const result = await proxyVerify(deps({ makeRuntime: twoSources(agreeing) }), { profileId: "oslo-mobile" });
+    expect(result.verification.network.agreement.verdict).toBe("match");
+    expect(result.verification.network.corroborating?.city).toBe("Oslo");
+  });
+
+  it("skips it when told to, and then says nothing checked rather than nothing disagreed", async () => {
+    const result = await proxyVerify(deps(), { profileId: "oslo-mobile", corroborate: false });
+    expect(result.verification.network.corroborating).toBeNull();
+    expect(result.verification.network.agreement.verdict).toBe("unverified");
+  });
+
+  it("surfaces the São Paulo / New York shape of failure", async () => {
+    // The live finding: one IP, two databases, two countries. Either reading alone
+    // is confident and coherent.
+    const contradicting = JSON.stringify({ ip: "213.52.15.251", country_code: "US", city: "New York" });
+    const result = await proxyVerify(deps({ makeRuntime: twoSources(contradicting) }), { profileId: "oslo-mobile" });
+    expect(result.verification.network.agreement.verdict).toBe("mismatch");
+    expect(result.verification.trustworthy).toBe(false);
   });
 });

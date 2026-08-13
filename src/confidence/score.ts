@@ -25,11 +25,24 @@ const scoreAxes = (verdicts: readonly ("match" | "unverified" | "mismatch")[], w
   return total;
 };
 
-/** Network identity only: country carries three times the weight of city. */
+/**
+ * Network identity only: country carries three times the weight of city.
+ *
+ * Two conditions cap it, and they cap it equally, because they are the same
+ * failure of this axis's purpose. A proven country mismatch means we know we are
+ * in the wrong place. Two IP-geo databases disagreeing about the same IP means we
+ * do not know where we are at all — measured live, one Decodo ISP exit read as São
+ * Paulo by one source and New York by another. A run reporting `geo: 100` while
+ * its two sources contradict each other is exactly the confident, coherent lie
+ * this score exists to prevent.
+ *
+ * Source agreement is deliberately NOT a weighted term. It carries no location of
+ * its own; it decides whether the terms that do can be believed.
+ */
 export function networkConfidence(geo: GeoVerification): number {
   const raw = scoreAxes([geo.network.country.verdict, geo.network.city.verdict], [0.75, 0.25]);
-  const cap = geo.network.country.verdict === "mismatch" ? 0.4 : 1;
-  return Math.round(raw * cap * 100);
+  const unreliable = geo.network.country.verdict === "mismatch" || geo.network.agreement.verdict === "mismatch";
+  return Math.round(raw * (unreliable ? 0.4 : 1) * 100);
 }
 
 /**
@@ -93,7 +106,16 @@ export function scoreRun(input: ScoreInput): ConfidenceReport {
   const overall = Math.round(Math.min(weighted, weakest * 0.4 + weighted * 0.6));
 
   const notes: string[] = [];
-  if (geo < 100) notes.push(`network identity ${geo}: ${input.geo.network.country.reasons.join("; ")}`);
+  if (geo < 100) {
+    // The agreement reason is included ONLY when it fired. It is the note a reader
+    // acts on differently from every other one here — every other note says fix
+    // the site or fix the profile; this one says do not trust the number above it.
+    const why = [
+      ...input.geo.network.country.reasons,
+      ...(input.geo.network.agreement.verdict === "mismatch" ? input.geo.network.agreement.reasons : []),
+    ];
+    notes.push(`network identity ${geo}: ${why.join("; ")}`);
+  }
   if (browser < 100) {
     const why = [
       ...input.geo.browser.language.reasons,

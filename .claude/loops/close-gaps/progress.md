@@ -100,8 +100,11 @@ Three distinct targets in three distinct evidence directories, including
 collision case. And the refusals were exercised through the real CLI: bad URL line,
 two identities, unparseable duration and place flags on a matrix all exit 2.
 
-Docs: C-1 closed in `gaps.md`; PRD gains **R-90…R-93** (sweep inside the pool,
-list validated before launch, distinct run ids per page, identity by place).
+Docs: C-1 closed in `gaps.md`; PRD gains **R-101…R-104** (sweep inside the pool,
+list validated before launch, distinct run ids per page, identity by place). They
+were first written as R-90…R-93, which **already existed** — the retention block
+uses those numbers. Caught and renumbered in slice 2b; it is the same register
+corruption slice 1 fixed in `gaps.md` for a duplicated `D-1c`.
 
 Gate: lint clean · boundaries clean (94 modules / 371 deps) · **963 tests at 100%**
 lines/statements/functions (was 925) · e2e 18/18.
@@ -110,9 +113,83 @@ lines/statements/functions (was 925) · e2e 18/18.
 The flag is no longer the obstacle — the samplers build agent-browser regardless of
 `--engine` (D-1b, slice 4), so a long stickiness run through Decodo waits on that.
 
-## Next: slice 2b
+## Slice 2b · T10, two IP-geo sources with disagreement flagged — DONE
 
-T10 — two IP-geo sources with disagreement flagged. Already a live finding: one ISP
-exit resolved to São Paulo per Decodo's own endpoint and New York per ipinfo, same
-IP. An engine whose whole job is proving where a visitor is cannot treat one lookup
-as ground truth.
+`compareSources` + `withCorroboration` + a `NetworkSource` registry pairing an
+endpoint with its own parser. `proxy verify` corroborates by default; runs opt in
+with `--corroborate`, because a 430-page sweep is 430 extra probes and an engine
+that exhausts its own corroborating source reports `unverified` forever — the shape
+of failure an exhausted proxy already produced once.
+
+Three decisions are the substance, and each came from a measurement rather than a
+preference.
+
+**The second source is pinned to IPv4, and the first choice was wrong.** `ipwho.is`
+was picked for its richer payload, and a real Playwright run reported
+`88.88.18.137` from ipinfo and `2001:4656:e2f2:...` from ipwho.is — same laptop, no
+proxy. `ipinfo.io` publishes **no AAAA record**; a dual-stack corroborating host is
+read over IPv6 while the primary is read over IPv4, so the axis could never
+corroborate anything. Swapped to `ipv4.geojs.io`, which also has no AAAA. Both
+reads now use one address.
+
+**A different IP is never a disagreement.** It means a dual-stack route or a
+rotation between the reads, so the two locations describe different visitors.
+`unverified`, naming both possibilities.
+
+**Only country is compared.** City divergence between databases is normal and
+comparing it would fire on essentially every run — the engine manufacturing defects
+out of its own instrumentation, which is the failure it exists to detect in others.
+
+A country disagreement IS a `mismatch`, unlike a city mismatch elsewhere: the
+proven fact is not "the country is X" but "this reading is unreliable", and that is
+established rather than suspected. It caps `networkConfidence` at 0.4 — the same
+multiplier as a proven country mismatch, though the resulting numbers differ (40 vs
+10), because a mismatch also zeroes the country term while a disagreement leaves
+both readings standing and only caps the confidence in them.
+
+### Live results
+
+Direct egress, and the guard firing correctly:
+
+```
+sources  agreement=match  ipinfo NO/Tønsberg  vs  geojs NO/Rykkin
+         two independent sources agree the egress is in NO (cities differ — …
+         which is normal between databases and is not a defect)
+```
+
+Six Decodo residential markets, all corroborated on country:
+
+```
+berlin-desktop      agreement=match   ipinfo DE/Berlin      geojs DE/Berlin
+stockholm-desktop   agreement=match   ipinfo SE/Stockholm   geojs SE/Stockholm
+london-desktop      agreement=match   ipinfo GB/London      geojs GB/London
+copenhagen-desktop  agreement=match   ipinfo DK/Copenhagen  geojs DK/(none)
+tromso-desktop      agreement=match   ipinfo NO/Stavanger   geojs NO/Bærum
+bodo-desktop        agreement=match   ipinfo NO/Bodø        geojs NO/Bodø
+```
+
+**No country disagreement fired in six markets**, which is real good news about
+Decodo residential and is reported as such. The São Paulo / New York case could not
+be reproduced: it was on the ISP endpoint, whose plan is gone — that endpoint now
+reads nothing at all, and both sources correctly report `unverified` with "primary
+source read no country" rather than inventing a dispute out of a dead proxy.
+
+### The finding that changes a pending decision
+
+**`tromso-desktop`: ipinfo says Stavanger, geojs says Bærum — 400 km apart, same
+IP.** Two independent databases cannot agree on the city of one address. A **≥90%
+city-match bar measured against one database is measuring that database**, not the
+proxy. The threshold question in `test-plan.md` should be settled knowing this: the
+honest reading is that country is the measurable axis and city is corroborating
+evidence, not a pass/fail gate. Recorded in `gaps.md` C-4.
+
+Docs: C-4 extended with the measurement; PRD gains **R-105 / R-106**.
+
+Gate: lint clean · boundaries clean (94 modules / 372 deps) · **997 tests at 100%**
+lines/statements/functions · e2e 18/18.
+
+## Next: slice 2c
+
+J03, an internal-search journey, and clicking — no journey clicks anything today,
+so J03's "open result" and J05's "follow a contextual link" are not merely
+unwritten, the capability is unexercised end to end.

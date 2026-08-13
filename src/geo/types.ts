@@ -103,6 +103,26 @@ export interface GeoVerification {
      * than about a moment.
      */
     egressHeld: AxisResult;
+    /**
+     * A SECOND, independent IP-geo database's reading of the same IP, or null
+     * when nothing corroborated.
+     *
+     * Kept alongside the primary rather than merged into it. When two sources
+     * disagree the reader is left holding "which of these is wrong", and a report
+     * that shows one number cannot answer it.
+     */
+    corroborating: NetworkObservation | null;
+    /**
+     * Do the two sources agree about the country?
+     *
+     * Its own axis because it answers a different question from the others: not
+     * "are we where we asked to be" but "can that answer be believed". A Decodo
+     * ISP exit read as São Paulo by one database and New York by another, same IP
+     * — either reading alone is confident and coherent, and one is wrong.
+     * `unverified` until a second source has actually been read, because most
+     * commands do not pay for one.
+     */
+    agreement: AxisResult;
   };
   browser: {
     requested: { language: string; timezone: string; viewport: { width: number; height: number } };

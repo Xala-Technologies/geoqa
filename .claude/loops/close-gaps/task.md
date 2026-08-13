@@ -106,7 +106,7 @@ against, 90% is likely unreachable and the threshold is wrong.
       shell loop) and `--stability-window` reaching EXP-002 (C-1, T03/T04) — the
       only reason stickiness is still measured over 24s instead of the PRD's ten
       minutes. Also `--country`/`--city`/`--network` on the CLI as the owner spec'd.
-- [ ] **2b · T10: two IP-geo sources, disagreement flagged.** Already a live
+- [x] **2b · T10: two IP-geo sources, disagreement flagged.** Already a live
       finding — one ISP exit resolved to São Paulo per Decodo's endpoint and New
       York per ipinfo. An engine whose job is proving *where* a visitor is cannot
       treat one lookup as ground truth. Second source, and a third verdict when

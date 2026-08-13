@@ -108,6 +108,90 @@ export function withEgressHeld(verification: GeoVerification, egressHeld: AxisRe
   };
 }
 
+/**
+ * Do two independent IP-geo databases agree about where this IP is?
+ *
+ * The finding that produced this axis: one Decodo ISP exit resolved to **São
+ * Paulo** per Decodo's own endpoint and **New York** per ipinfo, for the same IP.
+ * Either reading alone is a confident, coherent answer, and one of them is wrong.
+ * An engine whose whole job is proving where a visitor is cannot treat a single
+ * lookup as ground truth, because a wrong database reads exactly like a wrong
+ * proxy — and the two demand opposite actions.
+ *
+ * Three things make this comparison narrower than it first looks.
+ *
+ * **A different IP is not a disagreement.** If the two reads returned different
+ * IPs they describe different visitors, and calling that a geographic
+ * disagreement would be a finding invented out of our own probing. Measured on
+ * this laptop with no proxy at all: `curl` reached ipinfo over IPv4 and ipwho.is
+ * over IPv6, same machine, two addresses. So a changed IP is `unverified` and
+ * names both possibilities — a dual-stack route or a rotation between the reads.
+ *
+ * **Only COUNTRY is compared.** City divergence between databases is normal, not
+ * a defect: this machine reads Tønsberg (ipinfo), Rykkin (geojs) and Oslo
+ * (ipwho.is) simultaneously. Comparing cities strictly would report a
+ * disagreement on essentially every run, which is the failure mode where an
+ * engine manufactures defects out of its own instrumentation. City divergence is
+ * recorded as a reason, never as a verdict.
+ *
+ * **A country disagreement IS a `mismatch`, unlike a city mismatch elsewhere.**
+ * `compareCity` refuses to call a city wrong because it cannot know. Here the
+ * proven fact is not "the country is X" — it is "the reading is unreliable", and
+ * that is established rather than suspected: two databases genuinely returned
+ * different countries. The verdict is about the agreement, not about the country.
+ */
+export function compareSources(primary: NetworkObservation, secondary: NetworkObservation): AxisResult {
+  if (primary.country === null) return unverified("primary source read no country to corroborate");
+  if (secondary.country === null) return unverified("corroborating source read no country");
+  if (primary.ip !== null && secondary.ip !== null && primary.ip !== secondary.ip) {
+    return unverified(
+      `the two sources saw different IPs (${primary.ip} and ${secondary.ip}) — a dual-stack route or a rotation between the reads, so their locations describe different visitors and cannot be compared`,
+    );
+  }
+  const a = primary.country.toUpperCase();
+  const b = secondary.country.toUpperCase();
+  if (a !== b) {
+    return mismatched(
+      `two IP-geo sources disagree about the same IP: ${a} and ${b}. One of them is wrong and the reading cannot be trusted — a wrong database looks exactly like a wrong proxy`,
+    );
+  }
+  const cityNote =
+    primary.city !== null && secondary.city !== null && primary.city.trim().toLowerCase() !== secondary.city.trim().toLowerCase()
+      ? ` (cities differ — ${primary.city} and ${secondary.city} — which is normal between databases and is not a defect)`
+      : "";
+  return matched(`two independent sources agree the egress is in ${a}${cityNote}`);
+}
+
+/**
+ * Fold a corroborating reading into a verification.
+ *
+ * Shaped like `withEgressHeld`, and for the same reason: it can only ever lower
+ * trust. Agreement between two databases does not make a mismatched country
+ * right; disagreement makes a matched one unreliable. The corroborating
+ * observation is kept alongside the primary rather than merged into it — a report
+ * has to be able to show both numbers, because "which of these two is wrong" is
+ * the question a reader is left holding.
+ */
+export function withCorroboration(
+  verification: GeoVerification,
+  corroborating: NetworkObservation,
+): GeoVerification {
+  const agreement = compareSources(verification.network.observed, corroborating);
+  return {
+    ...verification,
+    network: { ...verification.network, corroborating, agreement },
+    // Recomputed with the agreement as a CAP rather than a fifth weighted axis:
+    // the question it answers is not "how geographic is this run" but "can the
+    // geographic answer be believed at all", and a disagreement should pull a
+    // perfect four-axis score down rather than average into it.
+    confidence: geoConfidence(
+      [verification.network.country, verification.network.city, verification.browser.language, verification.browser.timezone],
+      [agreement],
+    ),
+    trustworthy: verification.trustworthy && agreement.verdict === "match",
+  };
+}
+
 const WEIGHT = { country: 0.45, city: 0.15, language: 0.2, timezone: 0.2 } as const;
 const SCORE: Record<AxisResult["verdict"], number> = { match: 1, unverified: 0.4, mismatch: 0 };
 
@@ -121,13 +205,20 @@ const SCORE: Record<AxisResult["verdict"], number> = { match: 1, unverified: 0.4
  * result is then CAPPED by the weakest axis, so a single proven mismatch can
  * never be averaged away by three good readings.
  */
-export function geoConfidence(axes: AxisResult[]): number {
+export function geoConfidence(axes: AxisResult[], caps: AxisResult[] = []): number {
   const weights = [WEIGHT.country, WEIGHT.city, WEIGHT.language, WEIGHT.timezone];
   let score = 0;
   for (const [i, axis] of axes.entries()) score += (weights[i] ?? 0) * (SCORE[axis.verdict] ?? 0);
-  const worst = axes.some((a) => a.verdict === "mismatch")
+  // `caps` carry no weight of their own and only ever pull the number DOWN. An
+  // axis belongs here when it answers "can this reading be believed" rather than
+  // "where are we" — source agreement is the first such axis: two databases
+  // disagreeing does not make a run 15% less Norwegian, it makes the whole
+  // geographic answer unreliable, and averaging that in would let three good
+  // readings hide it.
+  const all = [...axes, ...caps];
+  const worst = all.some((a) => a.verdict === "mismatch")
     ? 0.5
-    : axes.some((a) => a.verdict === "unverified")
+    : all.some((a) => a.verdict === "unverified")
       ? 0.85
       : 1;
   return Math.round(score * worst * 100);
@@ -156,6 +247,11 @@ export function verifyGeo(
       // be?", which is a question about one moment. Stability is a different
       // claim over a different span, and `withEgressHeld` folds it in later.
       egressHeld: unverified("egress stability is only known once the journey has finished"),
+      // No second opinion unless one was paid for. `withCorroboration` fills both
+      // in; until then the honest state is that nothing checked, which is neither
+      // agreement nor disagreement.
+      corroborating: null,
+      agreement: unverified("no corroborating IP-geo source was read"),
     },
     browser: {
       requested: {

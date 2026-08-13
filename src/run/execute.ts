@@ -131,7 +131,7 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
     if (!tracing.ok) log(`warning: tracing unavailable — ${tracing.failure.detail}`);
 
     log(`geo: verifying both axes for ${profile.id}`);
-    const geo = await verifyEnvironment(runtime, profile, options.spec.verifyEndpoint);
+    const geo = await verifyEnvironment(runtime, profile, options.spec.verifyEndpoint, options.spec.corroborateGeo);
     log(`geo: confidence ${geo.confidence}${geo.trustworthy ? "" : " (not fully verified)"}`);
 
     // A verified-wrong egress records a provider failure. A verified-right one

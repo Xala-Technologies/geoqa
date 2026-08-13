@@ -227,9 +227,28 @@ Usage:
       which the run path writes and this command does not.
 
   geoqa proxy verify --geo <profile> [--provider direct|http-proxy]
-                     [--engine agent-browser|playwright] [--json]
+                     [--engine agent-browser|playwright] [--no-corroborate]
+                     [--json]
       Open a session and report the observed egress identity and browser
       environment, on both axes, with a per-axis verdict.
+
+      A SECOND, independent IP-geo database (ipv4.geojs.io) is read by default and
+      the two readings are reported side by side. Measured: one Decodo ISP exit resolved
+      to Sao Paulo per Decodo's own endpoint and New York per ipinfo, for the same
+      IP. An engine whose whole job is proving where a visitor is cannot treat one
+      lookup as ground truth, because a wrong database looks exactly like a wrong
+      proxy and the two need opposite fixes. Disagreement about the COUNTRY is a
+      mismatch and caps the run's network-identity confidence; disagreement about
+      the city is recorded and is never a defect, because databases name the
+      exchange (this machine reads Tonsberg, Rykkin and Oslo simultaneously).
+      Different IPs across the two reads is neither — it means a dual-stack route
+      or a rotation, so the two locations describe different visitors and are not
+      compared at all. That is why the second source is pinned to IPv4: ipinfo.io
+      publishes no AAAA record, and a dual-stack corroborating host is read over
+      IPv6 by any dual-stack client, which makes the axis permanently unverified.
+      Measured, not assumed.
+
+      --no-corroborate skips the second lookup.
 
   geoqa profile list [--json]
   geoqa journey list [--json]
@@ -237,7 +256,7 @@ Usage:
   geoqa journey run --url <url> --geo <profile> --journey <id>
                     [--provider direct|http-proxy]
                     [--engine agent-browser|playwright] [--seed <n>]
-                    [--repeat <n>] [--var k=v]... [--json]
+                    [--repeat <n>] [--var k=v]... [--corroborate] [--json]
       One run, start to finish, in this process. The playwright engine takes
       locale, timezone, coordinates and viewport as context options and GRANTS
       the geolocation permission, so it needs no locale init script.
@@ -246,6 +265,13 @@ Usage:
       Omitted, it is derived from the run id: every run paces differently, and
       any one run replays exactly. Take the seed from a failing run's run.json
       to repeat exactly what it did.
+
+      --corroborate reads a second IP-geo database, as proxy verify does by
+      default. OFF here on purpose: this is one extra probe per RUN, and a
+      430-page sweep would spend 430 of them against a free endpoint's monthly
+      allowance. An engine that exhausts its own corroborating source reports
+      unverified for every later run, which is the failure an exhausted proxy
+      already produced once.
 
       --repeat runs the journey n times (default 1) in ONE browser and ONE
       network session, and MEASURES flakiness instead of masking it. The journey
@@ -268,7 +294,7 @@ Usage:
                    [--provider direct|http-proxy]
                    [--engine agent-browser|playwright] [--seed <n>]
                    [--repeat <n>] [--var k=v]... [--headed]
-                   [--dry-run] [--allow-writes] [--json]
+                   [--dry-run] [--allow-writes] [--corroborate] [--json]
       Market x device x journey, in this process, with a bounded pool. --market
       and --journey are required and both accept commas and repetition;
       --device defaults to mobile,desktop, because a market covered on one

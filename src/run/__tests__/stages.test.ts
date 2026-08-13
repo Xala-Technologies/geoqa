@@ -21,7 +21,8 @@ import {
   verifyEgressHeld,
   verifyEnvironment,
 } from "../stages.js";
-import { bad, fakeRuntime, ok } from "./fake-runtime.js";
+import { bad, fakeRuntime, ok, IPINFO_OSLO } from "./fake-runtime.js";
+import type { BrowserRuntime } from "../../browser/types.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const profilePath = path.join(repoRoot, "profiles", "oslo-mobile.yaml");
@@ -43,6 +44,7 @@ const spec = (over: Partial<RunSpec> = {}): RunSpec => ({
   runId: "run_1",
   engine: "agent-browser",
   seed: 7,
+  corroborateGeo: false,
   target: "https://digilist.no",
   profilePath,
   journeyPath,
@@ -565,5 +567,64 @@ describe("applyDeviceProfile", () => {
     expect(warnings).toHaveLength(2);
     expect(warnings[0]).toContain('could not emulate device "iPhone 15 Pro"');
     expect(warnings[1]).toContain("could not set viewport 390×844");
+  });
+});
+
+describe("verifyEnvironment corroboration", () => {
+  /** ipinfo first, then geojs — the order `verifyEnvironment` reads them in. */
+  const twoSources = (second: string): BrowserRuntime => {
+    const bodies = [IPINFO_OSLO, second];
+    let call = 0;
+    return fakeRuntime({ getText: () => Promise.resolve(ok(bodies[call++] ?? "")) });
+  };
+
+  it("does NOT read a second source unless asked", async () => {
+    // Off by default here: this runs once per RUN, and a 430-page sweep would spend
+    // 430 extra probes against a free endpoint's monthly allowance.
+    const opened: string[] = [];
+    const runtime = fakeRuntime({
+      open: (url) => {
+        opened.push(url);
+        return Promise.resolve(ok({ url, title: "T", targetId: "t", launchHash: "h", browserLaunched: false }));
+      },
+    });
+    const geo = await verifyEnvironment(runtime, profile(), "https://ipinfo.io/json");
+    expect(opened).toEqual(["https://ipinfo.io/json"]);
+    expect(geo.network.corroborating).toBeNull();
+    expect(geo.network.agreement.verdict).toBe("unverified");
+  });
+
+  it("reads the second source and reports agreement when asked", async () => {
+    const agreeing = JSON.stringify({ ip: "213.52.15.251", country_code: "NO", city: "Oslo" });
+    const geo = await verifyEnvironment(twoSources(agreeing), profile(), "https://ipinfo.io/json", true);
+    expect(geo.network.agreement.verdict).toBe("match");
+    expect(geo.network.corroborating?.country).toBe("NO");
+  });
+
+  it("reports a country disagreement, and it costs the run its trustworthiness", async () => {
+    const contradicting = JSON.stringify({ ip: "213.52.15.251", country_code: "US", city: "New York" });
+    const geo = await verifyEnvironment(twoSources(contradicting), profile(), "https://ipinfo.io/json", true);
+    expect(geo.network.agreement.verdict).toBe("mismatch");
+    expect(geo.trustworthy).toBe(false);
+    // Both readings survive, because "which of these is wrong" is the question the
+    // reader is left holding.
+    expect(geo.network.observed.country).toBe("NO");
+    expect(geo.network.corroborating?.country).toBe("US");
+  });
+
+  it("does not manufacture a disagreement out of a second source that could not answer", async () => {
+    // The endpoint answers a bad path with openresty HTML. Read as "no country" it
+    // would disagree with every primary reading forever.
+    const failed = "<html><title>404 Not Found</title></html>";
+    const geo = await verifyEnvironment(twoSources(failed), profile(), "https://ipinfo.io/json", true);
+    expect(geo.network.agreement.verdict).toBe("unverified");
+    expect(geo.network.agreement.reasons[0]).toContain("corroborating source read no country");
+  });
+
+  it("is carried on the SPEC, so a durable run and a local run corroborate identically", () => {
+    // Same reason `seed` and `engine` are on the spec: a Temporal Activity rebuilds
+    // every stage from serialisable arguments.
+    expect(spec({ corroborateGeo: true }).corroborateGeo).toBe(true);
+    expect(spec().corroborateGeo).toBe(false);
   });
 });
