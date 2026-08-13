@@ -34,8 +34,8 @@ export function Trends({ view }: { view: DashboardView }): JSX.Element {
       </div>
 
       <div className="filters">
-        <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--label)" }}>
-          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} style={{ minWidth: 0 }} />
+        <label className="check">
+          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
           show series with no direction
         </label>
         <span className="spacer">

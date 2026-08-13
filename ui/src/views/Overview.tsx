@@ -105,9 +105,9 @@ export function Overview({ view }: { view: DashboardView }): JSX.Element {
                 <th>Started</th>
                 <th>Market</th>
                 <th>Journey</th>
+                <th>Page</th>
                 <th className="num">LCP</th>
                 <th className="num">Conf</th>
-                <th>Page</th>
               </tr>
             </thead>
             <tbody>
@@ -119,13 +119,15 @@ export function Overview({ view }: { view: DashboardView }): JSX.Element {
                   <td className="mono dim">{r.startedAt.slice(0, 19).replace("T", " ")}</td>
                   <td className="mono">{r.marketId}</td>
                   <td className="dim">{r.journeyId}</td>
+                  <td className="dim" title={r.target}>
+                    {r.target.replace(/^https?:\/\//, "")}
+                  </td>
                   <td className="num">
                     <MeasuredValue value={r.vitals.lcp} />
                   </td>
                   <td className="num">
                     <MeasuredValue value={r.confidence.overall} />
                   </td>
-                  <td className="mono dim">{r.target}</td>
                 </tr>
               ))}
             </tbody>
@@ -199,7 +201,7 @@ function Attention({ view }: { view: DashboardView }): JSX.Element {
       <tbody>
         {items.map((i) => (
           <tr key={i.label + i.detail}>
-            <td style={{ width: 110 }}>
+            <td style={{ width: 120 }}>
               <span className={`pill ${i.tone}`}>{i.label}</span>
             </td>
             <td>{i.detail}</td>

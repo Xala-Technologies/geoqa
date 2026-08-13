@@ -123,7 +123,7 @@ export function Coverage({ view }: { view: DashboardView }): JSX.Element {
                     <td className="mono">{g.target}</td>
                     <td>
                       {g.missing.map((m) => (
-                        <span key={m} className="tag" style={{ marginRight: 6, color: "var(--warn)", borderColor: "#4a3a12" }}>
+                        <span key={m} className="tag" style={{ marginRight: "var(--s-2)", color: "var(--warn)", borderColor: "var(--warn)" }}>
                           {m}
                         </span>
                       ))}

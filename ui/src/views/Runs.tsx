@@ -62,6 +62,7 @@ export function Runs({ view }: { view: DashboardView }): JSX.Element {
                 <th>Started</th>
                 <th>Market</th>
                 <th>Journey</th>
+                <th>Page</th>
                 <th className="num">LCP</th>
                 <th className="num">CLS</th>
                 <th className="num">TTFB</th>
@@ -69,7 +70,6 @@ export function Runs({ view }: { view: DashboardView }): JSX.Element {
                 <th className="num">Conf</th>
                 <th>Country</th>
                 <th>City</th>
-                <th>Page</th>
               </tr>
             </thead>
             <tbody>
@@ -99,6 +99,9 @@ function Row({ r }: { r: RunView }): JSX.Element {
       <td className="mono dim">{r.startedAt.slice(0, 19).replace("T", " ")}</td>
       <td className="mono">{r.marketId}</td>
       <td className="dim">{r.journeyId}</td>
+      <td>
+        <Page url={r.target} />
+      </td>
       <td className="num">
         <MeasuredValue value={r.vitals.lcp} />
       </td>
@@ -120,8 +123,23 @@ function Row({ r }: { r: RunView }): JSX.Element {
       <td>
         <Verdict value={r.geo.city} />
       </td>
-      <td className="mono dim">{r.target}</td>
     </tr>
+  );
+}
+
+/**
+ * A URL shown without its scheme.
+ *
+ * Every target in this table is http(s), so the prefix is eight characters of noise repeated on
+ * every row — and it pushes the one column that identifies a row off the side of a wide table.
+ * The full URL stays in the title, because a shortened identifier a reader cannot recover is a
+ * different problem from a long one.
+ */
+function Page({ url }: { url: string }): JSX.Element {
+  return (
+    <span className="dim" title={url}>
+      {url.replace(/^https?:\/\//, "")}
+    </span>
   );
 }
 
