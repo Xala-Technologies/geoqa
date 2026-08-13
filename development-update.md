@@ -19,6 +19,50 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — The dashboard became an application, and running it found a bug
+
+Asked to run the app, I did — against 32 real runs across `xala.no` and `digilist.no` —
+and it immediately showed something no unit test could.
+
+### The dashboard computed coverage gaps and rendered none of them (C-19)
+
+`analyseSite` has computed `coverageGaps` since it was written, with a comment saying
+exactly why: *a page nobody measured in Bodø is not a page that works in Bodø, and a
+report that silently omitted it would read as full coverage.*
+
+`App.tsx` rendered `regressions`, `geographicallyDivergent`, `trends` and
+`widestLatencyGaps` — and not that one. **Both live sites had never been measured in
+`porsgrunn`, and the dashboard showed a clean bill of health.** The field written to
+prevent exactly that outcome was the field being dropped.
+
+Every unit test passed, because each asserted what the component does.
+
+### And it is a real application now
+
+Five routed views behind a fixed chassis — header carrying the three global truths, left
+rail for wayfinding with counts that mean *somebody has to look at this*:
+
+- **Overview** — gauges, a verdict split encoded as form as well as number, and a "needs
+  attention" list ranked by how badly a reader would be misled by missing it
+- **Runs** — filterable by market, journey, verdict and free text
+- **Geography** — divergence and the latency spread, with per-market bars
+- **Coverage** — the page × market matrix that fixes C-19
+- **Trends** — every series including the ones that did not qualify for a direction
+
+Designed as an *instrument* rather than a dashboard, because that is what the product is:
+the reading is the brightest thing on the panel, and `--void` — which carries ERROR,
+`unverified` and "not measured" alike — is deliberately the dimmest colour in the palette.
+Our blindness must never out-shout a measurement.
+
+Three signals separate a reading from an absence: colour, slant and a dotted underline.
+Each survives a different degradation — colour fails a colourblind reader, slant survives
+greyscale, the underline survives both.
+
+The trend trace draws a gap as a hollow slot rather than closing over it or drawing it at
+zero, which would fabricate exactly the thing the reader came to look at.
+
+---
+
 ## 2026-08-13 — A durable run was split across four browsers, and its evidence described none of them
 
 Last entry ended with *"no durable sweep has run against a real browser and a real site."*

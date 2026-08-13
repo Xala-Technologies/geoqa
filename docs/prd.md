@@ -509,6 +509,12 @@ unmeasured guess until EXP-007 runs.
 - **R-177** A claim about "the engine" is a claim about **every** engine. A fact true of
   one adapter and recorded as a property of the model is invisible from above the seam —
   which is the seam's purpose — and stays wrong until something measures the other one.
+- **R-178** Every field the view model computes is RENDERED somewhere, or the computing is
+  theatre. `coverageGaps` existed, was correct, and was dropped by the UI — so a dashboard
+  built to refuse silent omission silently omitted the one field written to prevent it.
+- **R-179** The console is a multi-view application, not a page. Wayfinding carries the
+  counts that mean "somebody has to look at this", and a count of zero is not rendered: a
+  badge reading 0 competes with the badges that mean something.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never

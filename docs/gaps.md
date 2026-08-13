@@ -1551,6 +1551,38 @@ and a market's reading is the MEDIAN across its repeats rather than the latest, 
 single slow run is noise and "latest" means whichever finished last.
 
 
+### C-19 · CLOSED — the dashboard computed coverage gaps and rendered none of them
+
+Found by running the app against real data, which is the only way it could have been
+found: every unit test passed, because each asserted what the component does.
+
+`analyseSite` has computed `coverageGaps` since it was written, with a comment stating
+exactly why — *a page nobody measured in Bodø is not a page that works in Bodø, and a
+report that silently omitted it would read as full coverage.* `App.tsx` rendered
+`regressions`, `geographicallyDivergent`, `trends` and `widestLatencyGaps`, and not that
+one.
+
+Measured against 32 real runs across two live sites: **`digilist.no` and `xala.no` had
+never been measured in `porsgrunn`**, and the dashboard showed a clean bill of health.
+The field written to prevent exactly that outcome was the field being dropped.
+
+**Closed with a view rather than a row.** A list of gaps says what is missing; a page ×
+market MATRIX says whether the hole is a market nobody covers or a page nobody sweeps,
+and those have different fixes. An unmeasured cell reads `never measured` in the same
+muted italic every absence in this UI uses, with a title saying it is unknown rather than
+clean — never blank, and never a dash that could be mistaken for "fine".
+
+The gap count also reaches the sidebar, because a number nobody can see is a number
+nobody acts on.
+
+**Guarded, because the type mirror already passed while this was broken.**
+`view.test.ts` checked that `types.ts` DECLARES every field the view model produces —
+and declaring is not rendering, which is the whole of this defect. It now also reads the
+UI source and requires each field to be named by some component. Verified by mutation:
+removing `coverageGaps` from the UI fails with *"site.coverageGaps is declared but no
+component reads it"*. A behavioural test cannot catch this class — every component test
+asserts what its component does, and a component that does not exist has no test to fail.
+
 ### C-13 · CLOSED — an empty text read is confirmed, then refused rather than blamed on the page
 
 **Found by pointing the engine at a second real site**, which is exactly what

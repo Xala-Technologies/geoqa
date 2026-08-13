@@ -1,46 +1,573 @@
-/* An absence must be visibly NOT a number. That is the only rule here that matters. */
+/**
+ * The instrument chassis.
+ *
+ * geoqa measures sites from inside real markets, and its whole ethic is refusing to confuse
+ * "we could not look" with "it is fine". So this is styled as measurement equipment rather than
+ * as a dashboard: the READING is the brightest thing on the panel, our blindness is the dimmest,
+ * and the two are never the same colour, weight or slant.
+ *
+ * Two rules that are not decoration:
+ *
+ * 1. **Semantic colour is separate from the accent.** The accent marks where you are and what
+ *    responds to a click. Pass/warn/fail/void mean verdicts. If the accent were green, a
+ *    selected nav item and a passing run would carry the same signal.
+ * 2. **`--void` is the dimmest colour in the palette**, and it carries ERROR, `unverified` and
+ *    "not measured" alike. Those are all cases where the engine could not see; none of them is
+ *    the site failing, and none may borrow the failure colour.
+ */
+
 :root {
-  color-scheme: light dark;
-  --ink: #16181d;
-  --faint: #6b7280;
-  --line: #e5e7eb;
-  --good: #0f7b3d;
-  --warn: #92610a;
-  --bad: #b4232a;
-  --unknown: #4b5563;
-  --paper: #fff;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --ink: #e8eaed; --faint: #9aa2ad; --line: #2b2f36; --paper: #14161a;
-          --good: #4ade80; --warn: #fbbf24; --bad: #f87171; --unknown: #9aa2ad; }
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--paper); color: var(--ink);
-       font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; }
-main { max-width: 1400px; margin: 0 auto; padding: 24px; }
-h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
-h2 { font-size: 15px; margin: 32px 0 4px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); }
-.hint { color: var(--faint); margin: 4px 0 12px; }
-.warning { color: var(--warn); margin: 4px 0; }
-.error { color: var(--bad); }
-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-th { text-align: left; font-weight: 600; font-size: 12px; color: var(--faint);
-     text-transform: uppercase; letter-spacing: 0.04em; padding: 6px 8px;
-     border-bottom: 1px solid var(--line); white-space: nowrap; }
-td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  /* Ground and panel: cool, near-black, never pure — pure black flattens the hairlines that do
+     most of the structural work here. */
+  --ink: #0a0e13;
+  --panel: #131a23;
+  --panel-2: #182130;
+  --rule: #212c3a;
+  --rule-soft: #1a2330;
 
-/* The distinction the whole view model exists to preserve. */
-.measured { font-variant-numeric: tabular-nums; }
-.unmeasured { color: var(--faint); font-style: italic; cursor: help; }
+  /* The measured value is the brightest thing on screen. Everything else recedes from it. */
+  --readout: #e6edf3;
+  --label: #8e99a8;
+  --faint: #626d7c;
 
-.pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
-        font-weight: 600; border: 1px solid currentColor; white-space: nowrap; }
-.pill.good { color: var(--good); }
-.pill.warn { color: var(--warn); }
-.pill.bad { color: var(--bad); }
-.pill.unknown { color: var(--unknown); }
-.bad-text { color: var(--bad); }
-.page { padding: 8px 0; border-bottom: 1px solid var(--line); }
-.markets { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
-.market { color: var(--faint); font-size: 12px; }
+  /* Instrument teal: wayfinding and interaction only. It is not any semantic colour, so it can
+     never be misread as a verdict. */
+  --accent: #4cc9d4;
+  --accent-deep: #1b5d64;
+
+  --pass: #56d98b;
+  --warn: #e8b341;
+  --fail: #f0736e;
+  /* Deliberately the dimmest. See rule 2 above. */
+  --void: #7c8896;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+
+  --rail: 224px;
+  --bar: 52px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--readout);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Chassis ────────────────────────────────────────────────────────────── */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--rail) 1fr;
+  grid-template-rows: var(--bar) 1fr;
+  grid-template-areas: "brand bar" "rail readout";
+  min-height: 100vh;
+}
+
+.brand {
+  grid-area: brand;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+  background: var(--panel);
+}
+
+.brand svg {
+  flex: none;
+}
+
+.brand-name {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.brand-name b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* The status bar carries the three global truths at all times. A console that made you navigate
+   to learn whether the data is stale has already failed at being a console. */
+.bar {
+  grid-area: bar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel);
+}
+
+.bar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--readout);
+}
+
+.bar-stats {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.stat {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.stat-k {
+  color: var(--faint);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stat-v {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--readout);
+}
+
+.rail {
+  grid-area: rail;
+  border-right: 1px solid var(--rule);
+  background: var(--panel);
+  padding: 12px 9px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.rail-group {
+  padding: 15px 11px 5px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 11px;
+  border-radius: 5px;
+  color: var(--label);
+  text-decoration: none;
+  font-size: 13.5px;
+  border-left: 2px solid transparent;
+}
+
+.nav:hover {
+  background: var(--panel-2);
+  color: var(--readout);
+}
+
+.nav[aria-current="page"] {
+  background: var(--panel-2);
+  color: var(--readout);
+  border-left-color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.count {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+
+.count.alert {
+  color: var(--fail);
+}
+
+.readout {
+  grid-area: readout;
+  padding: 22px 24px 60px;
+  max-width: 1560px;
+  min-width: 0;
+}
+
+/* ── Headings and panels ────────────────────────────────────────────────── */
+
+.head {
+  margin-bottom: 18px;
+}
+
+.head h2 {
+  margin: 0 0 5px;
+  font-size: 18px;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+}
+
+.hint {
+  margin: 0;
+  color: var(--label);
+  font-size: 12.5px;
+  line-height: 1.6;
+  max-width: 82ch;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.panel-head {
+  padding: 11px 15px;
+  border-bottom: 1px solid var(--rule-soft);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.panel-head h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.panel-head .hint {
+  font-size: 11.5px;
+}
+
+.panel-body {
+  padding: 14px 15px;
+}
+
+/* ── Gauges ─────────────────────────────────────────────────────────────── */
+
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.gauge {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 13px 15px 14px;
+}
+
+.gauge-k {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.gauge-v {
+  font-family: var(--mono);
+  font-size: 25px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+  margin-top: 7px;
+  line-height: 1.1;
+}
+
+.gauge-sub {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--label);
+}
+
+/* A thin bar under a gauge: the split it summarises, encoded as form as well as number. */
+.meter {
+  display: flex;
+  height: 3px;
+  margin-top: 10px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--rule-soft);
+}
+
+.meter span {
+  display: block;
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+
+.scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+
+td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--rule-soft);
+  white-space: nowrap;
+}
+
+tbody tr:hover td {
+  background: var(--panel-2);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.dim {
+  color: var(--label);
+}
+
+/* ── The distinction the whole UI exists for ────────────────────────────── */
+
+/**
+ * THREE signals separate a reading from an absence — colour, slant and a dotted underline —
+ * because each survives a different kind of degradation: colour fails a colourblind reader,
+ * slant survives greyscale, and the underline survives both. A dashboard is where a number gets
+ * believed, and `0` standing in for a null LCP would undo the entire verdict model at the last
+ * step.
+ */
+.measured {
+  color: var(--readout);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.unmeasured {
+  color: var(--void);
+  font-style: italic;
+  font-size: 12px;
+  border-bottom: 1px dotted currentColor;
+  cursor: help;
+}
+
+.pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+
+.pill.good {
+  color: var(--pass);
+}
+.pill.warn {
+  color: var(--warn);
+}
+.pill.bad {
+  color: var(--fail);
+}
+.pill.unknown {
+  color: var(--void);
+}
+
+.tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--rule);
+  color: var(--label);
+  font-family: var(--mono);
+}
+
+.note {
+  display: flex;
+  gap: 10px;
+  padding: 10px 13px;
+  border: 1px solid #4a3a12;
+  background: #1a1508;
+  border-radius: 7px;
+  color: #f0d38f;
+  font-size: 12px;
+  margin-bottom: 10px;
+  line-height: 1.6;
+}
+
+.note::before {
+  content: "!";
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--warn);
+  flex: none;
+}
+
+.empty {
+  padding: 30px 16px;
+  text-align: center;
+  color: var(--label);
+  font-size: 12.5px;
+}
+
+.empty strong {
+  display: block;
+  color: var(--readout);
+  margin-bottom: 4px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* ── Filters ────────────────────────────────────────────────────────────── */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 13px;
+}
+
+.filters input,
+.filters select {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  color: var(--readout);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+}
+
+.filters input {
+  min-width: 250px;
+  font-family: var(--mono);
+}
+
+.filters input::placeholder {
+  color: var(--faint);
+}
+
+.filters .spacer {
+  margin-left: auto;
+  color: var(--label);
+  font-size: 12px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Instrument trace ───────────────────────────────────────────────────── */
+
+/**
+ * A series as fixed-width ticks, with a GAP drawn as a hollow slot.
+ *
+ * The gap is the point. A run that measured nothing contributes an absence, and a trace that
+ * closed over it — or drew it at zero — would fabricate exactly the thing the reader came to
+ * look at. The endpoint is emphasised because "where it ended up" is the question being asked.
+ */
+.trace {
+  display: inline-flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 28px;
+}
+
+.trace i {
+  width: 4px;
+  min-height: 2px;
+  background: var(--accent-deep);
+  border-radius: 1px;
+  display: block;
+}
+
+.trace i.last {
+  background: var(--accent);
+}
+
+.trace i.gap {
+  background: transparent;
+  border-left: 1px dotted var(--void);
+  height: 100% !important;
+  border-radius: 0;
+}
+
+.load {
+  padding: 60px 24px;
+  color: var(--label);
+  font-family: var(--mono);
+}
+
+.err {
+  margin: 24px;
+  padding: 16px;
+  border: 1px solid #4a2020;
+  background: #1a0e0e;
+  border-radius: 8px;
+  color: #f0a8a4;
+  font-size: 13px;
+}
+
+@media (max-width: 980px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: var(--bar) auto 1fr;
+    grid-template-areas: "brand" "bar" "readout";
+  }
+  .rail {
+    display: none;
+  }
+  .readout {
+    padding: 16px;
+  }
+}

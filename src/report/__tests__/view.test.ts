@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -185,5 +185,35 @@ describe("the UI's mirrored types do not drift", () => {
     expect(uiTypes).toContain("measured: true");
     expect(uiTypes).toContain("measured: false");
     expect(uiTypes).toContain('text: "not measured"');
+  });
+
+  /**
+   * Declaring a field is not rendering it, and that gap is what gaps C-19 was.
+   *
+   * `coverageGaps` was computed correctly, mirrored correctly into `types.ts`, and then read by
+   * no component — so the test above passed while the dashboard silently dropped the one field
+   * written to stop a report reading as full coverage. Two live sites had never been measured in
+   * `porsgrunn` and the dashboard showed a clean bill of health.
+   *
+   * A behavioural test cannot catch this: every component test asserts what its component does,
+   * and a component that does not exist has no test to fail. So this reads the UI SOURCE and
+   * requires each field to be named somewhere outside the type mirror. It is a coarse check —
+   * naming a field is not the same as displaying it well — but it is exactly as strong as the
+   * defect requires, and it fails at the moment a field is added without a home.
+   */
+  it("RENDERS every field it declares, because computing one nothing reads is theatre", () => {
+    const uiDir = path.join(repoRoot, "ui", "src");
+    const sources = readdirSync(uiDir, { recursive: true, encoding: "utf8" })
+      .filter((f) => (f.endsWith(".tsx") || f.endsWith(".ts")) && !f.endsWith("types.ts"))
+      .map((f) => readFileSync(path.join(uiDir, f), "utf8"))
+      .join("\n");
+
+    const view = toDashboardView([record()], "now");
+    for (const key of Object.keys(view)) {
+      expect(sources, `DashboardView.${key} is declared but no component reads it`).toContain(key);
+    }
+    for (const key of Object.keys(view.site)) {
+      expect(sources, `site.${key} is declared but no component reads it`).toContain(key);
+    }
   });
 });
