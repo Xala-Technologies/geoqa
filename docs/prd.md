@@ -172,6 +172,17 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-151** A trend **never interpolates**. A run that did not measure a metric contributes a
+  gap, not an estimated value, because drawing through it fabricates the one thing the reader is
+  looking at. Gaps are counted and reported, so a trend computed from six of forty runs cannot
+  read as a trend over forty.
+- **R-152** A direction is **refused below a minimum sample** and below BOTH a relative and an
+  absolute floor. "Getting worse" from three runs is noise with a narrative; a 14% move on a
+  1ms reading is 0.15ms, which nobody has ever acted on. A dashboard that cries wolf is one
+  nobody opens.
+- **R-153** A metric where **higher is better** does not share the comparison with metrics where
+  lower is. Confidence rising is an improvement, and reporting it as "worsening" would be the
+  kind of inversion a boolean argument at a call site makes inevitable.
 - **R-147** The UI is **static** and read-only: one JSON file written beside the evidence,
   fetched by an app that is a directory. No server means no port, no auth surface and nothing
   to keep running. Electron was declined on the recorded criterion — nothing needs filesystem

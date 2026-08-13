@@ -18,30 +18,12 @@
 import type { RunRecord } from "../history/records.js";
 import { analyseSite, marketOf, type SiteReport } from "../analysis/site.js";
 import { findRegressions, summariseHistory, type Regression } from "../history/store.js";
+import { buildConfidenceSeries, buildSeries, notableTrends, type TrendSeries } from "./trends.js";
+import { measured, ms, ratio, score, unmeasured, type Measured } from "./measured.js";
 
-/**
- * A value that may not exist, carrying WHY when it does not.
- *
- * The shape is the safeguard. A renderer writing `{value.text}` gets "not measured" for an
- * absence rather than "0" or "null" or "NaN", and a renderer wanting to style the two
- * differently switches on `measured`.
- */
-export type Measured<T> = { measured: true; value: T; text: string } | { measured: false; reason: string; text: "not measured" };
-
-export const measured = <T,>(value: T, text: string): Measured<T> => ({ measured: true, value, text });
-export const unmeasured = <T,>(reason: string): Measured<T> => ({ measured: false, reason, text: "not measured" });
-
-/** Milliseconds, or an explicit absence. Never 0 standing in for "unread". */
-export const ms = (value: number | null, reason = "the browser reported no value"): Measured<number> =>
-  value === null ? unmeasured(reason) : measured(value, `${Math.round(value)}ms`);
-
-/** A unitless metric such as CLS, where 0 is a REAL and good reading. */
-export const ratio = (value: number | null, reason = "the browser reported no value"): Measured<number> =>
-  value === null ? unmeasured(reason) : measured(value, String(Math.round(value * 1000) / 1000));
-
-/** A 0..100 score. */
-export const score = (value: number | null, reason = "not computed"): Measured<number> =>
-  value === null ? unmeasured(reason) : measured(value, String(Math.round(value)));
+// Re-exported so `report/view.js` stays the single import for a consumer assembling a view —
+// the split exists to break a cycle, not to make callers know about it.
+export { measured, ms, ratio, score, unmeasured, type Measured };
 
 export interface RunView {
   runId: string;
@@ -128,6 +110,16 @@ export function toRunView(record: RunRecord): RunView {
 export interface DashboardView {
   generatedAt: string;
   runs: RunView[];
+  /**
+   * Metrics over time, and only the series with a REAL direction.
+   *
+   * `insufficient-data` and `stable` series are computed and then filtered out of the
+   * headline, because a dashboard leading with forty rows of "not enough data" trains its
+   * reader to scroll past the four that matter. The full set stays available in
+   * `allTrends` for anybody who wants it.
+   */
+  trends: TrendSeries[];
+  allTrends: TrendSeries[];
   summary: {
     total: number;
     byVerdict: Record<string, number>;
@@ -150,11 +142,23 @@ export interface DashboardView {
  */
 export function toDashboardView(records: RunRecord[], generatedAt: string, warnings: string[] = []): DashboardView {
   const summary = summariseHistory(records);
+  // Every trendable metric. `confidence` goes through its own builder because lower is
+  // better for all the others and sharing the comparison would report a site whose readings
+  // became MORE trustworthy as "worsening".
+  const allTrends = [
+    ...buildSeries(records, "lcp"),
+    ...buildSeries(records, "cls"),
+    ...buildSeries(records, "ttfb"),
+    ...buildSeries(records, "inp"),
+    ...buildConfidenceSeries(records),
+  ];
   return {
     generatedAt,
     // Newest first: a dashboard is read from the top, and the most recent run is what
     // somebody opened it to see.
     runs: [...records].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).map(toRunView),
+    trends: notableTrends(allTrends),
+    allTrends,
     summary: {
       total: summary.runs,
       byVerdict: summary.byVerdict,
