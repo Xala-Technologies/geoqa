@@ -177,8 +177,23 @@ describe("the UI's mirrored types do not drift", () => {
     const view = toDashboardView([record()], "now");
     for (const key of Object.keys(view)) expect(uiTypes, `DashboardView.${key}`).toContain(`${key}:`);
     for (const key of Object.keys(view.runs[0] as object)) expect(uiTypes, `RunView.${key}`).toContain(`${key}:`);
-    for (const key of Object.keys((view.runs[0] as { vitals: object }).vitals)) expect(uiTypes, `vitals.${key}`).toContain(key);
-    for (const key of Object.keys((view.runs[0] as { confidence: object }).confidence)) expect(uiTypes, `confidence.${key}`).toContain(key);
+    // Every nested key is matched WITH its colon, the same way the two loops above are.
+    //
+    // The bare-`key` form these used to take matches a substring, so renaming `labels` to
+    // `checkLabels` in the mirror kept passing — the new name contains the old one. Verified by
+    // mutation, which is the only way that would have surfaced: the assertion was green while
+    // the field it guards had been renamed out from under the UI.
+    //
+    // `findings` is walked for the same reason `vitals` and `confidence` are: a mirror checked
+    // one level deep is a mirror for one level, and the Findings page reads `findings.labels`.
+    const nested = (key: "vitals" | "confidence" | "findings"): void => {
+      for (const field of Object.keys((view.runs[0] as unknown as Record<string, object>)[key] ?? {})) {
+        expect(uiTypes, `${key}.${field}`).toContain(`${field}:`);
+      }
+    };
+    nested("vitals");
+    nested("confidence");
+    nested("findings");
   });
 
   it("keeps the Measured union, which is the contract that stops a 0 standing in for a null", () => {
