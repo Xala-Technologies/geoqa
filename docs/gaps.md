@@ -212,7 +212,18 @@ refused, which is invariant 6 arriving here as data rather than as a hole.
 
 Still open, and each is a different kind of open:
 
-- **The concurrency default is provisional and admits it.** `DEFAULT_MATRIX_CONCURRENCY = 2`,
+- **CLOSED: the concurrency default is measured now.** `DEFAULT_MATRIX_CONCURRENCY = 4`.
+  EXP-007 ran for the first time (it could not before — the samplers were
+  agent-browser-only and there is no Chrome for that engine here, which slice 4 fixed). On
+  a 14-core / 36 GB laptop against a local fixture server: 100% completion, 100% verdict
+  agreement and 100% egress-held at 2, 4, 8, 12 and 16, with wall clock per session at
+  x1.01, x1.01, x1.14, x1.09 and x1.30. Raised to 4 rather than 16 because the default must
+  be safe on the smallest machine that will run it, and because
+  `peak-memory-per-session` stays unmeasurable so the OOM risk is still unquantified. A
+  CPU-derived bound is the obvious next step and is deliberately NOT taken on one data
+  point.
+
+  The original wording, kept because the reasoning was right: `DEFAULT_MATRIX_CONCURRENCY = 2`,
   commented as a placeholder for EXP-007, because each in-flight scenario costs a
   browser context and, on agent-browser, a whole Chrome. `MatrixResult.concurrency`
   records both the limit and the peak actually reached, so the number EXP-007 needs
@@ -1223,6 +1234,56 @@ Two engine improvements came out of the attempt and are already landed:
 
 Where: `journeys/language-override.yaml`, `browser/playwright-launch.ts`,
 [C-11](#c-11--a-comma-union-selector-is-safe-in-an-assertion-and-a-hazard-in-a-click).
+
+### B-12 · Two concurrent runs in the SAME market share one egress IP — cause unresolved
+
+Reproduced three times, at concurrency 3 and 4, through Decodo residential:
+
+```
+oslo-desktop           193.69.169.75
+oslo-mobile            193.69.169.75      ← same market, same IP
+porsgrunn-desktop      51.174.196.164
+porsgrunn-mobile       51.174.196.164     ← same market, same IP
+```
+
+Profiles that share a MARKET share an exit; different markets get different exits. Each
+session reports `egressHeld: match`, because holding an IP you share with somebody else
+still looks like holding it — so nothing in a run contradicts this.
+
+**Why it matters.** Invariant 16 is ONE JOURNEY = ONE NETWORK SESSION. Two concurrent
+journeys on one IP are two journeys on one session, which is less authentic than the design
+claims and, worse, means a matrix at concurrency N within a market is exercising fewer
+distinct exits than it reports.
+
+**What was established, so the next person does not repeat it:**
+
+- The VENDOR is fine. Four concurrent requests with four distinct session keys, same city,
+  returned four distinct IPs; the same keys re-used sequentially returned the same IPs, so
+  stickiness works as documented.
+- `sessionduration` is not the cause. Distinct keys give distinct IPs with and without it.
+- geoqa mints DISTINCT session ids and sends DISTINCT usernames. Verified through the real
+  run path: `oslo-…-1-sessionduration-30` and `oslo-…-2-sessionduration-30` on two
+  same-market sessions, and the two resolved proxy URLs differ.
+
+So the vendor honours distinct keys, geoqa sends distinct keys, and two same-market runs
+still land on one IP. **The mechanism is not known.** Recording it unresolved rather than
+guessing — three plausible-sounding explanations were tested and all three were wrong,
+which is exactly the point at which a fourth guess should not be written into a comment.
+
+**One fix landed on the way, correct on its own terms and not the cause.** The session id
+was `<market>-<epochMs>`, so two sessions minted in the same millisecond for one market
+genuinely collided. It is now `<market>-<epochMs>-<n>` with a per-process sequence. That
+was a real latent bug — it just is not this one.
+
+**This blocks the 100-session milestone**, and that is why the milestone was not run. The
+milestone measures country and city match across 100 sessions; if same-market concurrent
+sessions share an exit, a run at any concurrency inside a market measures fewer distinct
+exits than it claims, and the resulting percentages would describe the wrong denominator.
+Sequential runs are unaffected, so the milestone is runnable at concurrency 1 — at roughly
+100× the wall clock — or after this is understood.
+
+Where: `network/provider.ts` (`defaultSessionId`, `substituteProxyPlaceholders`),
+`run/execute.ts` (`prepareRun`), `experiments/EXP-007-concurrency/results.jsonl`.
 
 ## D. Tooling and process gaps
 

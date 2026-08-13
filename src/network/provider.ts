@@ -213,7 +213,31 @@ export interface ProviderOptions {
   newSessionId?: (market: Market, nowMs: number) => string;
 }
 
-const defaultSessionId = (market: Market, nowMs: number): string => `${market.id}-${nowMs}`;
+/**
+ * A monotonic counter, so two sessions minted in the same millisecond cannot collide.
+ *
+ * Deliberately a counter and not randomness: it is deterministic within a process, needs
+ * no seeding, and keeps a session id readable in a log. Tests inject `newSessionId`
+ * anyway, so this never makes a test unpredictable.
+ */
+let sessionSequence = 0;
+
+/**
+ * `<market>-<epochMs>-<n>`, and the `<n>` is load-bearing.
+ *
+ * Without it the id was `<market>-<epochMs>`, so **two concurrent runs in the same market
+ * started in the same millisecond got the same id** — and the id is what the `{session}`
+ * placeholder puts in a residential vendor's username to pin a sticky exit. Two journeys
+ * would therefore share one egress IP while each reported `egressHeld: match`, because
+ * holding an IP you share with somebody else still looks like holding it.
+ *
+ * That is invariant 16 — ONE JOURNEY = ONE NETWORK SESSION — failing silently, and nothing
+ * in the run would contradict it. Found while running EXP-007 through Decodo at
+ * concurrency 3: two Oslo profiles came back on 193.69.169.75 and the third market on a
+ * different IP, which is the signature of a shared sticky key rather than of a vendor
+ * choosing to reuse an exit.
+ */
+const defaultSessionId = (market: Market, nowMs: number): string => `${market.id}-${nowMs}-${++sessionSequence}`;
 
 /** Egress straight from this machine. Always usable; never geographic. */
 export function directProvider(options: ProviderOptions = {}): GeoNetworkProvider {

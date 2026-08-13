@@ -148,7 +148,8 @@ against, 90% is likely unreachable and the threshold is wrong.
 - [x] **11 · A-2: wire `searchObservation`.** Three-state, and this is the whole
       point: no results at all is `null`; results but not us is a real low score;
       401/quota is `null` with a reason. Never a fabricated 0.
-- [ ] **12 · A-3b + C-1: run EXP-007 and EXP-002 for real.** Both `unmeasured`.
+- [x] **12 · A-3b + C-1: run EXP-007 and EXP-002 for real.** Both run. The 100-session
+      milestone is BLOCKED on B-12 — see progress.md. Both `unmeasured`.
       EXP-007 answers what the matrix concurrency bound should be, which is a
       guess today (A-3).
 

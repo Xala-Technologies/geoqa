@@ -802,10 +802,84 @@ Docs: gaps **A-2** closed; PRD **R-132 … R-135**.
 Gate: lint clean · boundaries clean (107 modules / 418 deps) · **1202 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
-## Next: slice 12
+## Slice 12 · EXP-007 run for the first time — DONE. Milestone BLOCKED, deliberately.
 
-A-3b + C-1 — run EXP-007 (which also answers what the matrix concurrency bound should be)
-and the 100-session milestone.
+EXP-007 had never executed: the samplers were agent-browser-only and there is no Chrome for
+that engine here, which slice 4 fixed. It runs now.
+
+### The concurrency bound is measured
+
+14-core / 36 GB laptop, local fixture server, 100% completion + verdict agreement +
+egress-held at every level:
+
+```
+concurrency  2 → wall clock x1.01     8 → x1.14
+             4 → x1.01               12 → x1.09
+                                     16 → x1.30
+```
+
+**`DEFAULT_MATRIX_CONCURRENCY` raised 2 → 4.** Not 16: the measurement covers ONE machine
+and a default has to be safe on the smallest one that will run this — a 2-core CI runner is
+worse at 16 than at 2. And `peak-memory-per-session` remains permanently unmeasurable from
+this process, so the OOM risk that originally kept the bound at 1 is still unquantified. A
+CPU-derived bound is the obvious next step and is deliberately NOT taken on one data point.
+
+### And EXP-007 found a real defect I could not solve
+
+Through Decodo at concurrency 3 and 4, reproduced three times: **profiles sharing a MARKET
+share an egress IP.**
+
+```
+oslo-desktop        193.69.169.75
+oslo-mobile         193.69.169.75    ← same market, same IP
+porsgrunn-desktop   51.174.196.164
+porsgrunn-mobile    51.174.196.164   ← same market, same IP
+```
+
+Each reports `egressHeld: match`, because holding an IP you share with somebody else still
+looks like holding it. That is invariant 16 — one journey, one network session — failing
+with nothing in the run contradicting it.
+
+**Three hypotheses tested, all three wrong:**
+
+1. Session-id collision. The id was `<market>-<epochMs>`, so same-market sessions in the same
+   millisecond genuinely collided — **fixed**, now `<market>-<epochMs>-<n>`. Not the cause;
+   the IPs still shared afterwards.
+2. The vendor collapses same-city keys. **No** — four concurrent requests with four distinct
+   keys in one city returned four distinct IPs, and re-using a key returned its IP again.
+3. `sessionduration-30` changes the key's scope. **No** — distinct keys give distinct IPs
+   with and without it.
+
+Verified through the real run path that geoqa sends distinct usernames:
+`oslo-…-1-sessionduration-30` vs `oslo-…-2-sessionduration-30`, different resolved URLs.
+
+So the vendor honours distinct keys, geoqa sends distinct keys, and two same-market runs
+still land on one IP. **I do not know the mechanism.** Recorded as **B-12** unresolved
+rather than guessing — three plausible explanations were tested and all three were wrong,
+which is precisely the point at which a fourth guess should not be written into a comment
+as if it were a finding.
+
+### Why the 100-session milestone was NOT run
+
+It would measure the wrong thing. The milestone is country and city match across 100
+sessions; if same-market concurrent sessions share an exit, a run at any concurrency inside
+a market exercises fewer distinct exits than it reports, and the percentages would describe
+the wrong denominator. Running it and publishing ≥98%/≥90% numbers I already know are
+suspect would be the exact failure this engine exists to prevent.
+
+It is runnable at concurrency 1 (sequential sessions are unaffected) at roughly 100× the
+wall clock, or after B-12 is understood. That is a call worth making with the owner rather
+than for them.
+
+Docs: gaps **A-3** concurrency bullet closed, **B-12** opened.
+
+Gate: lint clean · boundaries clean (107 modules / 418 deps) · **1203 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
+## Next
+
+**B-12 first** — it gates the milestone. Then slices 13–15 (the agents, generalised) and
+16–19 (frontend), neither of which depends on it.
 
 ## Earlier plan for slices 10–12 (search intelligence)
 
