@@ -1,51 +1,89 @@
 /**
- * The instrument chassis.
+ * The design system.
  *
- * geoqa measures sites from inside real markets, and its whole ethic is refusing to confuse
- * "we could not look" with "it is fine". So this is styled as measurement equipment rather than
- * as a dashboard: the READING is the brightest thing on the panel, our blindness is the dimmest,
- * and the two are never the same colour, weight or slant.
+ * **Direction: machine, not app.** geoqa is an instrument that measures sites from inside real
+ * markets, so the panel is built like one — hairline grid, monospace as the primary voice,
+ * uppercase tracked labels, zero radius, one electric signal against near-black. The lineage is
+ * Raster-Noton sleeve art and Underground Resistance record labels, which look the way they do
+ * for the same reason a spectrum analyser does: the readings are the content, and everything
+ * else is chrome that should get out of the way.
  *
- * Two rules that are not decoration:
+ * Every size, space and colour comes from a token below. Nothing is a literal in a component,
+ * because one `padding: 13px` is how a scale stops being a scale.
  *
- * 1. **Semantic colour is separate from the accent.** The accent marks where you are and what
- *    responds to a click. Pass/warn/fail/void mean verdicts. If the accent were green, a
- *    selected nav item and a passing run would carry the same signal.
- * 2. **`--void` is the dimmest colour in the palette**, and it carries ERROR, `unverified` and
- *    "not measured" alike. Those are all cases where the engine could not see; none of them is
- *    the site failing, and none may borrow the failure colour.
+ * Two rules are load-bearing rather than aesthetic:
+ *
+ * 1. **Semantic colour is separate from the signal colour.** `--signal` marks where you are and
+ *    what responds to a click. Pass/warn/fail/void mean verdicts. If the signal were green, a
+ *    selected nav item and a passing run would carry the same meaning.
+ * 2. **`--void` is the quietest colour in the palette**, and it carries ERROR, `unverified` and
+ *    "not measured" alike. All three are cases where the engine could not see. None is the site
+ *    failing, so none may borrow the failure colour — and none may shout over a real reading.
  */
 
 :root {
-  /* Ground and panel: cool, near-black, never pure — pure black flattens the hairlines that do
-     most of the structural work here. */
-  --ink: #0a0e13;
-  --panel: #131a23;
-  --panel-2: #182130;
-  --rule: #212c3a;
-  --rule-soft: #1a2330;
-
-  /* The measured value is the brightest thing on screen. Everything else recedes from it. */
-  --readout: #e6edf3;
-  --label: #8e99a8;
-  --faint: #626d7c;
-
-  /* Instrument teal: wayfinding and interaction only. It is not any semantic colour, so it can
-     never be misread as a verdict. */
-  --accent: #4cc9d4;
-  --accent-deep: #1b5d64;
-
-  --pass: #56d98b;
-  --warn: #e8b341;
-  --fail: #f0736e;
-  /* Deliberately the dimmest. See rule 2 above. */
-  --void: #7c8896;
-
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  /* ── Type ─────────────────────────────────────────────────────────────────
+     Monospace is the PRIMARY face, not the data face. On an instrument the
+     numbers are the typography, and a proportional label beside a monospace
+     readout reads as two different machines. Sans is kept for prose only. */
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "DejaVu Sans Mono", Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 
-  --rail: 224px;
-  --bar: 52px;
+  --t-xs: 12px;
+  --t-sm: 14px;
+  --t-base: 16px;
+  --t-md: 19px;
+  --t-lg: 24px;
+  --t-xl: 30px;
+  --t-2xl: 38px;
+  --t-3xl: 48px;
+
+  /* Tracking is a technique here rather than a flourish: wide-tracked uppercase mono is what
+     makes a label read as a machine annotation instead of as prose. */
+  --track-label: 0.16em;
+  --track-head: 0.05em;
+
+  /* ── Space ────────────────────────────────────────────────────────────── */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 40px;
+  --s-9: 56px;
+
+  /* Zero radius, everywhere. A rounded corner is a softness this subject does not have, and
+     `border-radius: 10px` on every card is the single most legible tell of a generic dashboard. */
+  --r: 0;
+
+  /* ── Surfaces ─────────────────────────────────────────────────────────── */
+  --black: #05070a;
+  --machine: #0b0f15;
+  --machine-2: #10161e;
+  --machine-3: #161e28;
+  --grid: #1e2733;
+  --grid-soft: #151d27;
+
+  /* ── Ink ──────────────────────────────────────────────────────────────── */
+  --readout: #f2f5f8;
+  --label: #94a1b2;
+  --faint: #5f6c7e;
+
+  /* Electric cyan. Wayfinding and interaction only — never a verdict. */
+  --signal: #00e5ff;
+  --signal-mid: #0a8fa3;
+  --signal-deep: #0a4e5a;
+  --signal-wash: #04222a;
+
+  --pass: #3df5a0;
+  --warn: #ffc53d;
+  --fail: #ff5c57;
+  --void: #6e7a8a;
+
+  --rail: 264px;
+  --bar: 72px;
 }
 
 * {
@@ -54,11 +92,11 @@
 
 body {
   margin: 0;
-  background: var(--ink);
+  background: var(--black);
   color: var(--readout);
-  font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.5;
+  font-family: var(--mono);
+  font-size: var(--t-base);
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -76,11 +114,11 @@ body {
   grid-area: brand;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--rule);
-  border-right: 1px solid var(--rule);
-  background: var(--panel);
+  gap: var(--s-3);
+  padding: 0 var(--s-6);
+  border-bottom: 1px solid var(--grid);
+  border-right: 1px solid var(--grid);
+  background: var(--machine);
 }
 
 .brand svg {
@@ -88,77 +126,85 @@ body {
 }
 
 .brand-name {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: var(--t-md);
+  font-weight: 700;
+  letter-spacing: var(--track-head);
+  text-transform: uppercase;
 }
 
 .brand-name b {
-  color: var(--accent);
-  font-weight: 600;
+  color: var(--signal);
+  font-weight: 700;
 }
 
-/* The status bar carries the three global truths at all times. A console that made you navigate
-   to learn whether the data is stale has already failed at being a console. */
 .bar {
   grid-area: bar;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  padding: 0 22px;
-  border-bottom: 1px solid var(--rule);
-  background: var(--panel);
+  gap: var(--s-6);
+  padding: 0 var(--s-7);
+  border-bottom: 1px solid var(--grid);
+  background: var(--machine);
 }
 
 .bar-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--readout);
+  font-size: var(--t-md);
+  font-weight: 700;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
 }
 
 .bar-stats {
   display: flex;
-  align-items: center;
-  gap: 22px;
+  align-items: stretch;
+  gap: 0;
 }
 
+/* Stats are ruled off from each other rather than spaced apart: a gauge cluster on real
+   equipment is divided, not floated. */
 .stat {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
-  font-size: 12px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--s-5);
+  border-left: 1px solid var(--grid);
+}
+
+.stat:first-child {
+  border-left: none;
 }
 
 .stat-k {
   color: var(--faint);
-  font-size: 10.5px;
-  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
+  line-height: 1.2;
 }
 
 .stat-v {
-  font-family: var(--mono);
+  font-size: var(--t-sm);
   font-variant-numeric: tabular-nums;
   color: var(--readout);
+  line-height: 1.3;
 }
 
 .rail {
   grid-area: rail;
-  border-right: 1px solid var(--rule);
-  background: var(--panel);
-  padding: 12px 9px 24px;
+  border-right: 1px solid var(--grid);
+  background: var(--machine);
+  padding: var(--s-5) 0 var(--s-8);
   display: flex;
   flex-direction: column;
-  gap: 1px;
 }
 
 .rail-group {
-  padding: 15px 11px 5px;
+  padding: var(--s-5) var(--s-6) var(--s-3);
   font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.11em;
+  font-weight: 700;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
   color: var(--faint);
 }
@@ -167,150 +213,175 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 7px 11px;
-  border-radius: 5px;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-6);
   color: var(--label);
   text-decoration: none;
-  font-size: 13.5px;
-  border-left: 2px solid transparent;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-left: 3px solid transparent;
+  transition: background 100ms linear, color 100ms linear;
 }
 
 .nav:hover {
-  background: var(--panel-2);
+  background: var(--machine-2);
   color: var(--readout);
 }
 
 .nav[aria-current="page"] {
-  background: var(--panel-2);
-  color: var(--readout);
-  border-left-color: var(--accent);
+  background: var(--machine-2);
+  color: var(--signal);
+  border-left-color: var(--signal);
+  font-weight: 700;
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  border-radius: 3px;
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
 }
 
 .count {
-  font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
   color: var(--faint);
+  border: 1px solid var(--grid);
+  padding: 0 var(--s-2);
 }
 
 .count.alert {
   color: var(--fail);
+  border-color: var(--fail);
 }
 
 .readout {
   grid-area: readout;
-  padding: 22px 24px 60px;
-  max-width: 1560px;
+  padding: var(--s-7);
+  max-width: 1720px;
   min-width: 0;
 }
 
-/* ── Headings and panels ────────────────────────────────────────────────── */
+/* ── Headings ───────────────────────────────────────────────────────────── */
 
 .head {
-  margin-bottom: 18px;
+  margin-bottom: var(--s-6);
+  padding-bottom: var(--s-5);
+  border-bottom: 1px solid var(--grid);
 }
 
 .head h2 {
-  margin: 0 0 5px;
-  font-size: 18px;
-  font-weight: 620;
-  letter-spacing: -0.012em;
+  margin: 0 0 var(--s-3);
+  font-size: var(--t-2xl);
+  font-weight: 700;
+  letter-spacing: var(--track-head);
+  text-transform: uppercase;
+  line-height: 1.1;
 }
 
+/* Prose is the ONE place a proportional face appears. A paragraph of explanation set in
+   tracked mono is a paragraph nobody reads. */
 .hint {
   margin: 0;
+  font-family: var(--sans);
   color: var(--label);
-  font-size: 12.5px;
-  line-height: 1.6;
-  max-width: 82ch;
+  font-size: var(--t-sm);
+  line-height: 1.65;
+  max-width: 80ch;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
+/* ── Panels ─────────────────────────────────────────────────────────────── */
+
 .panel {
-  background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  margin-bottom: 16px;
+  background: var(--machine);
+  border: 1px solid var(--grid);
+  border-radius: var(--r);
+  margin-bottom: var(--s-5);
   overflow: hidden;
 }
 
 .panel-head {
-  padding: 11px 15px;
-  border-bottom: 1px solid var(--rule-soft);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--grid);
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 14px;
+  gap: var(--s-5);
+  flex-wrap: wrap;
+  background: var(--machine-2);
 }
 
 .panel-head h3 {
   margin: 0;
-  font-size: 12.5px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
+  font-size: var(--t-sm);
+  font-weight: 700;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
 }
 
 .panel-head .hint {
-  font-size: 11.5px;
+  font-size: var(--t-xs);
 }
 
 .panel-body {
-  padding: 14px 15px;
+  padding: var(--s-5);
 }
 
 /* ── Gauges ─────────────────────────────────────────────────────────────── */
 
 .gauges {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
+  gap: 1px;
+  margin-bottom: var(--s-5);
+  background: var(--grid);
+  border: 1px solid var(--grid);
 }
 
+/* Gauges share hairlines rather than sitting apart — one instrument face divided into cells,
+   which is what the 1px grid gap above produces. */
 .gauge {
-  background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  padding: 13px 15px 14px;
+  background: var(--machine);
+  padding: var(--s-5);
 }
 
 .gauge-k {
   font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.1em;
+  font-weight: 700;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
   color: var(--faint);
 }
 
 .gauge-v {
-  font-family: var(--mono);
-  font-size: 25px;
+  font-size: var(--t-3xl);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.025em;
-  margin-top: 7px;
-  line-height: 1.1;
+  letter-spacing: -0.035em;
+  margin-top: var(--s-3);
+  line-height: 1;
+}
+
+.gauge-v .unmeasured {
+  font-size: var(--t-lg);
 }
 
 .gauge-sub {
-  margin-top: 5px;
-  font-size: 11.5px;
+  margin-top: var(--s-3);
+  font-family: var(--sans);
+  font-size: var(--t-xs);
   color: var(--label);
+  line-height: 1.5;
 }
 
-/* A thin bar under a gauge: the split it summarises, encoded as form as well as number. */
 .meter {
   display: flex;
-  height: 3px;
-  margin-top: 10px;
-  border-radius: 2px;
+  height: 4px;
+  margin-top: var(--s-4);
   overflow: hidden;
-  background: var(--rule-soft);
+  background: var(--grid-soft);
 }
 
 .meter span {
@@ -326,33 +397,33 @@ body {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--t-sm);
 }
 
 th {
   text-align: left;
   font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.09em;
+  font-weight: 700;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
   color: var(--faint);
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--rule);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--grid);
   white-space: nowrap;
   position: sticky;
   top: 0;
-  background: var(--panel);
+  background: var(--machine-2);
   z-index: 1;
 }
 
 td {
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--rule-soft);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--grid-soft);
   white-space: nowrap;
 }
 
 tbody tr:hover td {
-  background: var(--panel-2);
+  background: var(--machine-2);
 }
 
 tbody tr:last-child td {
@@ -360,15 +431,13 @@ tbody tr:last-child td {
 }
 
 .num {
-  font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
 code,
 .mono {
-  font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--t-xs);
 }
 
 .dim {
@@ -379,34 +448,36 @@ code,
 
 /**
  * THREE signals separate a reading from an absence — colour, slant and a dotted underline —
- * because each survives a different kind of degradation: colour fails a colourblind reader,
- * slant survives greyscale, and the underline survives both. A dashboard is where a number gets
- * believed, and `0` standing in for a null LCP would undo the entire verdict model at the last
- * step.
+ * because each survives a different degradation: colour fails a colourblind reader, slant
+ * survives greyscale, the underline survives both. A dashboard is where a number gets believed,
+ * and `0` standing in for a null LCP would undo the whole verdict model at the last step.
  */
 .measured {
   color: var(--readout);
-  font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
 
 .unmeasured {
   color: var(--void);
   font-style: italic;
-  font-size: 12px;
+  font-size: var(--t-xs);
   border-bottom: 1px dotted currentColor;
   cursor: help;
+  white-space: nowrap;
 }
 
+/* Square, bracketed by a hairline. A rounded pill is the badge of every SaaS dashboard; this
+   is a status lamp. */
 .pill {
   display: inline-block;
-  padding: 1px 7px;
-  border-radius: 3px;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  padding: 2px var(--s-3);
+  border-radius: var(--r);
+  font-size: var(--t-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   border: 1px solid currentColor;
+  line-height: 1.4;
 }
 
 .pill.good {
@@ -424,25 +495,32 @@ code,
 
 .tag {
   display: inline-block;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  background: var(--panel-2);
-  border: 1px solid var(--rule);
+  padding: 2px var(--s-2);
+  font-size: var(--t-xs);
+  background: transparent;
+  border: 1px solid var(--grid);
   color: var(--label);
-  font-family: var(--mono);
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+a.tag:hover {
+  color: var(--signal);
+  border-color: var(--signal);
 }
 
 .note {
   display: flex;
-  gap: 10px;
-  padding: 10px 13px;
-  border: 1px solid #4a3a12;
-  background: #1a1508;
-  border-radius: 7px;
-  color: #f0d38f;
-  font-size: 12px;
-  margin-bottom: 10px;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border: 1px solid var(--warn);
+  border-left-width: 3px;
+  background: transparent;
+  color: var(--warn);
+  font-family: var(--sans);
+  font-size: var(--t-sm);
+  margin-bottom: var(--s-4);
   line-height: 1.6;
 }
 
@@ -450,23 +528,28 @@ code,
   content: "!";
   font-family: var(--mono);
   font-weight: 700;
-  color: var(--warn);
+  font-size: var(--t-base);
   flex: none;
 }
 
 .empty {
-  padding: 30px 16px;
+  padding: var(--s-9) var(--s-5);
   text-align: center;
   color: var(--label);
-  font-size: 12.5px;
+  font-family: var(--sans);
+  font-size: var(--t-sm);
+  line-height: 1.6;
 }
 
 .empty strong {
   display: block;
   color: var(--readout);
-  margin-bottom: 4px;
-  font-weight: 600;
-  font-size: 13px;
+  margin-bottom: var(--s-2);
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: var(--t-md);
+  letter-spacing: var(--track-head);
+  text-transform: uppercase;
 }
 
 /* ── Filters ────────────────────────────────────────────────────────────── */
@@ -474,37 +557,81 @@ code,
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--s-3);
   align-items: center;
-  margin-bottom: 13px;
+  margin-bottom: var(--s-4);
 }
 
 .filters input,
 .filters select {
-  background: var(--panel);
-  border: 1px solid var(--rule);
+  background: var(--machine);
+  border: 1px solid var(--grid);
   color: var(--readout);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 12.5px;
-  font-family: inherit;
+  border-radius: var(--r);
+  padding: var(--s-3) var(--s-4);
+  font-size: var(--t-sm);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.filters input {
-  min-width: 250px;
-  font-family: var(--mono);
+.filters input[type="search"] {
+  min-width: 340px;
+  text-transform: none;
+}
+
+.filters input:hover,
+.filters select:hover {
+  border-color: var(--signal-deep);
+}
+
+.filters input:focus,
+.filters select:focus {
+  border-color: var(--signal);
 }
 
 .filters input::placeholder {
   color: var(--faint);
+  text-transform: none;
 }
 
 .filters .spacer {
   margin-left: auto;
   color: var(--label);
-  font-size: 12px;
-  font-family: var(--mono);
+  font-size: var(--t-sm);
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-xs);
+  color: var(--label);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--signal);
+  min-width: 0;
+}
+
+/* ── Utilities ──────────────────────────────────────────────────────────── */
+
+/* The only alignment and sizing helpers in the app. They exist so no component types a
+   literal — the moment one does, the scale above stops being the single source of these
+   values and the next one is typed without checking. */
+.center {
+  text-align: center;
+}
+
+.col-label {
+  width: 132px;
 }
 
 /* ── Instrument trace ───────────────────────────────────────────────────── */
@@ -514,51 +641,75 @@ code,
  *
  * The gap is the point. A run that measured nothing contributes an absence, and a trace that
  * closed over it — or drew it at zero — would fabricate exactly the thing the reader came to
- * look at. The endpoint is emphasised because "where it ended up" is the question being asked.
+ * look at. The endpoint is emphasised because "where did it end up" is the question being asked.
  */
 .trace {
   display: inline-flex;
-  gap: 2px;
+  gap: 3px;
   align-items: flex-end;
-  height: 28px;
+  height: 38px;
 }
 
 .trace i {
-  width: 4px;
-  min-height: 2px;
-  background: var(--accent-deep);
-  border-radius: 1px;
+  width: 6px;
+  min-height: 3px;
+  background: var(--signal-deep);
   display: block;
 }
 
 .trace i.last {
-  background: var(--accent);
+  background: var(--signal);
 }
 
 .trace i.gap {
   background: transparent;
   border-left: 1px dotted var(--void);
   height: 100% !important;
-  border-radius: 0;
+}
+
+/* ── Market bar ─────────────────────────────────────────────────────────── */
+
+.mkt {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-right: var(--s-5);
+}
+
+.mkt-bar {
+  display: inline-block;
+  width: 88px;
+  height: 6px;
+  background: var(--grid-soft);
+  overflow: hidden;
+}
+
+.mkt-bar span {
+  display: block;
+  height: 100%;
+  background: var(--signal-mid);
 }
 
 .load {
-  padding: 60px 24px;
+  padding: var(--s-9);
   color: var(--label);
-  font-family: var(--mono);
+  font-size: var(--t-md);
+  letter-spacing: var(--track-head);
+  text-transform: uppercase;
 }
 
 .err {
-  margin: 24px;
-  padding: 16px;
-  border: 1px solid #4a2020;
-  background: #1a0e0e;
-  border-radius: 8px;
-  color: #f0a8a4;
-  font-size: 13px;
+  margin: var(--s-7);
+  padding: var(--s-5);
+  border: 1px solid var(--fail);
+  border-left-width: 3px;
+  color: var(--fail);
+  font-family: var(--sans);
+  font-size: var(--t-sm);
+  line-height: 1.6;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1040px) {
   .app {
     grid-template-columns: 1fr;
     grid-template-rows: var(--bar) auto 1fr;
@@ -568,6 +719,9 @@ code,
     display: none;
   }
   .readout {
-    padding: 16px;
+    padding: var(--s-5) var(--s-4) var(--s-8);
+  }
+  .bar-stats .stat:nth-child(n + 3) {
+    display: none;
   }
 }

@@ -46,8 +46,8 @@ export function Geography({ view }: { view: DashboardView }): JSX.Element {
                     <td className="mono">{p.target}</td>
                     <td>
                       {Object.entries(p.markets).map(([id, m]) => (
-                        <span key={id} style={{ marginRight: 10 }}>
-                          <span className="dim mono" style={{ marginRight: 5 }}>
+                        <span className="mkt" key={id}>
+                          <span className="dim">
                             {id}
                           </span>
                           <Verdict value={m.verdict} />
@@ -112,19 +112,11 @@ function Spread({ p }: { p: PageAcrossMarkets }): JSX.Element {
       <td className="num">{p.ttfbSpreadMs === null ? <span className="unmeasured">not measured</span> : `${p.ttfbSpreadMs}ms`}</td>
       <td>
         {readings.map(([id, m]) => (
-          <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginRight: 14 }}>
-            <span className="dim mono">{id}</span>
+          <span className="mkt" key={id}>
+            <span className="dim">{id}</span>
             {/* A bar as well as a number: the ratio between markets reads before the digits do. */}
-            <span style={{ display: "inline-block", width: 60, height: 4, background: "var(--rule-soft)", borderRadius: 2 }}>
-              <span
-                style={{
-                  display: "block",
-                  height: 4,
-                  borderRadius: 2,
-                  width: `${Math.max(4, (m.ttfbMs / slowest) * 100)}%`,
-                  background: "var(--accent-deep)",
-                }}
-              />
+            <span className="mkt-bar">
+              <span style={{ width: `${Math.max(4, (m.ttfbMs / slowest) * 100)}%` }} />
             </span>
             <span className="measured">{m.ttfbMs}ms</span>
           </span>

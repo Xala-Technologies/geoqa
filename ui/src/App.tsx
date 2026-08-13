@@ -149,19 +149,20 @@ function Stat({ k, v }: { k: string; v: string }): JSX.Element {
 }
 
 /**
- * The mark: a globe reduced to one meridian and one parallel, with a fix on it.
+ * The mark: a fix on a grid.
  *
- * Drawn rather than an emoji or an image — it is two shapes, it inherits the accent, and it
- * stays crisp at any density. The dot is the point of the product: a measurement taken at a
- * place, not near one.
+ * Drawn rather than an emoji or an image — it is four shapes, it inherits the signal colour, and
+ * it stays crisp at any density. Square crosshair rather than a globe: this is an instrument
+ * that takes a reading at a coordinate, and a globe icon would say "international" when the
+ * product's actual claim is "measured from exactly here".
  */
 function Mark(): JSX.Element {
   return (
-    <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <circle cx="10" cy="10" r="7.5" stroke="var(--accent)" strokeWidth="1.3" opacity="0.75" />
-      <ellipse cx="10" cy="10" rx="3.4" ry="7.5" stroke="var(--accent)" strokeWidth="1.1" opacity="0.45" />
-      <path d="M2.6 10h14.8" stroke="var(--accent)" strokeWidth="1.1" opacity="0.45" />
-      <circle cx="13.2" cy="6.4" r="2" fill="var(--accent)" />
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="19" height="19" stroke="var(--signal)" strokeWidth="1.25" opacity="0.5" />
+      <path d="M11 1.5v19M1.5 11h19" stroke="var(--signal)" strokeWidth="1" opacity="0.3" />
+      <rect x="7.5" y="7.5" width="7" height="7" stroke="var(--signal)" strokeWidth="1.25" opacity="0.7" />
+      <rect x="9.5" y="9.5" width="3" height="3" fill="var(--signal)" />
     </svg>
   );
 }
