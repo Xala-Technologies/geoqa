@@ -1133,7 +1133,7 @@ A third site is still wanted, and the shape that would teach the most is one thi
 pair may not have: a cookie wall, a login, or heavy lazy-loading — each changes what
 "the page settled" means, which is the assumption every journey rests on.
 
-### C-8 · `emulate` is a Playwright descriptor name applied to two engines, and no axis checks it
+### C-8 · CLOSED — a mobile identity without the viewport cost, because the choice was false
 
 **Partly closed, and the premise had gone stale.** No profile carries `emulate` any
 more — all eight mobile profiles had it reverted, with a measured comment, because
@@ -1164,13 +1164,55 @@ produces — "Pixel 5" does not appear in the Android UA Playwright builds from 
 An explicit `userAgent` in the profile is the stronger declaration and is the one that
 can be verified.
 
-**Also still open, and worth saying plainly:** because no mobile profile carries a
-descriptor, geoqa's mobile profiles present a DESKTOP user agent. They are mobile by
-viewport only. A site doing server-side device detection off the UA serves them its
-desktop variant, and the new axis reports `unverified` rather than `mismatch` for
-exactly the reason above — the profile never claimed a mobile UA. Closing that means
-choosing between emulation (and losing viewport control) or an explicit `userAgent` per
-mobile profile (and maintaining UA strings by hand).
+**CLOSED, and the choice this entry posed turned out to be false.** It framed the
+options as emulation (losing viewport control) or a hand-maintained `userAgent`
+(paying maintenance). Playwright treats `isMobile`, `hasTouch`, `deviceScaleFactor`
+and `userAgent` as **independent** context options, and only `isMobile` introduces the
+layout viewport. Measured against a page with no viewport meta tag:
+
+| context | `innerWidth` | `maxTouchPoints` | mobile UA |
+|---|---|---|---|
+| viewport only (the old state) | 390 | 0 | no |
+| **viewport + `userAgent` + `hasTouch`** | **390** | **1** | **yes** |
+| full `Pixel 5` descriptor | **980** | 1 | yes |
+
+All eight mobile profiles now declare `userAgent`, `hasTouch: true` and
+`deviceScaleFactor: 3`, and `openContext` passes each through without ever setting
+`isMobile`. Verified from inside a page: `navigator.maxTouchPoints` is 1,
+`"ontouchstart" in window` is true, and `matchMedia("(pointer: coarse)")` matches —
+the three ways a site actually detects touch — while `window.innerWidth` is 390.
+
+The device axis is `match` now rather than `unverified`, because the profile finally
+makes a claim there is something to check.
+
+**Why the user agent is written out, when Playwright's own descriptors are
+version-synced with the shipped browser and would never go stale.** A profile is a
+DECLARATION of a test subject. One that changed under you with a dependency upgrade
+would make yesterday's run and today's run different subjects wearing the same name —
+the same reasoning that puts the seed on the `RunSpec`. A real Android device in the
+wild lags the newest Chrome anyway, so a pinned version is arguably the more
+representative choice as well as the more reproducible one.
+
+**One half crosses to the default engine and the other does not, stated rather than
+discovered.** `toSessionConfig` passes `userAgent` through as agent-browser's
+`--user-agent`, so the mobile UA reaches BOTH engines — which is the half that matters
+for the defect this entry describes, since server-side device detection reads the UA.
+`hasTouch` and `deviceScaleFactor` are Playwright context options with no agent-browser
+equivalent short of `set device`, which brings back the layout viewport this whole
+entry exists to avoid. So on the default engine a mobile profile is: mobile UA, mobile
+viewport, **no touch**.
+
+That asymmetry is worth a sentence rather than a fix. Touch is detected client-side,
+and a page that branches on `(pointer: coarse)` renders differently on the two engines
+— which is a real limitation of running two engines at all, already recorded as
+[C-3](#c-3--geolocation-is-real-on-one-engine-stubbed-on-the-other) for geolocation.
+The engine that serves every experiment is Playwright, and it has the complete
+identity.
+
+**Still true and unchanged:** an `emulate` name cannot be confirmed from the page, so a
+profile using one still gets `unverified` on the device axis. No profile uses one, and
+the refusal on an unknown name stays — but that path is now the exotic one rather than
+the only one.
 
 The original diagnosis of the three failure modes, kept because it was accurate:
 
@@ -2018,12 +2060,12 @@ The first is not a priority call — it is a red suite. After that the order is
    mutation-checked so it is sensitive to the restore branch it names. **With this,
    no code-closable item remains in this document** — everything below needs a
    decision, a live environment, or a Temporal worker.
-8. **C-8 needs a DECISION, not an implementation.** Mobile profiles are mobile by
-   viewport only and present a desktop UA — closing it means choosing emulation (and
-   losing `window.innerWidth` control, measured at 980 vs 390) or hand-maintained
-   `userAgent` strings. ~~C-15~~ is DONE: the two options were not alternatives, and
-   the journey now asserts the declaration and the copy as the separate claims they
-   are.
+8. ~~**C-8**~~ and ~~**C-15**~~ — both DONE, and in both cases the entry had framed a
+   choice that turned out to be false. C-8: `isMobile` is the only descriptor option
+   that costs viewport control, so a mobile identity needs neither emulation nor a
+   descriptor. C-15: the declaration and the copy are separate claims, so the journey
+   asserts both. Worth noting as a pattern — twice in one day, a gap recorded as
+   "needs a decision" dissolved once somebody measured the thing it assumed.
 9. **B-4's residue** — the attempt count is in `run.json` now and occurrences are
    keyed per step; what is left is giving the durable path the same repeat wiring the
    CLI has, which waits on D-2.

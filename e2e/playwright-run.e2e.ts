@@ -124,6 +124,31 @@ describe("a healthy page, end to end", () => {
     expect(browser.viewport.verdict).toBe("match");
   });
 
+  it("presents a MOBILE identity, and keeps the viewport it declared", () => {
+    // gaps C-8: mobile profiles were mobile by viewport ONLY. A site doing server-side device
+    // detection served them the desktop variant, and the device axis reported `unverified`
+    // rather than `mismatch` — correctly, because the profile had never made a claim.
+    //
+    // The entry framed a choice between emulation and hand-maintained user agents. It was a
+    // false choice: Playwright treats `isMobile`, `hasTouch`, `deviceScaleFactor` and
+    // `userAgent` as independent options, and only `isMobile` introduces the layout viewport
+    // that makes `window.innerWidth` a property of the page's markup. This asserts BOTH halves
+    // in one run, which is the only way to know the second was not bought with the first.
+    const browser = result.geo.browser;
+    expect(browser.observed.userAgent).toContain("Android");
+    expect(browser.observed.userAgent).toContain("Mobile");
+    expect(browser.observed.userAgent).not.toContain("Macintosh");
+
+    // And the axis is VERIFIED now, not merely populated — the profile declares a user agent,
+    // so there is finally a claim to check rather than an absence to excuse.
+    expect(browser.device.verdict).toBe("match");
+
+    // The half that emulation would have cost. 390 is what the profile declares; a full device
+    // descriptor reports 980 on a page with no viewport meta tag.
+    expect(browser.observed.viewport).toEqual({ width: 390, height: 844 });
+    expect(browser.viewport.verdict).toBe("match");
+  });
+
   it("GRANTS the geolocation permission instead of stubbing it", () => {
     // Under agent-browser this was always "denied", so `localeInitScript` had to
     // overwrite navigator.geolocation. A Playwright context grants it, which is
@@ -530,6 +555,8 @@ describe("one browser, two network identities", () => {
       coordinates: { latitude: 59.9139, longitude: 10.7522 },
       viewport: { width: 390, height: 844 },
       userAgent: null,
+      hasTouch: null,
+      deviceScaleFactor: null,
       deviceName: null,
       headed: false,
     };

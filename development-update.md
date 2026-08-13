@@ -19,6 +19,65 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — Mobile profiles are finally mobile, and a second false choice dissolves
+
+**C-8 is closed, and like C-15 before it, the entry had framed a choice that was not
+real.**
+
+The gap said: mobile profiles are mobile by *viewport only* and present a desktop user
+agent, so a site doing server-side device detection serves them the desktop variant.
+Closing it meant choosing between emulation — which costs viewport control — and
+hand-maintained user-agent strings.
+
+Playwright treats `isMobile`, `hasTouch`, `deviceScaleFactor` and `userAgent` as
+**independent** context options, and only `isMobile` introduces the layout viewport.
+Measured against a page with no viewport meta tag:
+
+| context | `innerWidth` | `maxTouchPoints` | mobile UA |
+|---|---|---|---|
+| viewport only (the old state) | 390 | 0 | no |
+| **viewport + `userAgent` + `hasTouch`** | **390** | **1** | **yes** |
+| full `Pixel 5` descriptor | **980** | 1 | yes |
+
+All eight mobile profiles now declare a mobile identity, and `isMobile` is never set.
+Verified from inside a page: `navigator.maxTouchPoints` is 1, `"ontouchstart" in
+window` is true, and `matchMedia("(pointer: coarse)")` matches — the three ways a site
+actually detects touch — while `window.innerWidth` stays 390. The device axis reports
+`match` now rather than `unverified`, because the profile finally makes a claim there
+is something to check.
+
+The mobile UA reaches **both** engines — `toSessionConfig` passes it as agent-browser's
+`--user-agent`, and that is the half server-side device detection reads. `hasTouch` and
+`deviceScaleFactor` are Playwright-only, so on the default engine a mobile profile is
+mobile UA, mobile viewport, no touch. Stated in `gaps.md` rather than left to be
+discovered.
+
+### Why the user agent is written out
+
+Playwright's own device descriptors keep their Chrome version **in sync with the
+shipped browser** — `151.0.7922.34` in both, checked — so deriving the UA from one
+would never go stale. It was still the wrong choice.
+
+**A profile is a declaration of a test subject.** One that changed under you with a
+dependency upgrade would make yesterday's run and today's run different subjects
+wearing the same name — the same reasoning that puts the seed on the `RunSpec`. A real
+Android device in the wild lags the newest Chrome anyway, so a pinned version is
+arguably the more representative choice as well as the more reproducible one.
+
+### A pattern worth naming
+
+Twice in one day a gap recorded as *needs a decision* dissolved once somebody measured
+the thing it assumed. C-15 assumed the attribute check and the copy check were
+alternatives; they are separate claims and the journey asserts both. C-8 assumed a
+mobile identity required a device descriptor; it required three independent options,
+one of which is the one nobody wanted.
+
+Both entries were written carefully and both were wrong in the same way — **a
+constraint recorded from reasoning rather than from measurement outlives the reason it
+was recorded.**
+
+---
+
 ## 2026-08-13 — A language marker read where it lives, and a claim of mine withdrawn
 
 ### The localization journey can finally detect what it is named for (C-15)

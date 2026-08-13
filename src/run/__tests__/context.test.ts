@@ -112,7 +112,14 @@ describe("playwrightContextOptions", () => {
       timezoneId: "Europe/Oslo",
       coordinates: { latitude: 59.9139, longitude: 10.7522 },
       viewport: { width: 390, height: 844 },
-      userAgent: null,
+      // A real mobile identity, carried SEPARATELY from a device descriptor. Playwright treats
+      // `isMobile`, `hasTouch`, `deviceScaleFactor` and `userAgent` as independent options, and
+      // only `isMobile` hands `window.innerWidth` to the page's markup — 980 vs 390 on a page
+      // with no viewport meta tag. So the mobile profiles present a mobile identity to UA and
+      // touch detection while the viewport axis stays exactly what they declare.
+      userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+      hasTouch: true,
+      deviceScaleFactor: 3,
       // No device descriptor: `isMobile` emulation makes the rendered viewport a
       // property of the PAGE, and the viewport axis is read on the probe page.
       deviceName: null,
