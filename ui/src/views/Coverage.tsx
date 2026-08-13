@@ -56,7 +56,7 @@ export function Coverage({ view }: { view: DashboardView }): JSX.Element {
                 <tr>
                   <th>Page</th>
                   {site.markets.map((m) => (
-                    <th key={m} style={{ textAlign: "center" }}>
+                    <th key={m} className="center">
                       {m}
                     </th>
                   ))}
@@ -70,7 +70,7 @@ export function Coverage({ view }: { view: DashboardView }): JSX.Element {
                       const cell = p.markets[m];
                       const missing = missingFor.get(p.target)?.has(m) === true;
                       return (
-                        <td key={m} style={{ textAlign: "center" }}>
+                        <td key={m} className="center">
                           {cell ? (
                             <Verdict value={cell.verdict} />
                           ) : (

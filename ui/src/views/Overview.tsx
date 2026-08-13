@@ -201,7 +201,7 @@ function Attention({ view }: { view: DashboardView }): JSX.Element {
       <tbody>
         {items.map((i) => (
           <tr key={i.label + i.detail}>
-            <td style={{ width: 120 }}>
+            <td className="col-label">
               <span className={`pill ${i.tone}`}>{i.label}</span>
             </td>
             <td>{i.detail}</td>

@@ -621,6 +621,19 @@ a.tag:hover {
   min-width: 0;
 }
 
+/* ── Utilities ──────────────────────────────────────────────────────────── */
+
+/* The only alignment and sizing helpers in the app. They exist so no component types a
+   literal — the moment one does, the scale above stops being the single source of these
+   values and the next one is typed without checking. */
+.center {
+  text-align: center;
+}
+
+.col-label {
+  width: 132px;
+}
+
 /* ── Instrument trace ───────────────────────────────────────────────────── */
 
 /**
