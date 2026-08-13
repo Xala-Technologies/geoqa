@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  COOLDOWN_FILE,
+  cooldownStorePath,
   coolingDown,
   loadCooldowns,
   pruneCooldowns,
@@ -95,5 +97,16 @@ describe("recordCooldown", () => {
     saveCooldowns(store, { vendor: 9_999 });
     expect(recordCooldown(store, "vendor", null, 1_000)).toEqual({});
     expect(loadCooldowns(store)).toEqual({});
+  });
+});
+
+describe("cooldownStorePath", () => {
+  it("puts the store beside runs.jsonl, under whatever root is in force", () => {
+    // Derived in one place so no command can read a different file than the last run wrote —
+    // two paths for one vendor's health is how a cooled-down provider gets retried by whichever
+    // command looked at the other. And because `--tenant` replaces the evidence root, a tenant
+    // with its own proxy account neither inherits nor causes another tenant's freeze.
+    expect(cooldownStorePath("/e")).toBe(path.join("/e", COOLDOWN_FILE));
+    expect(cooldownStorePath("/e/tenants/digilist")).not.toBe(cooldownStorePath("/e"));
   });
 });

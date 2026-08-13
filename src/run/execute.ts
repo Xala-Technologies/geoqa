@@ -38,6 +38,15 @@ export interface ExecuteOptions {
   now?: () => number;
   log?: (line: string) => void;
   cooldownPath?: string;
+  /**
+   * How long a provider stays cooled down after a verified-wrong egress.
+   *
+   * From `geoqa.config.json`'s `network.cooldownMs`, which was parsed and defaulted and then
+   * read by nobody: `ExecuteOptions` had no field for it, so `noteProviderOutcome` always used
+   * the built-in default even for a caller that had configured one. Absent keeps that default,
+   * which is the honest meaning of "not configured".
+   */
+  cooldownMs?: number;
   /** Skip closing the browser — used when a caller reuses the session. */
   keepOpen?: boolean;
   /**
@@ -180,6 +189,7 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
     // frozen forever.
     noteProviderOutcome(options.provider.name, geo.network.country.verdict !== "mismatch", now(), {
       ...(options.cooldownPath ? { cooldownPath: options.cooldownPath } : {}),
+      ...(options.cooldownMs !== undefined ? { cooldownMs: options.cooldownMs } : {}),
     });
 
     /**

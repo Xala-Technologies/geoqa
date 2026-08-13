@@ -18,7 +18,11 @@ node_modules/
 /experiments/*/evidence/
 /experiments/*/results.jsonl
 
-# Local config carries proxy credentials.
+# Local config: a per-checkout file, not a shared one. NOT because it carries
+# credentials — it cannot. Proxy credentials come from GEOQA_PROXY_* only (R-26)
+# and the loader REFUSES a credential-shaped key by name, with a message saying
+# where it belongs. Ignored because evidence roots, timeouts and retention are
+# machine-local choices, and a committed one would silently retune everyone else's runs.
 /geoqa.config.json
 .env
 .env.*

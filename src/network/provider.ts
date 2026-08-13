@@ -202,7 +202,6 @@ export interface ProviderOptions {
   env?: NodeJS.ProcessEnv;
   /** Cooldown store path. Omit to disable persistence entirely. */
   cooldownPath?: string;
-  cooldownMs?: number;
   probe?: TcpProbe;
   /**
    * Attempts a real CONNECT and reports the vendor's refusal. Omitted means

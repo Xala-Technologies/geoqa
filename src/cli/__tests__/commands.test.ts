@@ -436,6 +436,54 @@ describe("journeyRun", () => {
     expect((captured as ExecuteOptions | null)?.repeat).toBe(5);
   });
 
+  it("puts every INERT config key onto the run — the defect B-1 is named for", async () => {
+    // Each of these was parsed, validated, defaulted and then read by nobody, which is worse
+    // than not offering the key: the user edits it, nothing contradicts them, and they believe
+    // the setting took. `grep -rn "cooldownMs|\.retention" src/cli src/run` used to return
+    // nothing at all.
+    let captured: ExecuteOptions | null = null;
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      captured = o;
+      return { runId: "r", verdict: "PASS" } as GeoQaRunResult;
+    });
+    const narrowed = { pass: ["metadata" as const], warning: ["metadata" as const], fail: ["metadata" as const], investigation: ["metadata" as const] };
+    await journeyRun(
+      deps({
+        runOnce,
+        retention: narrowed,
+        cooldownPath: "/tmp/cooldowns.json",
+        cooldownMs: 111,
+        browserTimeouts: { commandTimeoutMs: 222, idleTimeoutMs: 333 },
+      }),
+      { url: "https://x", profileId: "oslo-mobile", journeyId: "landing-page" },
+    );
+    const o = captured as ExecuteOptions | null;
+    expect(o?.spec.retention).toEqual(narrowed);
+    // Both halves of the cooldown. Without the write half a failed vendor is never recorded;
+    // without the read half it is recorded and then ignored.
+    expect(o?.cooldownPath).toBe("/tmp/cooldowns.json");
+    expect(o?.cooldownMs).toBe(111);
+    // These reached `browser verify` and `proxy verify` and NOT this command — a cap on a hung
+    // command applied to the two commands least likely to hang.
+    expect(o?.spec.commandTimeoutMs).toBe(222);
+    expect(o?.spec.idleTimeoutMs).toBe(333);
+  });
+
+  it("OMITS an unconfigured key rather than passing a zero", async () => {
+    // `exec.ts` reads 0 as "no cap", so an unset timeout arriving as a number produces a run
+    // that does not fail — it hangs, and a hung run reports nothing at all.
+    let captured: ExecuteOptions | null = null;
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      captured = o;
+      return { runId: "r", verdict: "PASS" } as GeoQaRunResult;
+    });
+    await journeyRun(deps({ runOnce }), { url: "https://x", profileId: "oslo-mobile", journeyId: "landing-page" });
+    const o = captured as ExecuteOptions | null;
+    expect(o?.spec).not.toHaveProperty("commandTimeoutMs");
+    expect(o?.spec).not.toHaveProperty("retention");
+    expect(o).not.toHaveProperty("cooldownMs");
+  });
+
   it("passes variables and the headed flag through to the spec", async () => {
     let captured: ExecuteOptions | null = null;
     const runOnce = vi.fn(async (o: ExecuteOptions) => {

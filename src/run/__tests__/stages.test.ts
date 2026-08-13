@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EvidenceManifest } from "../../evidence/manifest.js";
+import { RETENTION, type EvidenceManifest } from "../../evidence/manifest.js";
 import { loadGeoProfile } from "../../geo/profile.js";
 import type { GeoProfile, GeoVerification } from "../../geo/types.js";
 import { loadJourney } from "../../journeys/spec.js";
@@ -374,6 +374,40 @@ describe("collectEvidence", () => {
       journey: Record<string, unknown>;
     };
     expect("reproducibility" in written.journey).toBe(false);
+  });
+
+  it("HONOURS a narrowed retention tier, in both the collection and the manifest", async () => {
+    // The B-1 defect recurring inside the module built to prevent it: `evidence.retention` was
+    // parsed, validated, defaulted and deep-copied, and then read by nobody. A user who set it
+    // got silently no effect, which is exactly what B-1 is named for.
+    //
+    // Both halves matter together. If only the collector honoured a narrowed tier, every run
+    // would report the kinds the config told it not to keep as MISSING and completeness would
+    // fall — a policy that punishes you for setting it.
+    const narrowed = { ...RETENTION, fail: ["metadata" as const] };
+    const manifest = await collectEvidence(fakeRuntime(), {
+      ...(await input(journeyResult({ verdict: "FAIL" }))),
+      spec: { ...spec(), retention: narrowed },
+    });
+    expect(manifest.artifacts.map((a) => a.kind)).not.toContain("trace");
+    expect(manifest.artifacts.map((a) => a.kind)).not.toContain("har");
+    // And the manifest agrees with what it collected, rather than scoring it against a table
+    // the run was told not to use.
+    expect(manifest.missing).toEqual([]);
+    expect(manifest.completeness).toBe(100);
+  });
+
+  it("does not let one run's narrowed tier narrow the NEXT run", async () => {
+    // `RETENTION` is module-level and mutable. Narrowing it in place would have been the short
+    // fix, and one caller would then silently decide what every later run in the process keeps
+    // — with completeness computed against the same mutated table, so the evidence would look
+    // whole while holding less.
+    await collectEvidence(fakeRuntime(), {
+      ...(await input(journeyResult({ verdict: "FAIL" }))),
+      spec: { ...spec(), retention: { ...RETENTION, fail: ["metadata" as const] } },
+    });
+    const after = await collectEvidence(fakeRuntime(), await input(journeyResult({ verdict: "FAIL" })));
+    expect(after.artifacts.map((a) => a.kind)).toContain("trace");
   });
 
   it("flags the HAR for review like a screenshot, because it holds MORE than one", async () => {

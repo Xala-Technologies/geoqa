@@ -188,6 +188,30 @@ export interface CommandDeps {
    */
   browserTimeouts?: GeoQaConfig["browser"];
   /**
+   * The retention policy from `geoqa.config.json`, put onto every `RunSpec`.
+   *
+   * Typed as the config's own field so the two cannot drift, and carried here rather than read
+   * inside a stage: a stage that read the file itself would give a local run and a durable one
+   * different completeness numbers for the same spec. Absent means the built-in table.
+   */
+  retention?: GeoQaConfig["evidence"]["retention"];
+  /**
+   * Where provider cooldowns are persisted, and how long one lasts.
+   *
+   * Nothing in the CLI passed either, so the whole store was unreachable from the only place
+   * that runs anything: `httpProxyProvider` skipped its cooldown read (`if (!cooldownPath)
+   * return null`) and `noteProviderOutcome` returned immediately. A vendor that failed
+   * mid-sweep was retried on every scenario, which is exactly the behaviour the store was
+   * ported from agent-fleet to prevent — it earned its shape on a provider that ran out of
+   * credit.
+   *
+   * Under the evidence root, beside `runs.jsonl`: both are derived state about this
+   * installation, and `--tenant` replaces the evidence root, so a tenant with its own proxy
+   * account gets its own cooldowns rather than inheriting another tenant's frozen vendor.
+   */
+  cooldownPath?: string;
+  cooldownMs?: number;
+  /**
    * Injectable so the unit suite never reads the vendor's usage API. Same reason
    * `probe` and `pruneFs` exist: a quota check that could only be tested by spending
    * real traffic would not be tested.
@@ -219,6 +243,22 @@ export interface CommandDeps {
  * as "no cap", so an "unset" that arrived as a number would produce a run that
  * does not fail but hangs, and a hung run reports nothing at all.
  */
+/**
+ * The config's agent-browser caps, shaped for a `RunSpec`.
+ *
+ * Spread rather than assigned, because `exactOptionalPropertyTypes` will not let `undefined`
+ * through — which is what stops "unset" being carried on as "0", and `exec.ts` reads 0 as
+ * "no cap". A run with no wall-clock cap does not fail, it hangs, and a hung run reports
+ * nothing at all.
+ */
+export function browserCaps(deps: Pick<CommandDeps, "browserTimeouts">): { commandTimeoutMs?: number; idleTimeoutMs?: number } {
+  const t = deps.browserTimeouts ?? {};
+  return {
+    ...(t.commandTimeoutMs !== undefined ? { commandTimeoutMs: t.commandTimeoutMs } : {}),
+    ...(t.idleTimeoutMs !== undefined ? { idleTimeoutMs: t.idleTimeoutMs } : {}),
+  };
+}
+
 export function runtimeOptions(timeouts: GeoQaConfig["browser"] = {}): RuntimeOptions {
   return {
     ...(timeouts.commandTimeoutMs !== undefined ? { timeoutMs: timeouts.commandTimeoutMs } : {}),
@@ -808,6 +848,9 @@ export async function proxyVerify(deps: CommandDeps, options: GeoVerifyOptions):
   const { provider, warning } = selectProvider(options.providerName ?? DEFAULT_PROVIDER, {
     env: deps.env,
     ...(deps.probe ? { probe: deps.probe } : {}),
+    // The READ half of the cooldown. Without it `httpProxyProvider` returns null from
+    // `cooldownUntil` and a vendor that failed a minute ago is tried again immediately.
+    ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
   });
   const warnings = warning ? [warning] : [];
 
@@ -898,6 +941,9 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
   const { provider, warning } = selectProvider(options.providerName ?? DEFAULT_PROVIDER, {
     env: deps.env,
     ...(deps.probe ? { probe: deps.probe } : {}),
+    // The READ half of the cooldown. Without it `httpProxyProvider` returns null from
+    // `cooldownUntil` and a vendor that failed a minute ago is tried again immediately.
+    ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
   });
   const runId = newRunId(profile.id, deps.now());
 
@@ -909,6 +955,13 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
       // run replays exactly. `--seed` from a failing run's run.json repeats it.
       seed: options.seed ?? seedFrom(runId),
       corroborateGeo: options.corroborate === true,
+      // From `geoqa.config.json`. On the spec rather than read in a stage, so a durable run and
+      // a local one collect — and score completeness — identically for the same spec.
+      ...(deps.retention ? { retention: deps.retention } : {}),
+      // Reached `browser verify` and `proxy verify` and NOT this command — so a cap on a hung
+      // command applied to the two commands least likely to hang, and not to the one that runs
+      // a whole journey.
+      ...browserCaps(deps),
       target: options.url,
       profilePath: profilePath(deps, options.profileId),
       journeyPath: journeyPath(deps, options.journeyId),
@@ -930,6 +983,10 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
     log: deps.log,
     repeat: options.repeat ?? 1,
     ...(options.tenantId !== undefined ? { tenantId: options.tenantId } : {}),
+    // The WRITE half: a verified-wrong egress records the failure, a verified-right one clears
+    // it. Both are required — a store that only ever adds freezes a vendor that recovered.
+    ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
+    ...(deps.cooldownMs !== undefined ? { cooldownMs: deps.cooldownMs } : {}),
   });
   return { ...result, warnings };
 }
@@ -1096,6 +1153,9 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
   const { provider, warning } = selectProvider(options.providerName ?? DEFAULT_PROVIDER, {
     env: deps.env,
     ...(deps.probe ? { probe: deps.probe } : {}),
+    // The READ half of the cooldown. Without it `httpProxyProvider` returns null from
+    // `cooldownUntil` and a vendor that failed a minute ago is tried again immediately.
+    ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
   });
   const warnings = warning ? [warning] : [];
   const baseSeed = options.seed ?? seedFrom(newRunId("matrix", deps.now()));
@@ -1144,6 +1204,8 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
           engine,
           seed: scenarioSeed(baseSeed, scenario.key),
           corroborateGeo: options.corroborate === true,
+          ...(deps.retention ? { retention: deps.retention } : {}),
+          ...browserCaps(deps),
           // The scenario's own page when the matrix carries a URL axis. Without
           // this the axis expanded, every scenario got its own key and seed, and
           // all of them visited `--url` — a sweep reporting 430 clean pages
@@ -1168,6 +1230,8 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
         log: deps.log,
         repeat: options.repeat ?? 1,
         ...(deps.tenantId !== undefined ? { tenantId: deps.tenantId } : {}),
+        ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
+        ...(deps.cooldownMs !== undefined ? { cooldownMs: deps.cooldownMs } : {}),
       };
     },
     run: deps.runOnce,

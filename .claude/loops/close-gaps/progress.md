@@ -1358,6 +1358,45 @@ than both.
 
 Gate: lint clean · boundaries clean · **1371 tests at 100%** · e2e **31/31**.
 
+## Slice 23 — B-1: every key in the example is honoured at the CALL SITE
+
+The defect B-1 is named for, recurring in four places — two of them inside the module written
+to prevent it. A key that is parsed, validated, defaulted and deep-copied and then read by
+nobody is worse than a key that does not exist: the user edits it, nothing contradicts them,
+and they believe the setting took.
+
+**`evidence.retention` decides what a run collects AND what its manifest calls required.** Both
+halves were needed together. Honouring a narrowed tier in the collector alone would make every
+run report the kinds the config told it not to keep as MISSING, and completeness would fall for
+obeying the config — a policy that punishes you for setting it. It rides on `RunSpec` (a plain
+record of string arrays, so a durable run rebuilds it unchanged and scores identically), and as
+the loader's COPY: `RETENTION` is module-level and mutable, so one run narrowing a tier must not
+narrow what every later run in the process keeps. A test pins that.
+
+**`network.cooldownMs` — and the store it belongs to was unreachable from the CLI entirely.**
+Nothing passed `cooldownPath` either, so `httpProxyProvider` returned null from `cooldownUntil`
+and `noteProviderOutcome` returned immediately. A vendor that failed mid-sweep was retried on
+every scenario, which is exactly what the store was ported from agent-fleet to prevent — it
+earned its shape on a provider that ran out of credit. Both halves are wired now, read and
+write, and the success path still CLEARS, because a store that only ever adds freezes a vendor
+that recovered. It lives at `<evidence-root>/cooldowns.json`, resolved after the `--tenant`
+swap, so a tenant with its own proxy account neither inherits nor causes another's freeze.
+
+**The `browser` caps reach `journey run` and `matrix run`.** They reached `browser verify` and
+`proxy verify` only — a cap on a hung command applying to the two commands least likely to hang.
+
+**`ProviderOptions.cooldownMs` deleted.** Nothing read it. Passing the config value there would
+have looked wired and done nothing: a fresh B-1 inside the fix for B-1.
+
+**The `.gitignore` rationale corrected.** `/geoqa.config.json` is not ignored because it carries
+credentials — it cannot; they come from `GEOQA_PROXY_*` only and the loader refuses a
+credential-shaped key by name. It is ignored because evidence roots, timeouts and retention are
+machine-local, and a committed one would silently retune everyone else's runs.
+
+Docs: gaps **B-1** closed; PRD **R-162 / R-163**; AGENTS invariant **32**.
+
+Gate: lint clean · boundaries clean · **1376 tests at 100%** · e2e 31/31.
+
 ## Next
 
 **Every code-closable gap in this loop is closed.** What remains needs a decision, a live

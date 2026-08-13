@@ -18,6 +18,7 @@ import path from "node:path";
 import { AgentBrowserRuntime } from "../browser/agent-browser.js";
 import { createPlaywrightRuntime, type PlaywrightContextOptions } from "../browser/engines.js";
 import type { BrowserRuntime } from "../browser/types.js";
+import type { RetentionPolicy } from "../evidence/manifest.js";
 import { localeInitScript, toSessionConfig } from "../geo/profile.js";
 import type { GeoProfile } from "../geo/types.js";
 
@@ -69,6 +70,34 @@ export interface RunSpec {
    * different `agreement` verdicts and neither of them wrong.
    */
   corroborateGeo: boolean;
+  /**
+   * The retention policy this run collects under. Absent means the built-in table.
+   *
+   * On the spec for the reason `seed`, `engine` and `corroborateGeo` are: a Temporal Activity
+   * rebuilds every stage from serialisable arguments, and a policy read from a config file
+   * inside a stage would differ between a local run and a durable one — two runs of the same
+   * spec producing different `completeness` numbers, neither of them wrong. A plain record of
+   * string arrays, so it crosses that boundary unchanged.
+   *
+   * Carried as a COPY, never a reference to the module-level `RETENTION`: one run narrowing a
+   * tier must not narrow what every later run in the process collects.
+   */
+  retention?: RetentionPolicy;
+  /**
+   * agent-browser command caps, from `geoqa.config.json`'s `browser` block.
+   *
+   * These reached `browser verify` and `proxy verify` — which build a runtime from
+   * `CommandDeps` — and NOT `journey run` or `matrix run`, which build one from the spec. So a
+   * config that capped a hung command capped it on the two commands least likely to hang, and
+   * silently not on the two that do the work.
+   *
+   * Both are plain numbers and neither changes agent-browser's launch identity, so putting them
+   * on the spec is safe for the durable path. Absent means `exec.ts` applies its own default:
+   * the numbers are private to that file and copying them here would be the second source of
+   * truth the config module exists to avoid.
+   */
+  commandTimeoutMs?: number;
+  idleTimeoutMs?: number;
 }
 
 export function runEvidenceDir(spec: Pick<RunSpec, "evidenceRoot" | "runId">): string {
@@ -105,7 +134,10 @@ export function buildRuntime(spec: RunSpec, profile: GeoProfile): BrowserRuntime
     ...(spec.initScriptPath ? { initScriptPath: spec.initScriptPath } : {}),
     baseEnv: process.env,
   });
-  return new AgentBrowserRuntime(config);
+  return new AgentBrowserRuntime(config, {
+    ...(spec.commandTimeoutMs !== undefined ? { timeoutMs: spec.commandTimeoutMs } : {}),
+    ...(spec.idleTimeoutMs !== undefined ? { idleMs: spec.idleTimeoutMs } : {}),
+  });
 }
 
 /**

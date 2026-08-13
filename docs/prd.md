@@ -431,6 +431,16 @@ unmeasured guess until EXP-007 runs.
   two steps into one count and can report `reproduced` for a step never seen to fail
   twice. Sound because a journey is deterministic (R-10): index N is the same step in
   every attempt.
+- **R-162** A config key that appears in the example is honoured **at the call site**,
+  not merely parsed. Parsing, validating, defaulting and deep-copying a key that
+  nothing then reads is worse than not offering it: the user edits it, nothing
+  contradicts them, and they believe the setting took.
+- **R-163** A policy that decides what is COLLECTED must be the same one that decides
+  what is REQUIRED. Honouring a narrowed retention tier in the collector alone would
+  make every run report the kinds the config told it not to keep as missing, so
+  completeness would fall for obeying the config. Both read one table, carried on the
+  `RunSpec` so a durable run and a local one score identically — and as a COPY, so one
+  run narrowing a tier cannot narrow what every later run in the process keeps.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never
