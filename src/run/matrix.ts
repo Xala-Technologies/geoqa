@@ -89,7 +89,10 @@ export type MatrixOutcome = "passed" | "warned" | "siteFailed" | "unmeasured";
  * compile error here instead of quietly falling into a default arm — the arm it
  * would fall into is a lie in one direction or the other.
  */
-const OUTCOME_BY_VERDICT: Record<GeoQaRunResult["verdict"], MatrixOutcome> = {
+// Exported so the durable path maps a workflow's verdicts the same way the in-process one
+// does. Two tables would drift, and a matrix that counted a FAIL as a pass on one execution
+// mode and not the other is the divergence invariant 12 exists to prevent.
+export const OUTCOME_BY_VERDICT: Record<GeoQaRunResult["verdict"], MatrixOutcome> = {
   PASS: "passed",
   PASS_WITH_WARNINGS: "warned",
   FAIL: "siteFailed",

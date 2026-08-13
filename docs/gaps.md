@@ -1932,7 +1932,7 @@ Residue: the e2e assertion was not updated, see
 per-kind default; the engine-specific value is applied at the `stages.ts` call
 site, which is what keeps engine knowledge out of `evidence/`.
 
-### D-2 · The in-process matrix runs; the durable one still cannot be started
+### D-2 · CLOSED — a client starts the durable matrix, and it refuses to pretend
 
 **Closed for the in-process half.** `geoqa matrix run` expands the axes, validates
 **every** profile and journey up front and refuses the whole matrix listing *all*
@@ -1969,12 +1969,48 @@ and neither of them wrong. Proven by INTERLEAVING rather than by wall clock, wit
 second test showing `concurrency: 1` restores the old sequential shape exactly — the
 bound is real rather than decorative.
 
-**Still open: no client starts a workflow.** Verified: nothing outside
-`temporal/worker.ts` constructs a Temporal `Connection` or `Client`, so running the
-matrix durably still means writing a client by hand. That is the remaining half, and it
-is what the last of B-4's residue (the durable path runs one attempt) and B-1's (it
-reads cooldowns and never writes one) are also waiting on. All three want the same
-thing — a durable run exercised end to end — which needs a worker actually running.
+**CLOSED: `geoqa matrix run --durable`.** `temporal/client.ts` starts
+`geoQaMatrixWorkflow` on the shared task queue and waits for it, and the CLI renders the
+result through the SAME `MatrixResult` shape the in-process path uses — so a reader
+cannot tell the modes apart, which is the whole point of offering both.
+
+**The rule the module exists to enforce: a durable run that cannot reach Temporal
+FAILS.** It never falls back to the in-process runner. The two modes produce identical
+output, so a silent fallback would report a durable sweep with none of the durability —
+a lie that looks exactly like success, which is the hardest kind to notice. Proven live
+against an absent server:
+
+```
+could not reach Temporal at 127.0.0.1:7233: Failed to connect before the deadline.
+A durable run does NOT fall back to the in-process runner — it would report a durable
+sweep that never was. Start a server with `temporal server start-dev` and a worker with
+`pnpm worker`, or drop --durable to run in this process.
+```
+
+**And the happy path is proven too, which was not expected to be possible here.**
+`@temporalio/testing` provides a real server, so `workflows.test.ts` drives
+`durableMatrix` — the same function the CLI calls — against a real worker and a real
+task queue. The queue name is the detail that would otherwise have bitten: a client
+polling a queue nobody serves does not fail, it waits forever and says nothing.
+
+Two smaller decisions worth keeping. The connector is injected and the real one lives in
+its own file (`temporal/connect.ts`), so `@temporalio/client` stays out of every other
+caller's import graph and `client.ts` remains fully covered — the same split
+`network/auth-probe.ts` already uses. And the durable path sends BASE specs, letting the
+`prepare` activity resolve the proxy inside the workflow, so the exit selection is part
+of the durable history rather than a decision this process made and forgot.
+
+**Honest about what is NOT proven:** no durable sweep has run against a real browser and
+a real site. The client, the queue, the workflow and the refusal are all exercised; what
+a full durable run does to the evidence tree is not. That needs a worker running beside
+a real target.
+
+**Still open, and now clearly scoped:** the durable path runs ONE attempt per scenario
+([B-4](#b-4--reproducibility-is-fed-and-now-corroborated-only-the-durable-path-is-left))
+and reads cooldowns without writing one
+([B-1](#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site)). Both are
+`executeRun` behaviours that `geoQaRunWorkflow` does not reproduce — a real divergence
+under invariant 12, and each is a few lines now that a client exists to exercise them.
 
 ### D-3 · Closed: the JSON contract carries a version
 

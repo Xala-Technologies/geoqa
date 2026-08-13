@@ -51,6 +51,8 @@ import { verifyGeo, withCorroboration } from "../geo/verify.js";
 import { loadJourney } from "../journeys/spec.js";
 import { seedFrom } from "../journeys/random.js";
 import { redactProxyUrl, selectProvider, type TcpProbe } from "../network/provider.js";
+import type { DurableMatrixResult } from "../temporal/client.js";
+import type { GeoQaRunInput } from "../temporal/workflows.js";
 import { buildRuntime, newRunId, type RunEngine, type RunSpec } from "../run/context.js";
 import { containedPath, loadTenant, tenantEvidenceRoot, tenantOwnsTarget } from "../tenant/registry.js";
 import {
@@ -94,7 +96,11 @@ import { HISTORY_SCHEMA_VERSION, type RunRecord } from "../history/records.js";
 import type { Tenant } from "../tenant/types.js";
 import { executeRun, prepareRun } from "../run/execute.js";
 import {
+  countScenarios,
   expandMatrix,
+  matrixVerdict,
+  OUTCOME_BY_VERDICT,
+  resolveConcurrency,
   runMatrix,
   type MatrixResult,
   type MatrixScenario,
@@ -211,6 +217,16 @@ export interface CommandDeps {
    */
   cooldownPath?: string;
   cooldownMs?: number;
+  /**
+   * Starts a durable sweep. Injected so the unit suite never opens a socket, for the same
+   * reason `probe`, `pruneFs` and `usageProbe` are.
+   *
+   * The connector is already bound by whoever supplies this, so the CLI layer never names a
+   * Temporal type it would then have to construct. Absent means `--durable` is REFUSED rather
+   * than silently running in this process: a caller that asked for durability and got a local
+   * run would be told nothing, because the output of the two is identical.
+   */
+  startDurable?: (runs: GeoQaRunInput[], options: { workflowId: string; address?: string; concurrency?: number }) => Promise<DurableMatrixResult>;
   /**
    * Injectable so the unit suite never reads the vendor's usage API. Same reason
    * `probe` and `pruneFs` exist: a quota check that could only be tested by spending
@@ -1054,6 +1070,15 @@ export interface MatrixRunOptions {
   concurrency?: number;
   /** Expand and validate, launch nothing. */
   dryRun?: boolean;
+  /**
+   * Run the sweep as a Temporal workflow instead of in this process.
+   *
+   * The two modes are the same matrix and the same scenarios; what differs is who survives a
+   * crash halfway through. A durable run that cannot reach Temporal FAILS rather than falling
+   * back — see `temporal/client.ts`.
+   */
+  durable?: boolean;
+  temporalAddress?: string;
   /** Required before a matrix containing a state-changing journey will run. */
   allowWrites?: boolean;
   verifyEndpoint?: string;
@@ -1181,6 +1206,70 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
     );
   }
 
+  /**
+   * The durable path, and the refusal that keeps it honest.
+   *
+   * `--durable` without an injected starter is an ERROR, never a quiet local run. The two modes
+   * produce identical output, so a caller who asked for durability and silently got a process
+   * that dies with the terminal would have no way to notice — which is the same class of lie as
+   * an unmeasured metric reported as fine, and worse, because it looks like success.
+   *
+   * The scenarios, the seeds, the provider selection and the write guard above are all shared:
+   * only who executes them changes. That is invariant 12 as a code path rather than as a rule.
+   */
+  /**
+   * The spec a scenario runs under, WITHOUT the network resolution.
+   *
+   * `prepareRun` picks the exit and writes the init script, and on the durable path that happens
+   * inside the `prepare` activity — so the proxy selection is part of the workflow's own history
+   * and survives a crash, rather than being a decision this process made and forgot. Everything
+   * else is identical to the in-process `plan` below, deliberately: the two modes differ in who
+   * executes them, not in what they were asked to do.
+   */
+  const baseSpecFor = (scenario: MatrixScenario): GeoQaRunInput["base"] => {
+    const profileId = `${scenario.market}-${scenario.device}`;
+    const slug = scenario.target === null ? `${profileId}-${scenario.journey}` : `${profileId}-${scenario.journey}-${scenario.index}`;
+    return {
+      runId: newRunId(slug, deps.now()),
+      engine,
+      seed: scenarioSeed(baseSeed, scenario.key),
+      corroborateGeo: options.corroborate === true,
+      ...(deps.retention ? { retention: deps.retention } : {}),
+      ...browserCaps(deps),
+      target: scenario.target ?? options.url,
+      profilePath: profilePath(deps, profileId),
+      journeyPath: journeyPath(deps, scenario.journey),
+      evidenceRoot: deps.evidenceRoot,
+      vars: options.vars ?? {},
+      headed: options.headed ?? false,
+      verifyEndpoint: options.verifyEndpoint ?? DEFAULT_VERIFY_ENDPOINT,
+    };
+  };
+
+  if (options.durable === true) {
+    if (deps.startDurable === undefined) {
+      throw new Error(
+        "--durable needs a Temporal client, and this process has none wired. It will NOT fall back to running in-process: a durable sweep and a local one produce the same output, so a silent fallback would be undetectable.",
+      );
+    }
+    const startedAt = new Date(deps.now()).toISOString();
+    // The base spec only — `prepareRun` runs inside the workflow's `prepare` activity, which is
+    // what makes the proxy selection part of the durable history rather than of this process.
+    const runs: GeoQaRunInput[] = scenarios.map((scenario) => ({
+      base: baseSpecFor(scenario),
+      providerName: provider.name,
+      ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
+      startedAt,
+    }));
+    const durable = await deps.startDurable(runs, {
+      workflowId: newRunId("matrix", deps.now()),
+      ...(options.temporalAddress ? { address: options.temporalAddress } : {}),
+      ...(options.concurrency !== undefined ? { concurrency: options.concurrency } : {}),
+    });
+    deps.log(`durable: workflow ${durable.workflowId} @ ${durable.address}`);
+    return { ...common, result: durableMatrixResult(durable, scenarios, startedAt) };
+  }
+
   const result = await runMatrix({
     axes,
     plan: async (scenario) => {
@@ -1242,6 +1331,57 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
   });
 
   return { ...common, result };
+}
+
+/**
+ * A durable sweep's results, in the shape `matrix run` already renders.
+ *
+ * The two execution modes must be indistinguishable to a reader — that is the whole point of
+ * offering both — so the durable path maps into `MatrixResult` rather than growing a second
+ * renderer. `OUTCOME_BY_VERDICT` is imported rather than re-derived: two tables would drift, and
+ * a matrix that counted a FAIL as a pass on one mode and not the other is exactly the divergence
+ * invariant 12 exists to prevent.
+ *
+ * Zipped by INDEX, which is sound because `geoQaMatrixWorkflow` sorts its results back into
+ * input order for this reason. A workflow returning fewer results than there were scenarios
+ * would silently shift every later row onto the wrong scenario, so the length is checked rather
+ * than trusted.
+ *
+ * `durationMs` is 0 and `peakInFlight` is the bound rather than a measurement: workflow code may
+ * not read the clock, and this process did not run the scenarios so it cannot say how many were
+ * ever in flight. Reporting a plausible number we did not measure is the one thing this codebase
+ * refuses everywhere else — Temporal's own history has the real timings.
+ */
+function durableMatrixResult(durable: DurableMatrixResult, scenarios: MatrixScenario[], startedAt: string): MatrixResult {
+  /**
+   * One guard, checking BOTH the count and every entry, so the map below needs no arm for a
+   * missing result.
+   *
+   * The types say a `GeoQaWorkflowResult` always carries one, and across a workflow boundary a
+   * type is a claim about what should arrive rather than about what did. But the answer to that
+   * is a guard here, not a branch in the map: an arm with no reachable failure is dead code the
+   * coverage gate can only be silenced about, and — worse — it would turn a malformed response
+   * into a single `unmeasured` row buried among real ones, when the honest reading is that the
+   * whole sweep cannot be trusted to line up.
+   */
+  const runs = durable.results.map((r) => r?.result);
+  if (runs.length !== scenarios.length || runs.some((r) => r === undefined)) {
+    throw new Error(
+      `the durable sweep returned ${runs.filter((r) => r !== undefined).length} usable result(s) for ${scenarios.length} scenario(s) — they are matched by position, so a mismatch would attribute every later result to the wrong market. Inspect workflow ${durable.workflowId}.`,
+    );
+  }
+  const mapped: MatrixScenarioResult[] = scenarios.map((scenario, index) => {
+    const run = runs[index] as GeoQaRunResult;
+    return { scenario, outcome: OUTCOME_BY_VERDICT[run.verdict], result: run, error: null, startedAt, durationMs: 0 };
+  });
+  return {
+    startedAt,
+    durationMs: 0,
+    concurrency: { limit: resolveConcurrency(undefined), peakInFlight: 0 },
+    scenarios: mapped,
+    counts: countScenarios(mapped),
+    verdict: matrixVerdict(countScenarios(mapped)),
+  };
 }
 
 /** One line per scenario a human has to act on. */

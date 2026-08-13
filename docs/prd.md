@@ -488,6 +488,10 @@ unmeasured guess until EXP-007 runs.
   reach the graph a local run does — so the shared part has to be the part that touches
   nothing. A durable sweep four times slower than the local one, for no stated reason,
   is a divergence discovered as a mystery rather than read as a decision.
+- **R-173** A durable run that cannot reach its orchestrator **fails**; it never falls
+  back to running locally. The two execution modes produce identical output, so a silent
+  fallback would report durability that never existed — a lie indistinguishable from
+  success. The failure names the address, because the fix is one command away.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never

@@ -432,6 +432,13 @@ contract is that `work` never throws: a rejected task would reject the pool and 
 every queued scenario unattempted, so the gaps would be indistinguishable from markets
 that were fine.
 
+**38. `--durable` FAILS when Temporal is unreachable; it never runs locally instead.**
+Both modes render the same `MatrixResult`, which is what makes them comparable — and
+what makes a silent fallback undetectable. The connector is injected, and the real one
+lives in `temporal/connect.ts` so `@temporalio/client` stays out of every other caller's
+graph and `client.ts` stays covered. The durable path sends BASE specs so `prepare`
+resolves the proxy inside the workflow, putting the exit choice in the durable history.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

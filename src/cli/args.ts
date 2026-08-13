@@ -341,7 +341,8 @@ Multi-tenancy:
                    [--engine agent-browser|playwright] [--seed <n>]
                    [--repeat <n>] [--var k=v]... [--headed]
                    [--dry-run] [--allow-writes] [--corroborate] [--json]
-      Market x device x journey, in this process, with a bounded pool. --market
+                   [--durable] [--temporal-address <host:port>]
+      Market x device x journey, with a bounded pool. --market
       and --journey are required and both accept commas and repetition;
       --device defaults to mobile,desktop, because a market covered on one
       device cannot catch a device-specific defect.
@@ -374,9 +375,19 @@ Multi-tenancy:
       base + a hash of its own key, so scenarios differ from each other while
       the entire matrix replays exactly from one number.
 
-      --concurrency is PROVISIONAL (default 2): each in-flight scenario costs a
-      browser context and, on agent-browser, a whole Chrome. The result records
-      both the bound and the peak actually reached.
+      --concurrency defaults to 4, which EXP-007 measured rather than guessed:
+      100% completion and verdict agreement at 2, 4, 8, 12 and 16, and 4 rather
+      than 16 because the default must be safe on the smallest machine that will
+      run it. Each in-flight scenario costs a browser context and, on
+      agent-browser, a whole Chrome. The result records both the bound and the
+      peak actually reached.
+
+      --durable runs the same sweep as a Temporal workflow instead of in this
+      process, so a crash halfway through does not lose the finished scenarios.
+      It needs a server (temporal server start-dev) and a worker (pnpm worker).
+      If it cannot reach either it FAILS: it never falls back to running here,
+      because the two produce identical output and a silent fallback would be
+      undetectable.
 
   geoqa experiment run <id> [--samples <n>] [--geo <profile>] [--url <url>]
                             [--stability-window <duration>] [--stability-reads <n>]

@@ -484,6 +484,96 @@ describe("journeyRun", () => {
     expect(o).not.toHaveProperty("cooldownMs");
   });
 
+  it("REFUSES --durable when no Temporal client is wired, rather than running here", async () => {
+    // The honesty property of the whole durable path. A `--durable` sweep that quietly ran
+    // in-process would produce exactly what a durable one produces, with none of the
+    // durability — undetectable from the output, which is what makes it worse than a crash.
+    await expect(
+      matrixRun(deps({}), { url: "https://x", markets: ["oslo"], journeys: ["landing-page"], durable: true }),
+    ).rejects.toThrow(/will NOT fall back/);
+  });
+
+  it("hands the durable path the SAME scenarios and seeds as the in-process one", async () => {
+    // Invariant 12 as a code path: only who executes them changes. The base spec omits the
+    // network resolution because `prepareRun` runs inside the workflow's `prepare` activity —
+    // which is what puts the proxy choice in the durable history rather than in this process.
+    let captured: { runs: { base: { runId: string; seed: number; target: string } }[]; opts: { workflowId: string } } | null = null;
+    const result = await matrixRun(
+      deps({
+        startDurable: async (runs, opts) => {
+          captured = { runs, opts } as never;
+          return {
+            workflowId: opts.workflowId,
+            address: "127.0.0.1:7233",
+            namespace: "default",
+            results: runs.map(() => ({ result: { verdict: "PASS" } as never, warnings: [] })),
+          };
+        },
+      }),
+      { url: "https://x", markets: ["oslo"], journeys: ["landing-page"], devices: ["mobile"], durable: true },
+    );
+    const seen = captured as unknown as { runs: { base: { seed: number; target: string } }[] };
+    expect(seen.runs).toHaveLength(1);
+    expect(seen.runs[0]?.base.target).toBe("https://x");
+    expect(seen.runs[0]?.base.seed).toEqual(expect.any(Number));
+    // Rendered through the SAME MatrixResult shape, so a reader cannot tell the modes apart.
+    expect(result.result?.scenarios[0]?.outcome).toBe("passed");
+    // The matrix verdict uses the run vocabulary (PASS/FAIL/ERROR), not the scenario outcome
+    // vocabulary — and it comes from the same `matrixVerdict` the in-process path uses.
+    expect(result.result?.verdict).toBe("PASS");
+  });
+
+  it("does not let --durable slip past the WRITE guard", async () => {
+    // The highest-consequence ordering in this command. `contact-form` declares writes:true, so
+    // a durable sweep that started before the guard would submit one real form per scenario —
+    // and unlike the in-process path, those would keep going after the terminal closed.
+    const startDurable = vi.fn();
+    await expect(
+      matrixRun(deps({ startDurable }), {
+        url: "https://x",
+        markets: ["oslo"],
+        journeys: ["contact-form"],
+        devices: ["mobile"],
+        durable: true,
+      }),
+    ).rejects.toThrow(/--allow-writes/);
+    expect(startDurable).not.toHaveBeenCalled();
+  });
+
+  it("does not start a workflow for a --dry-run", async () => {
+    // The dry run answers the question you have BEFORE an overnight job, and it answers it for
+    // free. Starting a workflow to tell somebody how many scenarios there are would be neither.
+    const startDurable = vi.fn();
+    const out = await matrixRun(deps({ startDurable }), {
+      url: "https://x",
+      markets: ["oslo"],
+      journeys: ["landing-page"],
+      devices: ["mobile"],
+      durable: true,
+      dryRun: true,
+    });
+    expect(out.result).toBeNull();
+    expect(startDurable).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES a durable result that does not line up with the scenarios", async () => {
+    // Results are matched by POSITION, so a short array would attribute every later result to
+    // the wrong market — a sweep quietly reporting Bergen's verdict against Oslo.
+    await expect(
+      matrixRun(
+        deps({
+          startDurable: async (_runs, opts) => ({
+            workflowId: opts.workflowId,
+            address: "a",
+            namespace: "default",
+            results: [],
+          }),
+        }),
+        { url: "https://x", markets: ["oslo"], journeys: ["landing-page"], devices: ["mobile"], durable: true },
+      ),
+    ).rejects.toThrow(/matched by position/);
+  });
+
   it("passes variables and the headed flag through to the spec", async () => {
     let captured: ExecuteOptions | null = null;
     const runOnce = vi.fn(async (o: ExecuteOptions) => {
