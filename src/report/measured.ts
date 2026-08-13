@@ -29,8 +29,13 @@ export const ms = (value: number | null, reason = "the browser reported no value
  * Separate from `ms` because ZERO IS A REAL READING here: a CLS of 0 means nothing moved,
  * which is the best possible answer. A truthy check instead of a null check would hide every
  * perfect score, which is why the null check is explicit in both.
+ *
+ * `reason` is REQUIRED, unlike `score`'s. It had a default of "the browser reported no value",
+ * which no caller ever used — and a default here is worse than an absent one: this codebase's
+ * whole position is that an absence must say WHY, and a generic house reason is the shape of
+ * answer that stops anybody asking. A required parameter makes the call site state it.
  */
-export const ratio = (value: number | null, reason = "the browser reported no value"): Measured<number> =>
+export const ratio = (value: number | null, reason: string): Measured<number> =>
   value === null ? unmeasured(reason) : measured(value, String(Math.round(value * 1000) / 1000));
 
 /** A 0..100 score. */

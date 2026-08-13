@@ -130,8 +130,12 @@ export function similarity(a: string[], b: string[]): number {
     seen.add(s);
     if (setA.has(s)) shared += 1;
   }
+  // No zero-guard, because the union cannot be empty here: the early return above rejects an
+  // empty input on either side, so both sets hold at least one shingle and |A ∪ B| >= 1. A
+  // divide-by-zero guard that nothing can reach reads as care and is really an unprovable claim
+  // about the check above it.
   const union = setA.size + seen.size - shared;
-  return union === 0 ? 0 : Math.round((shared / union) * 100) / 100;
+  return Math.round((shared / union) * 100) / 100;
 }
 
 export interface ContentFindings {

@@ -165,3 +165,54 @@ describe("describeLatencySpread", () => {
     expect(describeLatencySpread(page({ oslo: 100, bodo: 500 }))).toMatch(/— 5x$/);
   });
 });
+
+describe("which run in a market represents it", () => {
+  /**
+   * The reduce that picks the LATEST run of a market, in both directions.
+   *
+   * Its ternary had one arm untested, which matters more than it sounds: a market measured
+   * twice reports one verdict, and picking the wrong one means the dashboard shows a verdict
+   * that was superseded. Both orderings are asserted because a reduce that always kept the
+   * first would pass a test where the newest happened to come first.
+   */
+  const at = (startedAt: string, verdict: "PASS" | "FAIL") =>
+    record({ startedAt, verdict, profileId: "oslo-mobile", target: "https://x" });
+
+  it("keeps the newest when it arrives LAST", () => {
+    const report = analyseSite([at("2026-01-01T00:00:00Z", "FAIL"), at("2026-01-02T00:00:00Z", "PASS")]);
+    expect(report.perPage[0]?.markets["oslo"]?.verdict).toBe("PASS");
+  });
+
+  it("keeps the newest when it arrives FIRST", () => {
+    const report = analyseSite([at("2026-01-02T00:00:00Z", "PASS"), at("2026-01-01T00:00:00Z", "FAIL")]);
+    expect(report.perPage[0]?.markets["oslo"]?.verdict).toBe("PASS");
+  });
+});
+
+describe("the median across repeats of one market", () => {
+  /**
+   * The MEDIAN, not the latest, and both parities of it.
+   *
+   * A single slow run is noise; the latest is whichever happened to finish last. The even case
+   * was untested because every fixture had one reading per market — and an even-length median
+   * averages the middle PAIR, which is a different code path from picking a middle element.
+   */
+  const withTtfb = (ttfb: number) =>
+    record({ profileId: "oslo-mobile", target: "https://x", vitals: { lcp: null, cls: null, ttfb, inp: null } });
+
+  it("averages the middle pair for an EVEN number of readings", () => {
+    // 100 and 300 → 200. Picking a middle element would give one of them.
+    const report = analyseSite([withTtfb(100), withTtfb(300)]);
+    expect(report.perPage[0]?.markets["oslo"]?.ttfbMs).toBe(200);
+  });
+
+  it("takes the middle element for an ODD number", () => {
+    const report = analyseSite([withTtfb(100), withTtfb(300), withTtfb(1000)]);
+    expect(report.perPage[0]?.markets["oslo"]?.ttfbMs).toBe(300);
+  });
+
+  it("is null when nothing measured it, rather than 0", () => {
+    // "one market measured nothing" and "every reading was zero" are different facts.
+    expect(analyseSite([record({ profileId: "oslo-mobile", target: "https://x" })]).perPage[0]?.markets["oslo"]?.ttfbMs).toBeNull();
+  });
+});

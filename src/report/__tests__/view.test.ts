@@ -49,7 +49,7 @@ describe("Measured — the type that stops a dashboard lying", () => {
   it("treats a ZERO as a real reading, because for CLS zero is good news", () => {
     // The one metric where 0 is the best possible answer rather than a missing value. A
     // truthy check instead of a null check would have hidden every perfect CLS.
-    const perfect = ratio(0);
+    const perfect = ratio(0, "no layout-shift entries were observed");
     expect(perfect.measured).toBe(true);
     expect(perfect.text).toBe("0");
     expect(ms(0).measured).toBe(true);
@@ -60,7 +60,7 @@ describe("Measured — the type that stops a dashboard lying", () => {
     // performance.timing arrives as a float: 467.19999998807907ms in a dashboard reads as
     // a report nobody looked at.
     expect(ms(467.19999998807907).text).toBe("467ms");
-    expect(ratio(0.02499999).text).toBe("0.025");
+    expect(ratio(0.02499999, "no layout-shift entries were observed").text).toBe("0.025");
   });
 });
 
@@ -230,5 +230,29 @@ describe("the UI's mirrored types do not drift", () => {
     for (const key of Object.keys(view.site)) {
       expect(sources, `site.${key} is declared but no component reads it`).toContain(key);
     }
+  });
+});
+
+describe("ratio, where ZERO is a real reading", () => {
+  it("renders 0 as a reading, not as an absence", () => {
+    // The whole reason `ratio` exists separately from `ms`. A CLS of 0 means nothing moved,
+    // which is the best possible answer, and a truthy check instead of a null check would hide
+    // every perfect score.
+    const out = ratio(0, "no layout-shift entries were observed");
+    expect(out.measured).toBe(true);
+    expect(out.text).toBe("0");
+  });
+
+  it("renders null as an absence carrying the caller's reason", () => {
+    // The arm that was untested: every existing test fed it a number. An absence here must say
+    // WHY, which is why the reason has no default.
+    const out = ratio(null, "no layout-shift entries were observed");
+    expect(out.measured).toBe(false);
+    expect(out.measured === false && out.reason).toBe("no layout-shift entries were observed");
+    expect(out.text).toBe("not measured");
+  });
+
+  it("rounds to three places, because a CLS printed to fifteen is noise dressed as rigour", () => {
+    expect(ratio(0.0031234, "r").text).toBe("0.003");
   });
 });
