@@ -290,6 +290,42 @@ export function fixtureBody(path: string, cookie = ""): FixtureResponse | null {
         ),
       };
     /**
+     * A page that renders NO text at all, ever.
+     *
+     * The other half of the empty-read rule. A settle is not a guarantee, and the engine does
+     * not pretend it is: "the page rendered nothing" and "we looked too early" are
+     * indistinguishable from inside a text check, and when this engine cannot distinguish it
+     * does not blame the page. The check is reported unreadable — our defect — which still
+     * blocks the publish gate. A different sentence, the same outcome.
+     */
+    case "/empty-body":
+      return { status: 200, html: shell("Empty body", "") };
+    /**
+     * A client-rendered page: an EMPTY body that fills in after hydration.
+     *
+     * Modelled on xala.no, which is where this was found. `getText` is `innerText`, and
+     * Playwright auto-waits only for the element to be ATTACHED — so a read taken at `load`
+     * returns zero characters and every text check compares against an empty string, then files
+     * the result as a SITE finding. Measured on the real site: 0 characters at `load`, 6,077 one
+     * second later, against a page whose `<html lang>` is `nb-NO` and entirely correct.
+     *
+     * A regression test for the engine rather than a defect fixture — like `/slow-heading`, and
+     * for the same reason it is absent from `DEFECTS`. The delay is 300ms: long enough that an
+     * unsettled read reliably sees nothing, short enough that the suite does not pay for it.
+     */
+    case "/hydrates-late":
+      return {
+        status: 200,
+        html: shell(
+          "Hydrates late",
+          `<script>
+             setTimeout(() => {
+               document.body.innerHTML = '<h1>Vi bygger saksbehandlingssystemer</h1><p>Priser fra kr 1 200.</p>' + ${JSON.stringify(LINKS)};
+             }, 300);
+           </script>`,
+        ),
+      };
+    /**
      * A manual language override, and whether it survives the next click.
      *
      * The scenario: a visitor on a Norwegian IP gets Norwegian, chooses English,

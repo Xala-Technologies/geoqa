@@ -19,6 +19,66 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — Fixing what the second site found, and a fourth defect the fix exposed
+
+C-13 and C-14 are closed, and writing the test for them surfaced C-17.
+
+### An empty text read is confirmed, then refused rather than blamed on the page (C-13)
+
+Fixed in **two** places, because one was not enough.
+
+`PlaywrightRuntime.getText` re-reads once after a settle when the first read is empty —
+the same shape as `isVisible`, sharing the same budget. **Only the empty read is
+retried**: a non-empty read that simply lacks the value is a real reading of a real
+page, and re-reading it would be the silent retry this engine refuses everywhere else,
+turning an intermittent site defect into a green run.
+
+A settle is not a guarantee, so `assertions.ts` does not treat it as one. Text still
+empty afterwards is **unreadable**, never failed — and that closes the same hole on
+`text-absent`, where an empty page trivially lacks every string and the check went
+green.
+
+Both engines confirm, not just Playwright — agent-browser is the *default*, and
+leaving the retry to the other adapter would have given the default the weaker
+protection.
+
+Proven three ways: unit tests on both halves, a `/hydrates-late` fixture reproducing
+the shape at 300ms, and the live site. **The same journey against the same xala.no
+page now reads 6,000 characters and passes**, where an hour earlier it filed a
+high-severity defect against a correctly-localised page.
+
+Worth noting: `agent-browser.ts`'s `isVisible` comment *already* names xala.no, whose
+`h1` has an entrance fade and read `opacity: 0` for the first second — 4 failures of 4
+runs. The same site produced this defect through a second primitive, a month apart. A
+page slower than the engine breaks every read the engine does not settle, one at a
+time.
+
+### An unfilled `{placeholder}` is our defect, not a verdict (C-14)
+
+`evaluateCheck` now refuses any check whose value still carries a `{word}`, and names
+the missing variable: *"the journey variable {forbiddenCurrency} was never supplied …
+pass --var forbiddenCurrency=<value>"*. A value that merely contains braces — a JSON
+blob, a template literal in copy — is not caught by accident.
+
+Live, the same journey went from **one false FAIL plus one silent green PASS** to two
+named refusals telling the operator exactly what to pass.
+
+### An errored step was filed under the category the journey declared (C-17)
+
+Found by writing the e2e assertion for C-13 — it stated the intended rule and failed.
+
+`categoryFor` read the step's declared category *before* the errored check, while
+`classify.ts` opens by stating the opposite: *a step we could not read never becomes a
+site finding.* `localization.yaml` declares `category: localization` on both text
+checks, so a run where the engine looked too early produced a pile of **localization
+defects** titled "Could not verify: …". Somebody investigates the site; our defect
+stays invisible — in the journey this project is named for.
+
+The inconsistency that gave it away sits one function below: `severityFor` has always
+overridden a declared severity for an errored step, with a comment saying why.
+
+---
+
 ## 2026-08-13 — A second live target, and three defects it found in an hour
 
 `xala.no` was named as the second real site, which was the whole of what

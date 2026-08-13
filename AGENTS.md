@@ -392,6 +392,20 @@ the collector alone would report the kinds the config excluded as MISSING and dr
 completeness for obeying the config. Carried as a copy: `RETENTION` is module-level
 and mutable, and one run narrowing a tier must not narrow every later run's.
 
+**33. A zero reading is not a reading about the page.** An empty text read is confirmed
+after a settle (`getText`, mirroring `isVisible`) and then reported **unreadable** —
+never failed, never passed. Only the empty read is retried; a non-empty one that lacks
+the value is a real site finding, and re-reading it would be the silent retry the
+engine refuses everywhere else. Same rule for an unfilled `{placeholder}`: it is our
+defect, not a verdict, and `text-absent` is where it mattered — every page lacks the
+literal string `{forbiddenCurrency}`, so the check went green having verified nothing.
+
+**34. An ERRORED step is ours, whatever the journey declared.** `categoryFor` checks
+the outcome before the declaration, exactly as `severityFor` already did. R-13 lets a
+step override the category derived from its CHECK KIND, not the one derived from its
+OUTCOME — no author can know in advance that a step will be unreadable, and
+`localization.yaml` was filing our blindness as localization defects.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

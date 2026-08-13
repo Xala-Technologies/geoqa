@@ -868,6 +868,49 @@ describe("VITALS_EXPRESSION", () => {
   });
 });
 
+describe("getText settles an EMPTY reading", () => {
+  it("re-reads once when the first read returns nothing", async () => {
+    // Playwright auto-waits for the element to be ATTACHED, and a client-rendered shell's
+    // <html> is attached before a single character exists. Measured on xala.no: 0 chars at
+    // load, 6,077 one second later — and the engine filed that as a site defect.
+    let call = 0;
+    const built = session({
+      locator: {
+        innerText: () => {
+          call += 1;
+          return Promise.resolve(call === 1 ? "" : "Vi bygger saksbehandlingssystemer");
+        },
+      },
+    });
+    expect(dataOf(await runtimeOver(built).getText("html"))).toBe("Vi bygger saksbehandlingssystemer");
+    expect(call).toBe(2);
+  });
+
+  it("does NOT re-read a page that rendered text and simply lacks the value", async () => {
+    // The silent retry this engine refuses everywhere else. A non-empty read is a real reading
+    // of a real page, and re-reading it would turn an intermittent site defect into a green
+    // run — exactly the damage `--repeat` exists to avoid doing.
+    let call = 0;
+    const built = session({
+      locator: {
+        innerText: () => {
+          call += 1;
+          return Promise.resolve("hello");
+        },
+      },
+    });
+    expect(dataOf(await runtimeOver(built).getText("body"))).toBe("hello");
+    expect(call).toBe(1);
+  });
+
+  it("hands back the empty string when the page really did render nothing", async () => {
+    // A settle is not a guarantee, and this does not pretend it is: `assertions.ts` reports a
+    // still-empty read as unreadable rather than as a site failure.
+    const built = session({ locator: { innerText: () => Promise.resolve("") } });
+    expect(dataOf(await runtimeOver(built).getText("body"))).toBe("");
+  });
+});
+
 describe("visibleCount", () => {
   it("reports how many VISIBLE elements a selector matched", async () => {
     // For the evidence, not for a check: it lets a report tell "the first of three search

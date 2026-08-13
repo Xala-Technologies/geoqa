@@ -151,8 +151,26 @@ export class AgentBrowserRuntime implements BrowserRuntime {
     });
   }
 
+  /**
+   * Rendered text, with an EMPTY reading confirmed — the same rule as `isVisible` below.
+   *
+   * This engine is the DEFAULT, so leaving the confirmation to the Playwright adapter would
+   * give the default the weaker protection. `assertions.ts` refuses a still-empty read on
+   * either engine, so the safety property held regardless; what the retry adds is the
+   * difference between a genuine PASS and an honest refusal, and a run that could have read
+   * the page should read it.
+   *
+   * Only an EMPTY read is confirmed. A non-empty read that lacks the value is a real reading
+   * of a real page, and re-reading it would be the silent retry this engine refuses everywhere
+   * else — an intermittent site defect turned into a green run.
+   */
   async getText(selector: string): Promise<BrowserResult<string>> {
-    return mapOk(await this.run(["get", "text", selector]), (d) => toText(d));
+    let out = await this.run(["get", "text", selector]);
+    if (out.ok && toText(out.data) === "") {
+      await this.run(["wait", String(this.absenceSettleMs)]);
+      out = await this.run(["get", "text", selector]);
+    }
+    return mapOk(out, (d) => toText(d));
   }
 
   async getTitle(): Promise<BrowserResult<string>> {

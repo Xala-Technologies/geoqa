@@ -212,3 +212,28 @@ describe("siteFindingShare", () => {
     expect(siteFindingShare([])).toEqual({ site: 0, instrumentation: 0, ratio: 1 });
   });
 });
+
+describe("an errored step with a DECLARED category", () => {
+  const errored = { index: 0, action: "assert" as const, label: "language marker", outcome: "errored" as const, severity: "high", category: "localization" as const, check: "text-contains", detail: "d", expected: "e", observed: "not read", durationMs: 1 };
+
+  it("is filed against US, not under the category the journey declared", () => {
+    // `categoryFor` used to read the declaration first, which reversed the rule this module
+    // opens with. `localization.yaml` declares `category: localization` on both text checks, so
+    // an unreadable step became a localization DEFECT titled "Could not verify: …" — a pile of
+    // site findings on a run where the engine looked before the page had rendered. Somebody
+    // investigates the site; our defect stays invisible.
+    expect(categoryFor(errored)).toBe("instrumentation");
+  });
+
+  it("still honours the declaration when the step actually READ the page", () => {
+    // R-13 is unchanged: a step may override the category derived from its CHECK KIND. Only
+    // the outcome-derived one wins, because no author can know a step will be unreadable.
+    expect(categoryFor({ ...errored, outcome: "failed" })).toBe("localization");
+  });
+
+  it("matches how severity already treats the same step", () => {
+    // The inconsistency that gave it away: `severityFor` has always overridden the step's own
+    // severity for an errored step, one function below, for exactly this reason.
+    expect(severityFor(errored)).toBe("high");
+  });
+});

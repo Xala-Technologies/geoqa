@@ -1491,7 +1491,7 @@ single slow run is noise and "latest" means whichever finished last.
 
 ## D. Tooling and process gaps
 
-### C-13 · A text check has NO settle, so a client-rendered site reports a false site defect
+### C-13 · CLOSED — an empty text read is confirmed, then refused rather than blamed on the page
 
 **Found by pointing the engine at a second real site**, which is exactly what
 [C-7](#c-7--one-live-target) said a second site was for.
@@ -1520,16 +1520,42 @@ same failure mode and none of the protection — and it is worse, because
 `selector-visible` at least has a 5-second budget, which is why the `landing-page`
 journey passes on the same site in the same second that the text check reads zero.
 
-The fix has the same shape as the visibility one: a text read of ZERO characters is
-not a reading, it is "nothing rendered yet", and it must be re-read before a check is
-allowed to build a verdict on it. A non-empty read that simply lacks the value is a
-real reading and must NOT be retried — that is a site finding and retrying it would be
-the silent-retry defect the journey engine refuses everywhere else.
+**CLOSED in two places, because one was not enough.** `PlaywrightRuntime.getText`
+re-reads once after a settle when the first read is EMPTY — the same shape as
+`isVisible`, sharing the same `absenceSettleMs`. Only an empty read is retried: a
+non-empty read that simply lacks the value is a real reading of a real page, and
+re-reading it would be the silent retry this engine refuses everywhere else, turning
+an intermittent site defect into a green run.
 
-Where: `browser/playwright.ts` (`getText`), `journeys/assertions.ts`
-(`text-contains`, `text-absent`).
+A settle is not a guarantee, so `assertions.ts` does not treat it as one. Text that is
+still `""` afterwards is reported **unreadable**, never failed: "the page rendered
+nothing" and "we looked too early" are indistinguishable from inside a check, and when
+this engine cannot distinguish it does not blame the page. That lands as
+`errored`/instrumentation and still blocks the publish gate — a different sentence,
+the same outcome. It also closes the same hole on `text-absent`, where an empty page
+trivially lacks every string and the check went green.
 
-### C-14 · An unsubstituted `{placeholder}` in a `text-absent` check passes VACUOUSLY
+Proven three ways: unit tests on both halves, a `/hydrates-late` fixture reproducing
+the shape at 300ms, and the live site — the same journey against the same xala.no page
+now reads 6,000 characters and passes.
+
+**Both engines confirm, not just Playwright.** agent-browser is the DEFAULT, so leaving
+the retry to the other adapter would have given the default the weaker protection. The
+`assertions.ts` refusal covers both regardless — what the retry adds is the difference
+between a genuine PASS and an honest refusal, and a run that could have read the page
+should read it.
+
+Worth noting where this site had appeared before: `agent-browser.ts`'s `isVisible`
+comment already names xala.no, whose `h1` has an entrance fade and read `opacity: 0`
+for the first second — 4 failures of 4 runs, deterministic rather than flaky. The same
+site produced this defect through a second primitive, a month apart. A page that is
+slower than the engine breaks every read the engine does not settle, one at a time.
+
+Where: `browser/playwright.ts` and `browser/agent-browser.ts` (`getText`),
+`journeys/assertions.ts` (`NOTHING_RENDERED`), `fixtures/server.ts`
+(`/hydrates-late`, `/empty-body`).
+
+### C-14 · CLOSED — an unfilled `{placeholder}` is our defect, not a verdict
 
 Found in the same run, and it is the more dangerous of the two.
 
@@ -1549,11 +1575,16 @@ The second is the one that matters. A false FAIL wastes an afternoon; a false PA
 the exact conflation of "we could not measure" with "it is fine" that this engine
 exists to refuse, and it is invisible — the run reports PASS and nobody looks.
 
-A check whose value still contains an unsubstituted `{...}` after resolution should be
-`errored`/instrumentation — our defect, not the site's — never `passed` and never
-`failed`. `resolveSteps` already knows which placeholders it could not fill.
+**CLOSED.** `evaluateCheck` refuses any check whose value still carries a `{word}`
+after resolution, and names the missing variable in the message: *"the journey variable
+{forbiddenCurrency} was never supplied … pass --var forbiddenCurrency=<value>"*. It
+matches `resolveSteps`'s own pattern, so a value that merely contains braces — a JSON
+blob, a template literal in real copy — is not caught by accident.
 
-Where: `journeys/spec.ts` (`resolveSteps`), `journeys/assertions.ts`.
+Proven live: the same journey against xala.no went from one false FAIL plus one silent
+green PASS to two named refusals telling the operator exactly what to pass.
+
+Where: `journeys/assertions.ts` (`UNFILLED_PLACEHOLDER`).
 
 ### C-15 · The localization journey looks for a markup ATTRIBUTE in rendered TEXT
 
@@ -1576,6 +1607,34 @@ first is the honest one, because a visible-copy marker tests the copy, not the
 document's declared language.
 
 Where: `journeys/localization.yaml`, `journeys/assertions.ts`.
+
+### C-17 · CLOSED — an errored step was filed under the category the journey declared
+
+Found by writing the e2e assertion for C-13, which stated the intended rule and failed.
+
+`categoryFor` read the step's DECLARED category before the errored check:
+
+```ts
+if (step.category) return step.category;      // ← ran first
+if (step.outcome === "errored") return "instrumentation";
+```
+
+`classify.ts` opens by stating the opposite: *a step we could not read never becomes a
+site finding.* `localization.yaml` declares `category: localization` on both of its
+text checks, so a run where the engine looked before the page rendered produced a pile
+of **localization defects** titled "Could not verify: …". Somebody investigates the
+site; our defect stays invisible — the exact failure the split exists to prevent, in
+the journey this project is named for.
+
+The inconsistency that gave it away is one function below: `severityFor` has always
+overridden the step's declared severity for an errored step, with a comment saying why.
+Category now does the same.
+
+[R-13](prd.md) is unchanged and this honours it as written — a step may override the
+category **derived from its check kind**. `instrumentation` is derived from the
+OUTCOME, and no journey author can know in advance that a step will be unreadable.
+
+Where: `findings/classify.ts` (`categoryFor`).
 
 ### C-16 · xala.no, the second live target: what the journeys found
 

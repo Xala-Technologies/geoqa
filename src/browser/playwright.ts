@@ -454,8 +454,32 @@ export class PlaywrightRuntime implements BrowserRuntime {
     return this.withSession("playwright:evaluate", async (s) => (await s.page.evaluate(expression)) as T);
   }
 
+  /**
+   * Rendered text, with an EMPTY reading confirmed rather than trusted.
+   *
+   * The same lesson as `isVisible` below, arriving from a direction nobody checked. Playwright
+   * auto-waits for the element to be ATTACHED, and on a client-rendered site the shell's
+   * `<html>` and `<body>` are attached before a single character exists — so the read returns
+   * `""` instantly and every text check compares against an empty string, then files the result
+   * as a SITE finding.
+   *
+   * Measured on xala.no, which is why this exists: 0 characters at `load`, 6,077 one second
+   * later, 6,325 at three. The engine reported "page carries the market's language marker — 0
+   * chars read" against a page whose `<html lang>` is `nb-NO` and entirely correct.
+   *
+   * **Only an EMPTY read is retried.** A non-empty read that simply lacks the value is a real
+   * reading of a real page, and re-reading it would be the silent retry this engine refuses
+   * everywhere else — it would turn an intermittent site defect into a green run, which is
+   * exactly the damage `--repeat` exists to avoid doing.
+   *
+   * A settle is not a guarantee, and `assertions.ts` does not treat it as one: text that is
+   * still empty after this is reported as unreadable, never as a site failure.
+   */
   async getText(selector: string): Promise<BrowserResult<string>> {
-    return this.withSession(`playwright:innerText ${selector}`, (s) => s.page.locator(selector).innerText());
+    const first = await this.withSession(`playwright:innerText ${selector}`, (s) => s.page.locator(selector).innerText());
+    if (!first.ok || first.data !== "") return first;
+    await this.withSession("playwright:settle", (s) => s.page.waitForTimeout(this.absenceSettleMs));
+    return this.withSession(`playwright:innerText ${selector} (confirm)`, (s) => s.page.locator(selector).innerText());
   }
 
   async getTitle(): Promise<BrowserResult<string>> {
