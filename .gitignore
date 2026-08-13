@@ -23,3 +23,6 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# Service-account JSON and anything else pulled from the fleet VPS.
+secrets/
