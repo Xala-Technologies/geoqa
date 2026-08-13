@@ -43,6 +43,10 @@ export default defineConfig({
         // what an UNREAD figure means, is `tenant/quota.ts` and is fully covered
         // against injected data.
         "src/tenant/usage-probe.ts",
+        // One SDK call and a shape translation, no judgement. Every decision about a
+        // durable run lives in `client.ts` and is covered against a fake connector;
+        // exercising this file means connecting to a Temporal server.
+        "src/temporal/connect.ts",
         // Every activity is a thin wrapper that news up a real provider /
         // runtime and delegates; the logic each one calls is at 100%.
         "src/temporal/activities.ts",

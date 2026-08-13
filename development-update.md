@@ -19,6 +19,60 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — The durable path can finally be started, and refuses to pretend
+
+`geoQaRunWorkflow` and `geoQaMatrixWorkflow` had been written and tested since Phase 0,
+and `worker.ts` could poll for them — but **nothing ever constructed a Temporal client**.
+The durable execution mode was reachable only by writing one by hand, which meant it was
+reachable by nobody.
+
+`geoqa matrix run --durable` now starts the sweep as a workflow and renders the result
+through the **same `MatrixResult` shape** the in-process path uses, so a reader cannot
+tell the modes apart. That is the point of offering both — and it is also exactly what
+makes the next rule necessary.
+
+### A durable run that cannot reach Temporal FAILS
+
+It never falls back to running locally. Because the two modes produce identical output, a
+silent fallback would report a durable sweep with none of the durability: **a lie that
+looks exactly like success**, which is the hardest kind to notice. Proven against an
+absent server:
+
+```
+could not reach Temporal at 127.0.0.1:7233: Failed to connect before the deadline.
+A durable run does NOT fall back to the in-process runner — it would report a durable
+sweep that never was. Start a server with `temporal server start-dev` and a worker with
+`pnpm worker`, or drop --durable to run in this process.
+```
+
+### The happy path is proven too, which was not expected to be possible
+
+There is no Temporal CLI on this machine, so the plan was to ship the client as a
+dormant seam. But `@temporalio/testing` provides a **real** server — so the test suite
+now drives `durableMatrix`, the same function the CLI calls, against a real worker and a
+real task queue.
+
+The queue name is the detail that would otherwise have bitten: a client polling a queue
+nobody serves does not fail, it waits forever and says nothing.
+
+### Two decisions worth keeping
+
+The connector is injected, and the real one lives in its own file so
+`@temporalio/client` stays out of every other caller's import graph while the client
+itself stays fully covered — the same split `network/auth-probe.ts` already uses.
+
+The durable path sends **base** specs and lets the `prepare` activity resolve the proxy
+inside the workflow, so the exit selection is part of the durable history rather than a
+decision this process made and forgot.
+
+### What is NOT proven, said plainly
+
+No durable sweep has run against a real browser and a real site. The client, the queue,
+the workflow and the refusal are all exercised; what a full durable run does to the
+evidence tree is not.
+
+---
+
 ## 2026-08-13 — The durable path stops disagreeing with the local one
 
 The Temporal matrix workflow ran its children **sequentially**, with a comment explaining

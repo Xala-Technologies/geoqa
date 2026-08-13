@@ -17,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { GeoQaRunResult } from "../../findings/types.js";
 import type { RunSpec } from "../../run/context.js";
 import { TASK_QUEUE } from "../constants.js";
+import { durableMatrix, type TemporalConnector } from "../client.js";
 import type { GeoQaRunInput } from "../workflows.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -261,4 +262,47 @@ describe("geoQaMatrixWorkflow", () => {
     expect(out).toHaveLength(2);
     expect(order.slice(0, SEQUENTIAL_FIRST_RUN.length)).toEqual(SEQUENTIAL_FIRST_RUN);
   }, 90_000);
+});
+
+describe("durableMatrix, against a REAL Temporal server", () => {
+  /**
+   * The half of the durable path that had never been exercised: a client that starts a workflow.
+   *
+   * Everything else in this file drives the workflow through `env.client` directly. This drives
+   * it through `durableMatrix` — the same function the CLI calls — over a connector wired to the
+   * test environment's real client. So the queue name, the workflow type string, the argument
+   * shape and the result unwrapping are all proven rather than assumed, and any of them being
+   * wrong would previously have surfaced only against a live server.
+   *
+   * The queue name is the one that would have bitten: a client polling a queue nobody serves
+   * does not fail, it waits forever and says nothing.
+   */
+  const envConnector = (): TemporalConnector => ({
+    // The test environment's real client, satisfying the structural interface — which is the
+    // point of declaring that interface structurally rather than importing the SDK's type.
+    // `close` is a no-op because the environment owns this connection's lifetime.
+    connect: () => Promise.resolve({ client: env.client as never, close: () => Promise.resolve() }),
+  });
+
+  it("starts the matrix workflow and returns one result per run", async () => {
+    const order: string[] = [];
+    const worker = await Worker.create({
+      connection: env.nativeConnection,
+      taskQueue: TASK_QUEUE,
+      workflowsPath,
+      activities: stubs(order),
+    });
+    const out = await worker.runUntil(
+      durableMatrix([INPUT, INPUT], {
+        connector: envConnector(),
+        workflowId: `wf-${++workflowSeq}-durable-matrix`,
+        concurrency: 2,
+      }),
+    );
+    expect(out.results).toHaveLength(2);
+    expect(order.filter((s) => s === "runJourneyActivity")).toHaveLength(2);
+    // The id comes back off the handle, so a caller can find the sweep again after the terminal
+    // has gone — `temporal workflow show -w <id>`.
+    expect(out.workflowId).toContain("durable-matrix");
+  }, 120_000);
 });

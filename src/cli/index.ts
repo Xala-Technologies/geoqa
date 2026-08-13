@@ -63,6 +63,8 @@ import {
 } from "./commands.js";
 import { configPath, loadConfig } from "../config/load.js";
 import { cooldownStorePath } from "../network/cooldown.js";
+import { durableMatrix } from "../temporal/client.js";
+import { nativeConnector } from "../temporal/connect.js";
 import { findExperiment } from "../experiments/definitions.js";
 import { DEFAULT_MATRIX_CONCURRENCY } from "../run/matrix.js";
 import { gateExitCode } from "../gate/publish.js";
@@ -144,6 +146,10 @@ async function main(argv: string[]): Promise<number> {
     // every command must see the same store — two paths for one vendor's health is how a
     // cooled-down provider gets retried by whichever command looked at the other file.
     cooldownMs: config.network.cooldownMs,
+    // The connector is bound HERE and nowhere else, so `commands.ts` never names a Temporal
+    // type it would then have to construct, and the SDK stays out of every other caller's
+    // import graph — `nativeConnector` imports it dynamically, on use.
+    startDurable: (runs, opts) => durableMatrix(runs, { ...opts, connector: nativeConnector }),
   });
   /**
    * `--tenant`, resolved BEFORE anything else that touches the filesystem.
@@ -366,6 +372,8 @@ async function main(argv: string[]): Promise<number> {
       repeat: flagNumber(args, "repeat", 1),
       concurrency: flagNumber(args, "concurrency", DEFAULT_MATRIX_CONCURRENCY),
       dryRun: flagBool(args, "dry-run"),
+      durable: flagBool(args, "durable"),
+      ...(args.flags["temporal-address"] !== undefined ? { temporalAddress: flagString(args, "temporal-address", "") } : {}),
       allowWrites: flagBool(args, "allow-writes"),
       corroborate: flagBool(args, "corroborate"),
       ...(args.flags.seed !== undefined ? { seed: flagNumber(args, "seed", 0) } : {}),
