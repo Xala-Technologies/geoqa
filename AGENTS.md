@@ -439,6 +439,14 @@ lives in `temporal/connect.ts` so `@temporalio/client` stays out of every other 
 graph and `client.ts` stays covered. The durable path sends BASE specs so `prepare`
 resolves the proxy inside the workflow, putting the exit choice in the durable history.
 
+**39. A run behaviour lives in ONE function both execution modes call.** `repeatJourney`
+and `closeEgress` are in `run/stages.ts` for that reason; `executeRun` and the Temporal
+activities both delegate. Six behaviours had silently drifted apart before anyone looked
+(gaps D-5), one of them added by a fix on the day it landed — because a durable run could
+not be started, so the omission was never executed. `temporal/__tests__/parity.test.ts`
+guards it structurally: a behavioural test cannot catch this class, since both modes pass
+their own tests by construction.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

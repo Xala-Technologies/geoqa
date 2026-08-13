@@ -1259,7 +1259,13 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
       base: baseSpecFor(scenario),
       providerName: provider.name,
       ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
+      ...(deps.cooldownMs !== undefined ? { cooldownMs: deps.cooldownMs } : {}),
+      ...(deps.tenantId !== undefined ? { tenantId: deps.tenantId } : {}),
       startedAt,
+      // Every run-shaping value the in-process path passes, passed here too. Omitting one is
+      // exactly the defect gaps D-5 is about — `--repeat 3 --durable` would have run once,
+      // silently, and reported three findings as `observed`.
+      repeat: options.repeat ?? 1,
     }));
     const durable = await deps.startDurable(runs, {
       workflowId: newRunId("matrix", deps.now()),

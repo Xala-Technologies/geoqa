@@ -15,10 +15,10 @@ import path from "node:path";
 import { observeBrowser, observeEgressIp, observeNetwork, observeNetworkVia, GEOJS_SOURCE } from "../geo/observe.js";
 import { loadGeoProfile } from "../geo/profile.js";
 import type { AxisResult, GeoProfile, GeoVerification } from "../geo/types.js";
-import { compareEgressHeld, verifyGeo, withCorroboration } from "../geo/verify.js";
+import { compareEgressHeld, verifyGeo, withCorroboration, withEgressHeld } from "../geo/verify.js";
 import { CONTENT_EXPRESSION, parsePageContent } from "../analysis/content.js";
 import type { BrowserRuntime } from "../browser/types.js";
-import { runJourney, type JourneyResult, type StepResult } from "../journeys/engine.js";
+import { mergeAttempts, occurrenceKey, runJourney, withExtraStep, type JourneyResult, type StepResult } from "../journeys/engine.js";
 import { loadJourney, resolveSteps, type Journey } from "../journeys/spec.js";
 import { buildManifest, GEOQA_SCHEMA_VERSION, type Artifact, type EvidenceManifest } from "../evidence/manifest.js";
 import { describeExisting, ensureRunDirectory, writeJsonArtifact, writeManifest, writeTextArtifact } from "../evidence/store.js";
@@ -440,6 +440,80 @@ export function pruneUnlistedHar(spec: Pick<RunSpec, "evidenceRoot" | "runId">, 
 
 function verdictTier(verdict: JourneyResult["verdict"]): keyof typeof RETENTION {
   return verdict === "PASS" ? "pass" : verdict === "PASS_WITH_WARNINGS" ? "warning" : verdict === "FAIL" ? "fail" : "investigation";
+}
+
+/**
+ * Run the journey N times inside ONE session, and merge.
+ *
+ * Extracted from `executeRun` so the durable path calls the same function rather than a
+ * hand-mirrored copy — which is how it came to run one attempt per scenario while the local path
+ * ran N (gaps B-4, and gaps D-5 for the pattern). Invariant 12 says two execution modes, one
+ * implementation; a second copy is how the two silently disagree.
+ *
+ * Repeats happen INSIDE one browser and one network session, which is why this does not violate
+ * "one journey is one network session": all N attempts are the same visitor, and the egress-held
+ * check still spans the whole set. A repeat that opened a fresh session per attempt would take
+ * LCP from one visitor and CLS from another, and nothing measured could be attributed.
+ *
+ * Each attempt runs at `seed + index`, so the attempts pace and choose their optional steps
+ * DIFFERENTLY — running the identical sequence N times measures the site's flakiness under one
+ * pacing, not its flakiness — while the whole set replays from the one base seed.
+ */
+export interface RepeatedJourney {
+  journey: JourneyResult;
+  attempts: number;
+  occurrences: Record<string, number>;
+}
+
+export async function repeatJourney(
+  runtime: BrowserRuntime,
+  spec: RunSpec,
+  journey: Journey,
+  repeat = 1,
+  log: (line: string) => void = () => undefined,
+): Promise<RepeatedJourney> {
+  const times = Math.max(1, Math.floor(repeat));
+  const attempt = async (index: number): Promise<JourneyResult> => {
+    const seed = spec.seed + index;
+    const outcome = await executeJourney(runtime, { ...spec, seed }, journey, log);
+    if (times > 1) log(`journey: attempt ${index + 1}/${times} (seed ${seed}) → ${outcome.verdict}`);
+    return outcome;
+  };
+  const results: [JourneyResult, ...JourneyResult[]] = [await attempt(0)];
+  for (let index = 1; index < times; index++) results.push(await attempt(index));
+  const merged = mergeAttempts(results);
+  return { journey: merged.result, attempts: times, occurrences: merged.occurrences };
+}
+
+/**
+ * The closing egress check, folded into the geo verification and the journey.
+ *
+ * Also extracted for the durable path, which did not have this step at all — so a durable run
+ * never verified the invariant its whole geographic claim rests on, and a rotating exit mid-run
+ * was invisible there.
+ *
+ * A whole-run check is measured ONCE for the set, not once per attempt, so its occurrence count
+ * is the attempt count: it was seen in the only measurement there was.
+ */
+export async function closeEgress(
+  runtime: BrowserRuntime,
+  spec: RunSpec,
+  geo: GeoVerification,
+  ran: RepeatedJourney,
+  now: () => number = Date.now,
+): Promise<{ geo: GeoVerification; journey: JourneyResult; reproducibility: { attempts: number; occurrences: Record<string, number> } }> {
+  const held = await verifyEgressHeld(runtime, spec.verifyEndpoint, geo.network.observed.ip, ran.journey.steps.length, now);
+  return {
+    geo: withEgressHeld(geo, held.axis),
+    journey: held.step === null ? ran.journey : withExtraStep(ran.journey, held.step),
+    reproducibility: {
+      attempts: ran.attempts,
+      occurrences: {
+        ...ran.occurrences,
+        ...(held.step ? { [occurrenceKey(held.step)]: ran.attempts } : {}),
+      },
+    },
+  };
 }
 
 export interface AssembleInput {

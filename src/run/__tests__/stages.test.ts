@@ -19,7 +19,9 @@ import {
   executeJourney,
   loadInputs,
   traceArtifactFormat,
+  closeEgress,
   pruneUnlistedHar,
+  repeatJourney,
   verifyEgressHeld,
   verifyEnvironment,
 } from "../stages.js";
@@ -295,6 +297,81 @@ describe("verifyEgressHeld", () => {
     const out = await verifyEgressHeld(withEgress("1.1.1.1"), "https://ipinfo.io/json", null, 3);
     expect(out.axis.verdict).toBe("unverified");
     expect(out.step).toBeNull();
+  });
+});
+
+describe("repeatJourney", () => {
+  const journeyOf = async () => {
+    const loaded = loadJourney(path.join(repoRoot, "journeys", "landing-page.yaml"));
+    if (!loaded.ok) throw new Error("bad journey");
+    return loaded.value;
+  };
+
+  it("runs once by default and reports a single attempt", async () => {
+    const out = await repeatJourney(fakeRuntime(), spec(), await journeyOf());
+    expect(out.attempts).toBe(1);
+    expect(out.journey.verdict).toBe("PASS");
+  });
+
+  it("runs N times inside ONE runtime, and gives each attempt its own seed", async () => {
+    // Repeats stay in one browser and one network session — all N attempts are the same
+    // visitor, which is why this does not violate "one journey is one network session". A
+    // repeat that opened a session per attempt would take LCP from one visitor and CLS from
+    // another. And each attempt runs at seed+k, because running the identical sequence N times
+    // measures flakiness under ONE pacing rather than the site's flakiness.
+    const opens: string[] = [];
+    const runtime = fakeRuntime({
+      open: (url) => {
+        opens.push(url);
+        return Promise.resolve(ok({ url, title: "T", targetId: "t", launchHash: "h", browserLaunched: false }));
+      },
+    });
+    const out = await repeatJourney(runtime, spec({ seed: 100 }), await journeyOf(), 3);
+    expect(out.attempts).toBe(3);
+    // One runtime, three passes over the journey.
+    expect(opens.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("clamps a nonsense repeat to one rather than running zero times", async () => {
+    // Zero attempts is zero evidence, and a fractional one is a mistyped flag.
+    expect((await repeatJourney(fakeRuntime(), spec(), await journeyOf(), 0)).attempts).toBe(1);
+    expect((await repeatJourney(fakeRuntime(), spec(), await journeyOf(), 2.7)).attempts).toBe(2);
+  });
+
+  it("logs per-attempt progress ONLY when there is more than one", async () => {
+    // A single run does not need a "1/1" line, and the durable path passes no logger at all.
+    const lines: string[] = [];
+    await repeatJourney(fakeRuntime(), spec(), await journeyOf(), 2, (l) => lines.push(l));
+    expect(lines.some((l) => l.includes("attempt 1/2"))).toBe(true);
+    const quiet: string[] = [];
+    await repeatJourney(fakeRuntime(), spec(), await journeyOf(), 1, (l) => quiet.push(l));
+    expect(quiet.some((l) => l.includes("attempt"))).toBe(false);
+  });
+});
+
+describe("closeEgress", () => {
+  const ran = { journey: journeyResult(), attempts: 1, occurrences: {} };
+  /** A runtime whose in-page fetch reports `ip` — the closing egress read. */
+  const withEgress = (ip: string | null) =>
+    fakeRuntime({ evaluate: <T,>() => Promise.resolve(ok(JSON.stringify({ ip }) as unknown as T)) });
+
+  it("folds a HELD egress into the verification without adding a step", async () => {
+    // The closing read must report the SAME ip the run opened with, or the axis is a mismatch
+    // and a step appears — which is what the next test asserts.
+    const geo = await geoOf();
+    const out = await closeEgress(withEgress(geo.network.observed.ip), spec(), geo, ran);
+    expect(out.journey.steps).toEqual(ran.journey.steps);
+    expect(out.reproducibility.attempts).toBe(1);
+  });
+
+  it("adds the extra step and counts it ONCE for the whole set, not per attempt", async () => {
+    // A whole-run check is measured once for the set, so discounting it as "seen in 1 of 3"
+    // would make `reproduced` unreachable for exactly the check that spans the repeats.
+    const geo = await geoOf();
+    const moved = { ...ran, attempts: 3, occurrences: {} };
+    const out = await closeEgress(withEgress("9.9.9.9"), spec(), geo, moved);
+    expect(out.journey.steps.length).toBe(ran.journey.steps.length + 1);
+    expect(Object.values(out.reproducibility.occurrences)).toContain(3);
   });
 });
 

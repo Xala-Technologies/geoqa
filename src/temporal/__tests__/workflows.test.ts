@@ -101,11 +101,23 @@ const stubs = (order: string[], over: Record<string, (...args: never[]) => unkno
   },
   verifyGeoActivity: async () => {
     order.push("verifyGeoActivity");
-    return { profileId: "oslo-mobile" };
+    return { profileId: "oslo-mobile", network: { observed: { ip: "1.1.1.1" } }, country: { verdict: "match" } };
   },
   runJourneyActivity: async () => {
     order.push("runJourneyActivity");
-    return { journeyId: "landing-page", verdict: "PASS" };
+    return { journey: { journeyId: "landing-page", verdict: "PASS", steps: [] }, attempts: 1, occurrences: {} };
+  },
+  verifyEgressHeldActivity: async () => {
+    order.push("verifyEgressHeldActivity");
+    return {
+      geo: { network: { observed: { ip: "1.1.1.1" }, country: { verdict: "match" } } },
+      journey: { journeyId: "landing-page", verdict: "PASS", steps: [] },
+      reproducibility: { attempts: 1, occurrences: {} },
+    };
+  },
+  recordOutcome: async () => {
+    order.push("recordOutcome");
+    return null;
   },
   collectEvidenceActivity: async () => {
     order.push("collectEvidenceActivity");
@@ -125,12 +137,17 @@ describe("geoQaRunWorkflow", () => {
   it("executes every stage in order and returns the assembled result", async () => {
     const order: string[] = [];
     const out = (await runWorkflow(stubs(order), order)) as { result: GeoQaRunResult; warnings: string[] };
+    // The order MIRRORS `executeRun`. Four of these steps did not exist here — the egress-held
+    // check, the cooldown write and history append inside `recordOutcome`, and the HAR prune
+    // inside `closeSession` — so a durable run silently did less than a local one (gaps D-5).
     expect(order).toEqual([
       "prepare",
       "verifyGeoActivity",
       "runJourneyActivity",
+      "verifyEgressHeldActivity",
       "collectEvidenceActivity",
       "assemble",
+      "recordOutcome",
       "closeSession",
     ]);
     expect(out.result).toMatchObject({ runId: "run_1", verdict: "PASS" });
@@ -222,7 +239,8 @@ describe("geoQaRunWorkflow", () => {
 
 describe("geoQaMatrixWorkflow", () => {
   const SEQUENTIAL_FIRST_RUN = [
-    "prepare", "verifyGeoActivity", "runJourneyActivity", "collectEvidenceActivity", "assemble", "closeSession",
+    "prepare", "verifyGeoActivity", "runJourneyActivity", "verifyEgressHeldActivity",
+    "collectEvidenceActivity", "assemble", "recordOutcome", "closeSession",
   ];
 
   it("returns one result per run, in INPUT order", async () => {

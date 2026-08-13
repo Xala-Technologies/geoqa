@@ -18,6 +18,7 @@
 import { proxyActivities } from "@temporalio/workflow";
 import type * as activities from "./activities.js";
 import type { GeoQaRunResult } from "../findings/types.js";
+import type { EvidenceManifest } from "../evidence/manifest.js";
 import type { RunSpec } from "../run/context.js";
 // A VALUE import, and the only one this file makes outside the Temporal SDK. `run/pool.ts` has
 // no imports of its own, so it carries nothing into the workflow sandbox — which is exactly why
@@ -55,6 +56,18 @@ const { runJourneyActivity } = proxyActivities<typeof activities>({
   retry: { maximumAttempts: 1 },
 });
 
+/**
+ * The closing egress check and the run's bookkeeping.
+ *
+ * Retried twice like the other reads: an unreadable closing probe is our defect and worth one
+ * more attempt, and `recordOutcome` writes a cooldown and a history line, both of which are
+ * derived caches — `geoqa runs rebuild` reconstructs the second from the evidence on disk.
+ */
+const { verifyEgressHeldActivity, recordOutcome } = proxyActivities<typeof activities>({
+  startToCloseTimeout: "3 minutes",
+  retry: { maximumAttempts: 2, initialInterval: "2 seconds" },
+});
+
 const { collectEvidenceActivity, assemble } = proxyActivities<typeof activities>({
   startToCloseTimeout: "3 minutes",
   retry: { maximumAttempts: 2, initialInterval: "2 seconds" },
@@ -74,6 +87,10 @@ export interface GeoQaRunInput {
   providerName: string;
   cooldownPath?: string;
   startedAt: string;
+  /** How many times to run the journey inside one session. Default 1. */
+  repeat?: number;
+  cooldownMs?: number;
+  tenantId?: string | null;
 }
 
 export interface GeoQaWorkflowResult {
@@ -88,23 +105,70 @@ export async function geoQaRunWorkflow(input: GeoQaRunInput): Promise<GeoQaWorkf
     ...(input.cooldownPath ? { cooldownPath: input.cooldownPath } : {}),
   });
 
+  let manifest: EvidenceManifest | null = null;
   try {
     const geo = await verifyGeoActivity(spec);
-    const journey = await runJourneyActivity(spec);
-    const manifest = await collectEvidenceActivity({ spec, geo, journey, createdAt: input.startedAt });
+    const ran = await runJourneyActivity({ spec, ...(input.repeat !== undefined ? { repeat: input.repeat } : {}) });
+
+    /**
+     * Did the egress hold for the whole run?
+     *
+     * This step did not exist here, which meant a durable run never verified the invariant its
+     * whole geographic claim rests on: one journey is one network session. A rotating exit
+     * mid-run was invisible, and the run reported a clean verdict for observations it could not
+     * attribute to the site.
+     *
+     * The activity returns the MERGED geo and journey rather than an axis this workflow would
+     * then fold in — `withExtraStep` reaches `spec.ts` and therefore zod and the filesystem, and
+     * workflow code is bundled into a deterministic sandbox. Same constraint that put the
+     * concurrency pool in its own import-free module.
+     */
+    const held = await verifyEgressHeldActivity({ spec, geo, ran });
+    const verifiedGeo = held.geo;
+    const journey = held.journey;
+    const reproducibility = held.reproducibility;
+
+    manifest = await collectEvidenceActivity({
+      spec,
+      geo: verifiedGeo,
+      journey,
+      createdAt: input.startedAt,
+      ...(reproducibility.attempts > 1 ? { reproducibility } : {}),
+    });
     const result = await assemble({
       spec,
-      geo,
+      geo: verifiedGeo,
       journey,
       manifest,
       createdAt: input.startedAt,
       // Workflow code may not read the clock; the duration a human cares about
       // is the one Temporal already records on the execution itself.
       durationMs: 0,
+      attempts: reproducibility.attempts,
+      occurrences: reproducibility.occurrences,
+    });
+
+    // The cooldown write and the history append — neither of which a durable run did, so a
+    // vendor that failed was never frozen and the run never entered `runs.jsonl` at all.
+    await recordOutcome({
+      spec,
+      result,
+      providerName: input.providerName,
+      egressWasRight: verifiedGeo.network.country.verdict !== "mismatch",
+      // A workflow may not read the clock, so the time comes from the input the run was started
+      // with. A cooldown window measured from a replayed `Date.now()` would differ between the
+      // original execution and its replay, which is the determinism rule this sandbox enforces.
+      nowMs: Date.parse(input.startedAt),
+      ...(input.cooldownPath ? { cooldownPath: input.cooldownPath } : {}),
+      ...(input.cooldownMs !== undefined ? { cooldownMs: input.cooldownMs } : {}),
+      ...(input.tenantId !== undefined ? { tenantId: input.tenantId } : {}),
+      seed: spec.seed,
     });
     return { result, warnings };
   } finally {
-    await closeSession(spec);
+    // The manifest goes with it so an unretained HAR is deleted — armed on every run, flushed at
+    // close regardless, and listed by no manifest on a passing tier.
+    await closeSession({ spec, manifest });
   }
 }
 

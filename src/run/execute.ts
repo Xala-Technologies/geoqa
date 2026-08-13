@@ -23,7 +23,9 @@ import type { EvidenceManifest } from "../evidence/manifest.js";
 import {
   applyDeviceProfile,
   assembleResult,
+  closeEgress,
   collectEvidence,
+  repeatJourney,
   executeJourney,
   loadInputs,
   pruneUnlistedHar,
@@ -218,46 +220,28 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
     log(`journey: ${journey.value.id} (seed ${options.spec.seed})`);
     if (repeat > 1) log(`journey: ${repeat} attempts in ONE session — repeats MEASURE flakiness, they never mask it`);
 
-    const attempt = async (index: number): Promise<JourneyResult> => {
-      const seed = options.spec.seed + index;
-      const outcome = await executeJourney(runtime, { ...options.spec, seed }, journey.value, log);
-      if (repeat > 1) log(`journey: attempt ${index + 1}/${repeat} (seed ${seed}) → ${outcome.verdict}`);
-      return outcome;
-    };
+    // The SHARED implementation, which `runJourneyActivity` also calls. It used to live here and
+    // was hand-mirrored on the durable side — badly, which is how that path came to run one
+    // attempt per scenario while this one ran N (gaps B-4, and gaps D-5 for the pattern).
+    const ran = await repeatJourney(runtime, options.spec, journey.value, repeat, log);
 
-    const attempts: [JourneyResult, ...JourneyResult[]] = [await attempt(0)];
-    for (let index = 1; index < repeat; index++) attempts.push(await attempt(index));
-    const merged = mergeAttempts(attempts);
+    // One journey must be one network session. Confirm that it was, before the verdict is used
+    // to pick a retention tier — and through the same shared function the durable path calls,
+    // which did not have this step at all.
+    const closed = await closeEgress(runtime, options.spec, geo, ran, now);
+    const verifiedGeo = closed.geo;
+    const result = closed.journey;
 
-    // One journey must be one network session. Confirm that it was, before the
-    // verdict is used to pick a retention tier.
-    const held = await verifyEgressHeld(
-      runtime,
-      options.spec.verifyEndpoint,
-      geo.network.observed.ip,
-      merged.result.steps.length,
-      now,
-    );
-    const verifiedGeo = withEgressHeld(geo, held.axis);
-    const result = held.step === null ? merged.result : withExtraStep(merged.result, held.step);
-
-    // Reproducibility, computed once and told to BOTH consumers.
+    // Reproducibility, computed ONCE by `closeEgress` and told to both consumers.
     //
     // The result carries it so a finding can say `reproduced`; the evidence carries it so that
-    // claim can be checked against the package rather than believed. Built here rather than
-    // twice, because two derivations of the same number are two chances for them to disagree —
-    // and a finding claiming 3-of-3 beside evidence recording 2 attempts is worse than either.
-    const reproducibility = {
-      attempts: attempts.length,
-      occurrences: {
-        ...merged.occurrences,
-        // A whole-run check is measured ONCE for the whole set, not once per attempt, so it
-        // must not be discounted as "seen in 1 of 3": it was seen in the only measurement
-        // there was.
-        ...(held.step ? { [occurrenceKey(held.step)]: attempts.length } : {}),
-      },
-    };
-    if (held.step !== null) log(`egress: ${held.axis.reasons.join("; ")}`);
+    // claim can be checked against the package rather than believed. Derived in one place,
+    // because two derivations of the same number are two chances for them to disagree — and a
+    // finding claiming 3-of-3 beside evidence recording 2 attempts is worse than either.
+    const reproducibility = closed.reproducibility;
+    // Logged only when the axis actually says something — a `match` with no reasons would
+    // otherwise print an empty line, and an `unverified` closing probe is not news.
+    if (verifiedGeo.network.egressHeld.verdict === "mismatch") log(`egress: ${verifiedGeo.network.egressHeld.reasons.join("; ")}`);
 
     log(`evidence: collecting for verdict ${result.verdict}`);
     manifest = await collectEvidence(runtime, {

@@ -581,10 +581,11 @@ roots, timeouts and retention are machine-local choices, and a committed one wou
 silently retune everyone else's runs. `geoqa.config.example.json`'s claim that every
 key is READ is now true of the run as well as the loader.
 
-**One half stays open, and it belongs to D-2 rather than here.** The durable path
-READS cooldowns (`prepare` forwards `cooldownPath` to `selectProvider`) and never
-WRITES one: `noteProviderOutcome` lives in `executeRun`, which is the in-process path
-only. So a Temporal run would honour a freeze the CLI set and never set one itself.
+**CLOSED: the durable path writes cooldowns too.** It used to only READ them —
+`prepare` forwards `cooldownPath` to `selectProvider`, while `noteProviderOutcome` lived
+in `executeRun` alone — so a Temporal run honoured a freeze the CLI set and never set one
+itself. `recordOutcome` fixes it, as part of
+[D-5](#d-5--closed--the-durable-path-silently-did-six-fewer-things-than-the-local-one).
 Putting the other three keys on `RunSpec` means the durable path picks all of them up
 for free — `collectEvidenceActivity` passes `args.spec`, `buildRuntime` reads the caps
 — so the cooldown write is the single remaining asymmetry, and it waits behind
@@ -734,12 +735,11 @@ guard that can no longer fire.
 
 Still open in one place:
 
-- **The durable path still runs one attempt.** `runJourneyActivity` calls
-  `executeJourney` once and has no repeat path; `assemble` forwards neither
-  `attempts` nor `occurrences`, so a Temporal run's findings are all `observed`.
-  Two execution modes, one implementation — except here. Blocked with the rest of
-  [D-2](#d-2--the-in-process-matrix-runs-the-durable-one-still-cannot-be-started):
-  nothing starts a worker, so the path cannot be exercised end to end.
+**CLOSED: the durable path repeats too.** `runJourneyActivity` delegates to the shared
+`repeatJourney`, and `assemble` forwards `attempts` and `occurrences`, so a durable
+finding can reach `reproduced` like a local one. Closed as part of
+[D-5](#d-5--closed--the-durable-path-silently-did-six-fewer-things-than-the-local-one),
+which found five more divergences of the same kind.
 
 ### B-5 · Rotation is detected, but only a PROVEN rotation
 
@@ -2011,6 +2011,49 @@ and reads cooldowns without writing one
 ([B-1](#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site)). Both are
 `executeRun` behaviours that `geoQaRunWorkflow` does not reproduce — a real divergence
 under invariant 12, and each is a few lines now that a client exists to exercise them.
+
+### D-5 · CLOSED — the durable path silently did SIX fewer things than the local one
+
+Found immediately after [D-2](#d-2--closed--a-client-starts-the-durable-matrix-and-it-refuses-to-pretend)
+made a durable run startable, by diffing `executeRun` against `geoQaRunWorkflow` rather
+than by anything failing. Two of the six were recorded; **four were not**.
+
+| Behaviour | Local | Durable (before) | Consequence |
+|---|---|---|---|
+| journey `--repeat` and merge | ✓ | ✗ | every durable finding `observed`, `reproduced` unreachable (B-4) |
+| provider cooldown **write** | ✓ | ✗ | a vendor that failed a durable sweep was never frozen (B-1) |
+| **egress-held check** | ✓ | ✗ | a durable run never verified *one journey is one network session* |
+| **visitor state recorded** | ✓ | ✗ | evidence said `returning` whether or not a session was restored |
+| **history append** | ✓ | ✗ | durable runs invisible to `geoqa runs`, trends and regressions |
+| **unlisted HAR pruned** | ✓ | ✗ | a passing durable run leaked a full network recording |
+
+The third is the one that matters most on its own: a rotating exit mid-run was invisible
+on the durable path, so it reported a clean verdict for observations it could not
+attribute to the site — the exact failure this engine exists to refuse.
+
+**The last one was introduced by the fix for [B-3](#b-3--closed--the-har-is-recorded-listed-flagged-and-deleted-when-unretained), the same day, in this repository.**
+That fix added `pruneUnlistedHar` to `executeRun`'s teardown and not to `closeSession`,
+and nothing caught it because nothing could start a durable run — so the omission was
+never executed. That is the whole mechanism of this entry: **a mode nobody can run is a
+mode nobody can notice is wrong**, and every improvement to the other one quietly widens
+the gap.
+
+**Closed by removing the copies, not by adding six more.** `repeatJourney` and
+`closeEgress` moved into `run/stages.ts`, and BOTH modes call them — the repeat logic and
+the egress fold had been written out longhand in `executeRun` and hand-mirrored (badly)
+on the durable side. `collectEvidenceActivity` resolves the visitor, `recordOutcome`
+writes the cooldown and the history line, and `closeSession` takes the manifest so it can
+prune. Activities are thin wrappers again, which is what their coverage exclusion claims.
+
+**And a guard, because a behavioural test cannot catch this class.** Both modes pass
+their own tests precisely because each is asserted against what it does.
+`temporal/__tests__/parity.test.ts` instead names the shared functions and requires both
+callers to reach them, so a seventh behaviour added to one side fails there rather than
+in somebody's overnight sweep. It also asserts neither mode re-implements the merge.
+
+**Still not proven:** no durable sweep has run against a real browser and a real site.
+The parity is structural and unit-level; what a full durable run writes to an evidence
+tree remains unexercised.
 
 ### D-3 · Closed: the JSON contract carries a version
 
