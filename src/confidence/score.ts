@@ -23,9 +23,17 @@ import type { ConfidenceReport } from "../findings/types.js";
 
 const VERDICT_SCORE = { match: 1, unverified: 0.4, mismatch: 0 } as const;
 
-const scoreAxes = (verdicts: readonly ("match" | "unverified" | "mismatch")[], weights: readonly number[]): number => {
+/**
+ * Weighted axes, taken as PAIRS rather than as two parallel arrays.
+ *
+ * Two arrays let the caller pass three verdicts and two weights, and the `weights[i] ?? 0` that
+ * covered for it silently scored the third axis at zero — a confidence figure quietly computed
+ * from part of its evidence. Pairs make the mismatch unspellable, which is better than a
+ * fallback that makes it survivable, and it removes a branch nothing could reach.
+ */
+const scoreAxes = (axes: readonly (readonly [("match" | "unverified" | "mismatch"), number])[]): number => {
   let total = 0;
-  for (const [i, v] of verdicts.entries()) total += (weights[i] ?? 0) * VERDICT_SCORE[v];
+  for (const [verdict, weight] of axes) total += weight * VERDICT_SCORE[verdict];
   return total;
 };
 
@@ -44,7 +52,10 @@ const scoreAxes = (verdicts: readonly ("match" | "unverified" | "mismatch")[], w
  * its own; it decides whether the terms that do can be believed.
  */
 export function networkConfidence(geo: GeoVerification): number {
-  const raw = scoreAxes([geo.network.country.verdict, geo.network.city.verdict], [0.75, 0.25]);
+  const raw = scoreAxes([
+    [geo.network.country.verdict, 0.75],
+    [geo.network.city.verdict, 0.25],
+  ]);
   const unreliable = geo.network.country.verdict === "mismatch" || geo.network.agreement.verdict === "mismatch";
   return Math.round(raw * (unreliable ? 0.4 : 1) * 100);
 }
@@ -58,10 +69,11 @@ export function networkConfidence(geo: GeoVerification): number {
  * score exists to surface.
  */
 export function browserConfidence(geo: GeoVerification): number {
-  const raw = scoreAxes(
-    [geo.browser.language.verdict, geo.browser.timezone.verdict, geo.browser.viewport.verdict],
-    [0.4, 0.35, 0.25],
-  );
+  const raw = scoreAxes([
+    [geo.browser.language.verdict, 0.4],
+    [geo.browser.timezone.verdict, 0.35],
+    [geo.browser.viewport.verdict, 0.25],
+  ]);
   return Math.round(raw * 100);
 }
 

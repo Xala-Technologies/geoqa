@@ -151,9 +151,12 @@ export function analyseSite(records: RunRecord[]): SiteReport {
     perPage,
     coverageGaps,
     geographicallyDivergent: perPage.filter((p) => p.divergentMarkets.length > 0),
+    // A type PREDICATE rather than a plain filter, so the sort needs no `?? 0` fallback.
+    // TypeScript cannot narrow through `.filter()` without one, and the `??` that plugs the gap
+    // is a branch that can never run — which reads as a guard and is really an unprovable claim.
     widestLatencyGaps: perPage
-      .filter((p) => p.ttfbSpreadMs !== null)
-      .sort((a, b) => (b.ttfbSpreadMs ?? 0) - (a.ttfbSpreadMs ?? 0))
+      .filter((p): p is PageAcrossMarkets & { ttfbSpreadMs: number } => p.ttfbSpreadMs !== null)
+      .sort((a, b) => b.ttfbSpreadMs - a.ttfbSpreadMs)
       .slice(0, 10),
     warnings,
   };
@@ -188,9 +191,12 @@ export function describeLatencySpread(page: PageAcrossMarkets): string {
     .filter((e): e is [string, { verdict: string; ttfbMs: number; lcpMs: number | null; confidence: number }] => e[1].ttfbMs !== null)
     .sort((a, b) => a[1].ttfbMs - b[1].ttfbMs);
   if (entries.length < 2) return `${page.target}: measured in fewer than two markets, so there is no spread to report`;
-  const [fastest] = entries;
-  const slowest = entries[entries.length - 1];
-  if (fastest === undefined || slowest === undefined) return `${page.target}: no latency readings`;
+  // Non-null assertions rather than a guard, because the early return above proves both exist:
+  // `entries.length >= 2`, so index 0 and index length-1 are both present. A guard here would be
+  // a branch nothing can reach, and an unreachable guard is a claim that the check above it
+  // might not hold.
+  const fastest = entries[0] as (typeof entries)[number];
+  const slowest = entries[entries.length - 1] as (typeof entries)[number];
   const factor = fastest[1].ttfbMs === 0 ? null : Math.round((slowest[1].ttfbMs / fastest[1].ttfbMs) * 10) / 10;
   return `${page.target}: TTFB ${fastest[1].ttfbMs}ms in ${fastest[0]} vs ${slowest[1].ttfbMs}ms in ${slowest[0]}${factor === null ? "" : ` — ${factor}x`}`;
 }

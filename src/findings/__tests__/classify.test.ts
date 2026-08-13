@@ -237,3 +237,19 @@ describe("an errored step with a DECLARED category", () => {
     expect(severityFor(errored)).toBe("high");
   });
 });
+
+describe("a step with no expected or observed value", () => {
+  it("renders an em-dash for a missing expected, rather than the word undefined", () => {
+    // Not every check HAS an expectation — `no-page-errors` asserts an absence, so there is
+    // nothing to quote. The arm was untested because every fixture supplied one.
+    const [finding] = findingsFromSteps([step({ expected: null })], ctx);
+    expect(finding?.expected).toBe("—");
+  });
+
+  it("falls back to the step's detail when there is no observed value", () => {
+    // The detail is what the check actually said; an empty `observed` would leave a finding
+    // that names a problem and shows nothing about it.
+    const [finding] = findingsFromSteps([step({ observed: null, detail: "no console errors: none" })], ctx);
+    expect(finding?.observed).toBe("no console errors: none");
+  });
+});

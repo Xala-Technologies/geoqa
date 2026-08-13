@@ -238,3 +238,51 @@ describe("buildRuntime engine selection", () => {
     expect(buildRuntime(revived, profile())).toBeInstanceOf(PlaywrightRuntime);
   });
 });
+
+describe("the identity axes a DESKTOP profile does not declare", () => {
+  /**
+   * The `?? null` arms, tested from the side that produces null.
+   *
+   * Mobile profiles declare a user agent, touch and a pixel ratio; desktop profiles declare
+   * none of the three. Only ever testing the mobile profile leaves the null arm unexercised —
+   * and a null here is not a detail: it is the difference between "this profile makes no claim
+   * about its user agent" and "it claims the default", which `compareDevice` treats as
+   * `unverified` versus a comparison it can fail.
+   */
+  const desktop = (): GeoProfile => {
+    const out = loadGeoProfile(path.join(repoRoot, "profiles", "oslo-desktop.yaml"));
+    if (!out.ok) throw new Error(out.errors.join());
+    return out.value;
+  };
+
+  it("carries null for every identity axis the profile leaves undeclared", () => {
+    const options = playwrightContextOptions(spec({ engine: "playwright" }), desktop());
+    expect(options.userAgent).toBeNull();
+    expect(options.hasTouch).toBeNull();
+    expect(options.deviceScaleFactor).toBeNull();
+    expect(options.deviceName).toBeNull();
+  });
+
+  it("carries the declared values for a mobile profile", () => {
+    const options = playwrightContextOptions(spec({ engine: "playwright" }), profile());
+    expect(options.userAgent).toContain("Android");
+    expect(options.hasTouch).toBe(true);
+    expect(options.deviceScaleFactor).toBe(3);
+  });
+});
+
+describe("agent-browser command caps", () => {
+  it("passes a configured cap through", () => {
+    // These reach `journey run` only via the spec — they used to reach `browser verify` alone,
+    // so a cap on a hung command applied to the command least likely to hang.
+    const runtime = buildRuntime(spec({ commandTimeoutMs: 222, idleTimeoutMs: 333 }), profile());
+    expect(runtime.sessionId).toBe("run_1");
+  });
+
+  it("OMITS an unset cap rather than passing zero", () => {
+    // `exec.ts` reads 0 as "no cap", and a run with no wall-clock cap does not fail — it hangs,
+    // and a hung run reports nothing at all.
+    const runtime = buildRuntime(spec(), profile());
+    expect(runtime.sessionId).toBe("run_1");
+  });
+});
