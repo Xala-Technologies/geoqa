@@ -398,6 +398,31 @@ Multi-tenancy:
       --concurrency (EXP-007, default 3) is how many full runs execute at once in
       one sample — the number matrix run --concurrency is currently guessing.
 
+  geoqa gate check --url <url> [--journey <id>] [--geo <profile>]
+                   [--block-at critical|high|medium|low] [--min-confidence <n>]
+                   [--min-geo-confidence <n>] [--tenant <id>] [--json]
+      May this page be published? Runs a NORMAL journey against a candidate URL and
+      returns a verdict a publisher conditions on. Exit 0 allows; anything else does not.
+
+      This is geoqa's half of the content pipeline and the boundary is deliberate:
+      generation and publishing stay outside. The division the whole system rests on is
+      that agents produce and geoqa verifies, so a generator living inside the verifier
+      would collapse the separation that makes the verdict worth anything.
+
+      THREE states, and the middle one is where gates usually go wrong.
+
+        allow    measured, and clean by the declared thresholds
+        block    the page has a problem we MEASURED — fix the page
+        unknown  we could NOT measure — a geoqa defect, not the page's
+
+      unknown still prevents publishing. It is a different sentence from block, not a
+      different outcome: telling an author their page is broken when the truth is that
+      our browser could not read it wastes their time and costs the gate its credibility.
+
+      DEFAULT DENY throughout. No run, no verdict, a thrown error, an errored run — every
+      one of them blocks. A gate that opens when it cannot see is not a gate, and the
+      absence of a verdict is not a verdict.
+
   geoqa keywords research --tenant <id> [--market <a,b,...>] [--budget <n>]
                           [--limit <n>] [--json]
       Where a tenant actually ranks, per term and per market, from its own

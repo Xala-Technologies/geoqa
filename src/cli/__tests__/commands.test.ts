@@ -36,7 +36,9 @@ import {
   runsRebuild,
   checkTenantScope,
   enforceQuota,
+  gateCheck,
   keywordsResearch,
+  renderGateResult,
   renderKeywordReport,
   resolveEvidenceRoot,
   resolveProfileId,
@@ -1710,5 +1712,92 @@ describe("keywordsResearch", () => {
     expect(renderKeywordReport({ tenantId: "acme", queried: 0, measured: 0, meanScore: null, warnings: [], observations: [] })).toContain(
       "no keyword queries ran",
     );
+  });
+})
+
+describe("gateCheck", () => {
+  const passing = (): GeoQaRunResult =>
+    ({
+      runId: "run_1_oslo-desktop",
+      evidenceId: "ev_1",
+      verdict: "PASS",
+      findings: [],
+      confidence: { overall: 100, geo: 100, browser: 100, journey: 100, evidence: 100, searchObservation: null, notes: [] },
+    }) as unknown as GeoQaRunResult;
+
+  const failing = (): GeoQaRunResult =>
+    ({
+      ...passing(),
+      verdict: "FAIL",
+      findings: [
+        { id: "f1", title: "has a primary heading", severity: "critical", category: "functional", expected: "h1 is visible", observed: "not visible" },
+        { id: "f2", title: "slow", severity: "low", category: "performance", expected: "fast", observed: "slow" },
+      ],
+    }) as unknown as GeoQaRunResult;
+
+  const base = { url: "https://digilist.no/faq", profileId: "oslo-desktop", journeyId: "landing-page" };
+
+  it("ALLOWS a clean run and returns no actionable findings", async () => {
+    const result = await gateCheck(deps({ runOnce: async () => passing() }), base);
+    expect(result.gate.decision).toBe("allow");
+    expect(result.actionable).toEqual([]);
+  });
+
+  it("BLOCKS a measured problem and hands back findings a producer can act on", async () => {
+    const result = await gateCheck(deps({ runOnce: async () => failing() }), base);
+    expect(result.gate.decision).toBe("block");
+    // Worst first, and the low-severity one is still available rather than discarded.
+    expect(result.actionable.map((f) => f.id)).toEqual(["f1", "f2"]);
+  });
+
+  it("is UNKNOWN when the run THROWS — an exception must not be catchable as a pass", async () => {
+    // The one place this could go wrong is a publisher wrapping the call in a try/catch and
+    // treating the absence of a decision as permission.
+    const result = await gateCheck(
+      deps({
+        runOnce: async () => {
+          throw new Error("proxy refused the connection");
+        },
+      }),
+      base,
+    );
+    expect(result.gate.decision).toBe("unknown");
+    expect(result.gate.reason).toContain("absence of a verdict is not a verdict");
+    expect(result.gate.blockers[0]).toContain("proxy refused");
+  });
+
+  it("passes the thresholds through", async () => {
+    const lowConfidence = {
+      ...passing(),
+      confidence: { overall: 60, geo: 30, browser: 100, journey: 100, evidence: 100, searchObservation: null, notes: [] },
+    } as unknown as GeoQaRunResult;
+    const d = deps({ runOnce: async () => lowConfidence });
+    expect((await gateCheck(d, { ...base, minConfidence: 50 })).gate.decision).toBe("allow");
+    expect((await gateCheck(d, { ...base, minConfidence: 80 })).gate.decision).toBe("block");
+    expect((await gateCheck(d, { ...base, minConfidence: 50, minGeoConfidence: 70 })).gate.decision).toBe("block");
+  });
+
+  it("renders each decision with its blockers and the run it came from", async () => {
+    const blocked = renderGateResult(await gateCheck(deps({ runOnce: async () => failing() }), base));
+    expect(blocked).toContain("BLOCK");
+    expect(blocked).toContain("✗ [critical] has a primary heading");
+    expect(blocked).toContain("run run_1_oslo-desktop");
+    const allowed = renderGateResult(await gateCheck(deps({ runOnce: async () => passing() }), base));
+    expect(allowed).toContain("ALLOW");
+  });
+
+  it("renders an unknown with no run id rather than inventing one", async () => {
+    const rendered = renderGateResult(
+      await gateCheck(
+        deps({
+          runOnce: async () => {
+            throw new Error("nothing ran");
+          },
+        }),
+        base,
+      ),
+    );
+    expect(rendered).toContain("UNKNOWN");
+    expect(rendered).not.toContain("run run_");
   });
 })

@@ -67,6 +67,7 @@ import { loadKeywordSeeds } from "../keywords/seeds.js";
 import { opportunities, researchKeywords } from "../keywords/research.js";
 import type { KeywordReport } from "../keywords/types.js";
 import type { Market } from "../geo/types.js";
+import { actionableFindings, gateFromRun, gateWithoutRun, type GateResult, type GateThresholds } from "../gate/publish.js";
 import {
   filterHistory,
   findRegressions,
@@ -90,7 +91,7 @@ import {
   type MatrixScenarioResult,
 } from "../run/matrix.js";
 import { applyDeviceProfile } from "../run/stages.js";
-import type { GeoQaRunResult } from "../findings/types.js";
+import type { Finding, GeoQaRunResult } from "../findings/types.js";
 import { describeConfidence } from "../confidence/score.js";
 
 /** The profile a command falls back to when nothing names one. */
@@ -1389,6 +1390,73 @@ export function renderPruneResult(result: EvidencePruneResult): string {
       : `  applied: deleted ${execution.deletedRunIds.length} run(s), reclaimed ${formatBytes(execution.reclaimedBytes)}`,
   );
   for (const failure of execution.failed) lines.push(`  FAILED ${failure.runId}: ${failure.error}`);
+  return lines.join("\n");
+}
+
+// ── publish gate ─────────────────────────────────────────────────────────
+
+export interface GateCheckOptions extends GateThresholds {
+  url: string;
+  profileId: string;
+  journeyId: string;
+  providerName?: string;
+  engine?: RunEngine;
+  verifyEndpoint?: string;
+  seed?: number;
+  tenantId?: string;
+}
+
+export interface GateCheckResult {
+  gate: GateResult;
+  /** The findings a producer can act on, worst first. Empty on an allow. */
+  actionable: Finding[];
+  warnings: string[];
+}
+
+/**
+ * Run a journey against a candidate page and decide whether it may be published.
+ *
+ * The run is a NORMAL run — same journey, same profile, same evidence — because a gate
+ * that measured something special would be answering a different question from the one the
+ * rest of the system answers. What is different is only the interpretation.
+ *
+ * A run that THROWS becomes `unknown`, not an exception a caller might catch and treat as a
+ * pass. The absence of a verdict is not a verdict, and the one place that could go wrong is
+ * a publisher wrapping this in a try/catch.
+ */
+export async function gateCheck(deps: CommandDeps, options: GateCheckOptions): Promise<GateCheckResult> {
+  let result: GeoQaRunResult;
+  try {
+    result = await journeyRun(deps, {
+      url: options.url,
+      profileId: options.profileId,
+      journeyId: options.journeyId,
+      ...(options.providerName ? { providerName: options.providerName } : {}),
+      ...(options.engine ? { engine: options.engine } : {}),
+      ...(options.verifyEndpoint ? { verifyEndpoint: options.verifyEndpoint } : {}),
+      ...(options.seed !== undefined ? { seed: options.seed } : {}),
+      ...(options.tenantId !== undefined ? { tenantId: options.tenantId } : {}),
+    });
+  } catch (e) {
+    return {
+      gate: gateWithoutRun(e instanceof Error ? e.message : String(e)),
+      actionable: [],
+      warnings: [],
+    };
+  }
+  const gate = gateFromRun(result, {
+    ...(options.blockAtOrAbove !== undefined ? { blockAtOrAbove: options.blockAtOrAbove } : {}),
+    ...(options.minConfidence !== undefined ? { minConfidence: options.minConfidence } : {}),
+    ...(options.minGeoConfidence !== undefined ? { minGeoConfidence: options.minGeoConfidence } : {}),
+  });
+  return { gate, actionable: gate.decision === "allow" ? [] : actionableFindings(result), warnings: [] };
+}
+
+export function renderGateResult(result: GateCheckResult): string {
+  const lines = [`${result.gate.decision.toUpperCase()} — ${result.gate.reason}`];
+  for (const b of result.gate.blockers) lines.push(`  ✗ ${b}`);
+  for (const w of result.gate.warnings) lines.push(`  ! ${w}`);
+  if (result.gate.runId !== null) lines.push(`  run ${result.gate.runId}${result.gate.evidenceId ? ` · evidence ${result.gate.evidenceId}` : ""}`);
   return lines.join("\n");
 }
 

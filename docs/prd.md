@@ -172,6 +172,19 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-141** Publishing is **gated on a verdict the producer did not compute**, and geoqa's
+  half of that pipeline is the gate alone. Generation and publishing stay outside: a
+  generator living inside the verifier would collapse the separation that makes the verdict
+  worth anything, and the first time an LLM in this repo wrote a page this repo then
+  approved, the approval would mean nothing.
+- **R-142** The gate has **three** states and `unknown` still blocks. `block` means a
+  measured problem with the page; `unknown` means geoqa could not measure and is OUR defect.
+  They are different sentences, not different outcomes — telling an author their page is
+  broken when the truth is that our browser could not read it wastes their time and costs
+  the gate its credibility.
+- **R-143** The gate is **default deny**. No run, a thrown error, an errored run, an unread
+  step — every one blocks, and the exit code is 0 only for `allow`. A gate that opens when
+  it cannot see is not a gate, and the absence of a verdict is not a verdict.
 - **R-137** Keyword research is a **capability, not a company's spreadsheet**. Seed terms,
   their audiences and their per-term markets are tenant data; the engine holds a generic
   intent vocabulary and knows only a market's country, city and language. An intent
