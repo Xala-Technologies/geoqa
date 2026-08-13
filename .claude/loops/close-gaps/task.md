@@ -168,14 +168,15 @@ against, 90% is likely unreachable and the threshold is wrong.
 
 ### Product surface
 
-- [ ] **16 · Frontend, read-only run browser.** Runs, verdicts, per-axis geo,
+- [x] **16 · Frontend, read-only run browser.** React, static; criterion recorded. Runs, verdicts, per-axis geo,
       vitals, findings, screenshots. Decide React vs Electron on one criterion —
       does it need filesystem access beyond a served directory? Record it.
-- [ ] **17 · Frontend, the geographic view.** Per-market matrix with city
+- [x] **17 · Frontend, the geographic view.** Latency by market + verdict divergence. Per-market matrix with city
       verdicts and the TTFB spread. This is what makes "your local numbers are
       4–7× optimistic" legible at a glance.
-- [ ] **18 · Frontend, trends.** Needs slice 9.
-- [ ] **19 · Auth and tenant onboarding.** Only after the above works for one
+- [~] **18 · Frontend, trends.** Regressions done; a per-metric time series is not.
+- [ ] **19 · Auth and tenant onboarding.** BLOCKED on a decision: a static UI has no auth
+      surface, and adding one means running a server. See progress.md. Only after the above works for one
       tenant end to end.
 
 ## Explicitly NOT in this loop

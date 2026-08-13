@@ -69,6 +69,7 @@ import type { KeywordReport } from "../keywords/types.js";
 import type { Market } from "../geo/types.js";
 import { actionableFindings, gateFromRun, gateWithoutRun, type GateResult, type GateThresholds } from "../gate/publish.js";
 import { analyseSite, describeLatencySpread, type SiteReport } from "../analysis/site.js";
+import { toDashboardView, type DashboardView } from "../report/view.js";
 import {
   filterHistory,
   findRegressions,
@@ -1391,6 +1392,44 @@ export function renderPruneResult(result: EvidencePruneResult): string {
       : `  applied: deleted ${execution.deletedRunIds.length} run(s), reclaimed ${formatBytes(execution.reclaimedBytes)}`,
   );
   for (const failure of execution.failed) lines.push(`  FAILED ${failure.runId}: ${failure.error}`);
+  return lines.join("\n");
+}
+
+// ── dashboard data ───────────────────────────────────────────────────────
+
+/**
+ * The view model the UI consumes, written next to the evidence it describes.
+ *
+ * Written to a FILE rather than served by a process, because a static file is the whole
+ * infrastructure story: the UI is a directory anybody can open, host behind a CDN, or serve
+ * from the evidence root. No server means no auth surface, no port, and nothing to keep
+ * running — which is also why the React app can be read-only without that being a
+ * limitation.
+ */
+export function dashboardBuild(deps: CommandDeps, filter: HistoryFilter = {}): { path: string; view: DashboardView } {
+  const { records, skipped } = readHistory(deps.evidenceRoot, deps.historyFs ?? nodeHistoryFs);
+  const warnings = skipped > 0 ? [`${skipped} unparseable index line(s) skipped — "geoqa runs rebuild" reconstructs the index`] : [];
+  const view = toDashboardView(filterHistory(records, filter), new Date(deps.now()).toISOString(), warnings);
+  const file = path.join(deps.evidenceRoot, DASHBOARD_FILE);
+  const fs = deps.historyFs ?? nodeHistoryFs;
+  fs.mkdir(deps.evidenceRoot);
+  fs.write(file, JSON.stringify(view, null, 2));
+  return { path: file, view };
+}
+
+export const DASHBOARD_FILE = "dashboard.json";
+
+export function renderDashboardBuild(result: { path: string; view: DashboardView }): string {
+  const v = result.view;
+  const lines = [
+    `wrote ${result.path}`,
+    `  ${v.summary.total} run(s), mean confidence ${v.summary.meanConfidence.text}`,
+    `  ${v.regressions.length} regression(s), ${v.site.geographicallyDivergent.length} geographically divergent page(s)`,
+  ];
+  for (const w of v.warnings) lines.push(`  ! ${w}`);
+  // The count that matters for a UI's honesty: how many displayed values are absences.
+  const absences = v.runs.flatMap((r) => [...Object.values(r.vitals), ...Object.values(r.confidence)]).filter((m) => !m.measured).length;
+  lines.push(`  ${absences} value(s) marked "not measured" — these MUST render distinctly from zero`);
   return lines.join("\n");
 }
 

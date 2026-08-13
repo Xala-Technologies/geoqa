@@ -35,9 +35,11 @@ import {
   runsList,
   runsRebuild,
   checkTenantScope,
+  dashboardBuild,
   enforceQuota,
   gateCheck,
   keywordsResearch,
+  renderDashboardBuild,
   renderGateResult,
   renderKeywordReport,
   renderSiteAnalysis,
@@ -1876,5 +1878,70 @@ describe("siteAnalyse", () => {
     const rendered = renderSiteAnalysis(siteAnalyse(withIndex("")));
     expect(rendered).toContain("0 page(s) across 0 market(s)");
     expect(rendered).not.toContain("GEOGRAPHY CHANGED");
+  });
+})
+
+describe("dashboardBuild", () => {
+  const line = (over: Record<string, unknown>): string =>
+    JSON.stringify({
+      schemaVersion: 1, runId: "run_1000_x", tenantId: null, target: "https://a.test/x",
+      profileId: "oslo-desktop", journeyId: "sweep", verdict: "PASS",
+      startedAt: "2026-08-13T10:00:00.000Z", durationMs: 1, seed: 1, engine: "playwright", evidenceId: "ev_1",
+      findings: { total: 0, bySeverity: {}, byCategory: {}, labels: [] },
+      confidence: { overall: 100, geo: 100, browser: 100, journey: 100, evidence: 100 },
+      geo: { requestedCountry: "NO", requestedCity: "Oslo", observedCountry: "NO", observedCity: "Oslo", country: "match", city: "match", egressHeld: "match", agreement: "unverified" },
+      latencyMs: null, vitals: { lcp: 400, cls: 0, ttfb: 100, inp: null },
+      ...over,
+    });
+
+  const withIndex = (text: string): { deps: CommandDeps; store: Record<string, string> } => {
+    const store: Record<string, string> = { [path.join(evidenceRoot, "runs.jsonl")]: text };
+    return {
+      store,
+      deps: deps({
+        now: () => Date.parse("2026-08-13T12:00:00.000Z"),
+        historyFs: {
+          exists: (p) => p in store,
+          read: (p) => store[p] as string,
+          append: () => {},
+          write: (p, t) => { store[p] = t; },
+          mkdir: () => {},
+          listDirs: () => [],
+        },
+      }),
+    };
+  };
+
+  it("writes one JSON file beside the evidence, so the UI needs no server", () => {
+    const { deps: d, store } = withIndex(`${line({})}\n`);
+    const result = dashboardBuild(d);
+    expect(result.path).toBe(path.join(evidenceRoot, "dashboard.json"));
+    // Actually written, and parseable.
+    const written = JSON.parse(store[result.path] as string) as { summary: { total: number } };
+    expect(written.summary.total).toBe(1);
+  });
+
+  it("stamps the view from the injected clock, so the output is reproducible", () => {
+    const { deps: d } = withIndex(`${line({})}\n`);
+    expect(dashboardBuild(d).view.generatedAt).toBe("2026-08-13T12:00:00.000Z");
+  });
+
+  it("COUNTS the values that must render as absences, so the honesty rule is visible", () => {
+    // A dashboard is where a number gets believed. This line is the reminder that some of
+    // what it shows is not a number at all.
+    const { deps: d } = withIndex(`${line({})}\n`);
+    const rendered = renderDashboardBuild(dashboardBuild(d));
+    expect(rendered).toContain('value(s) marked "not measured"');
+    expect(rendered).toContain("MUST render distinctly from zero");
+  });
+
+  it("reports mean confidence as an absence for an empty history", () => {
+    const { deps: d } = withIndex("");
+    expect(renderDashboardBuild(dashboardBuild(d))).toContain("mean confidence not measured");
+  });
+
+  it("points at the rebuild when index lines could not be parsed", () => {
+    const { deps: d } = withIndex(`${line({})}\n{"half\n`);
+    expect(dashboardBuild(d).view.warnings.join(" ")).toContain("runs rebuild");
   });
 })

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@10.33.4",
-  "description": "Geographic experience & evidence engine — validates what a visitor in a given market actually experiences, and proves it.",
+  "description": "Geographic experience & evidence engine \u2014 validates what a visitor in a given market actually experiences, and proves it.",
   "type": "module",
   "bin": {
     "geoqa": "./bin/geoqa.mjs"
@@ -19,7 +19,9 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "browser:install": "agent-browser install",
-    "playwright:install": "playwright install chromium"
+    "playwright:install": "playwright install chromium",
+    "ui:dev": "pnpm --filter geoqa-ui dev",
+    "ui:build": "pnpm --filter geoqa-ui build"
   },
   "dependencies": {
     "@temporalio/activity": "^1.21.1",
