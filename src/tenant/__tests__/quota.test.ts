@@ -23,10 +23,17 @@ const usage = (over: Partial<TenantUsage> = {}): TenantUsage => ({
 });
 
 describe("parseSubUsers", () => {
-  /** The real payload, captured live. */
+  /**
+   * The real payload shape, captured live — with the username replaced.
+   *
+   * The FIELDS and their units are what this fixture is for; the account identifier is
+   * not, and it identifies a billable account at a vendor. Same rule as
+   * `tenant/types.ts` storing a variable name rather than a value: a test fixture is a
+   * checked-in file like any other.
+   */
   const live = [
     {
-      username: "sp7fr0q8ps",
+      username: "sub-account-1",
       traffic: 0.67,
       traffic_limit: null,
       traffic_count_from: "2026-08-12 23:21:56",
@@ -41,7 +48,7 @@ describe("parseSubUsers", () => {
     // direction is worse.
     const [user] = parseSubUsers(live);
     expect(user?.trafficMb).toBeCloseTo(0.67 * MB_PER_GB, 5);
-    expect(user?.username).toBe("sp7fr0q8ps");
+    expect(user?.username).toBe("sub-account-1");
     expect(user?.status).toBe("active");
   });
 
