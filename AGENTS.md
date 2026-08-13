@@ -406,6 +406,14 @@ step override the category derived from its CHECK KIND, not the one derived from
 OUTCOME — no author can know in advance that a step will be unreadable, and
 `localization.yaml` was filing our blindness as localization defects.
 
+**35. An attribute is not text, and a claim is only valid under its own conditions.**
+`attribute-contains` reads markup through `evaluate` (both engines have it, so no seam
+primitive and no refusal); `""` is an absent attribute and `null` is "we could not
+look". The localization journey asserts the declaration AND the copy, because declaring
+a language is not writing it. And it runs under the market's locale: a site serving
+`lang` by `Accept-Language` is correct, and looks broken to a probe that never said
+what language it wanted — a mistake made three times now, recorded as gaps C-18.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

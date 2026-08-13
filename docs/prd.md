@@ -463,6 +463,15 @@ unmeasured guess until EXP-007 runs.
   the second inherits it and passes. The fixture's two branches differ only by the
   cookie, so nothing else can account for the difference — a returning branch that also
   repaired something unrelated would let that repair masquerade as a restored session.
+- **R-168** A markup ATTRIBUTE and rendered TEXT are different claims, and a
+  localization journey asserts both. `innerText` never returns attributes, so a text
+  check cannot detect a language marker at all; and declaring a language is not writing
+  it, so a half-finished translation ships the right attribute over untranslated prose.
+  A journey asserting one passes a site that got the other wrong.
+- **R-169** A claim about what a site SERVES is only valid under the conditions the
+  claim names. A page whose `lang` varies by `Accept-Language` is correct, and looks
+  broken to a probe that never said what language it wanted — so a localization check
+  runs under the market's own locale, which is what the profile already carries.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never

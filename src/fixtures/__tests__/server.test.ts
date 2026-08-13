@@ -279,3 +279,23 @@ describe("/returning", () => {
     expect(back?.headers).toBeUndefined();
   });
 });
+
+describe("the two halves of a localization failure", () => {
+  it("/wrong-lang-attr declares English over Norwegian prose", () => {
+    // The reason `attribute-contains` exists. `innerText` never returns attributes, so a text
+    // check reads the copy, finds Norwegian, and says nothing is wrong — a page marked for the
+    // wrong language passes every check that reads what it says.
+    const page = fixtureBody("/wrong-lang-attr");
+    expect(page?.html).toContain('<html lang="en">');
+    expect(page?.html).toContain("saksbehandlingssystemer");
+  });
+
+  it("/wrong-copy declares Norwegian over English prose", () => {
+    // The reverse, and just as real: declaring a language is not writing it. A half-finished
+    // localization ships `lang="nb-NO"` over an untranslated page, and the attribute check
+    // alone would call that correct — which is why the journey asserts both.
+    const page = fixtureBody("/wrong-copy");
+    expect(page?.html).toContain('<html lang="nb-NO">');
+    expect(page?.html).toContain("We build case management systems");
+  });
+});

@@ -118,6 +118,11 @@ describe("executeJourney", () => {
   });
 
   it("lets spec vars override and add to the defaults", async () => {
+    // The old version of this test was the C-15 bug in miniature: it stubbed `getText` to
+    // return `'<html lang="nb-NO">500 NOK'` — MARKUP from a text read, which no browser does.
+    // `innerText` returns rendered prose and never an attribute, so the fake made a check pass
+    // that could not pass against a real page. A fake that lies in the same direction as the
+    // code hides the defect twice.
     const journey = loadJourney(path.join(repoRoot, "journeys", "localization.yaml"));
     if (!journey.ok) throw new Error("bad journey");
     const texts: string[] = [];
@@ -125,14 +130,18 @@ describe("executeJourney", () => {
       fakeRuntime({
         getText: (sel) => {
           texts.push(sel);
-          return Promise.resolve(ok('<html lang="nb-NO">500 NOK'));
+          return Promise.resolve(ok("Vi bygger saksbehandlingssystemer. Priser fra kr 1 200."));
         },
+        // The attribute is read through `evaluate`, so the fake answers the way a page does.
+        evaluate: <T,>() => Promise.resolve(ok(JSON.stringify({ found: true, value: "nb-NO" }) as unknown as T)),
       }),
-      spec({ vars: { expectLanguageMarker: "nb-NO", forbiddenCurrency: "EUR" } }),
+      spec({ vars: { expectLanguageMarker: "nb-NO", expectCopyMarker: "kr", forbiddenCurrency: "EUR" } }),
       journey.value,
     );
     expect(result.verdict).toBe("PASS");
-    expect(texts).toContain("html");
+    // The copy check reads the BODY; the language check no longer reads text at all.
+    expect(texts).toContain("body");
+    expect(texts).not.toContain("html");
   });
 
   it("passes a logger through when given", async () => {
