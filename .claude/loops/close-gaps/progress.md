@@ -1170,6 +1170,44 @@ Docs: PRD **R-151 … R-153**.
 Gate: lint clean · boundaries clean (120 modules / 470 deps) · **1313 tests at 100%**
 lines/statements/functions · e2e **30/30** · `pnpm ui:build` clean.
 
+## The 100-session milestone — RUN, and three of four thresholds met
+
+102 sessions, 17 real sitemap pages × 3 markets × 2 devices, 153 seconds, ~0.1 GB.
+
+| Threshold | Target | Measured | |
+|---|---|---|---|
+| country match | ≥98% | **100.0%** | ✅ |
+| city match | ≥90% | **84.3%** | ❌ short by 5.7 |
+| journey completion | ≥95% | **98.0%** | ✅ |
+| evidence on every failure | 100% | **3/3** | ✅ |
+
+**The first measurement was unusable in both directions**, and that is what forced the fix.
+`compareCity` compared strings, so it called Skui (15km from Oslo) and Gällivare (1100km from
+Stockholm) the same thing — `unverified`. The rate could be reported as 72.5% or 100% depending
+on which reading you took.
+
+It measures **distance** now. `mismatch` became reachable for the first time, `unverified`
+dropped to **zero**, and the failures are named: Uppsala ×3 for Stockholm, Munich ×2 for Berlin,
+Trondheim ×2 for Oslo. That is a **vendor** result — country targeting is exact and every session
+held one identity throughout. Full write-up in `docs/milestone.md`.
+
+## Documentation trued up
+
+The docs had drifted behind the code in ways this repo says are worse than no docs:
+
+- **C-4 rested on a sentence that is now false** — "a city can be proven right, never proven
+  wrong" was true of a string comparison and nothing else. Closed, with the reasoning that
+  survives (the name fallback keeps the asymmetry when there are no coordinates).
+- **`## C. Measurement gaps` had lost its heading entirely.** Twelve entries under no section,
+  and three links pointing at an anchor that did not exist.
+- **The invariant list was numbered out of order** — 14, 15, 16 appeared before 11, 12, 13.
+  Reordered and renumbered.
+- **CLAUDE.md said "thirteen invariants"; there were 21.** Now 26, with five added from this
+  session's findings: the session-key separator, distance-based city verdicts, tenant path
+  containment, default-deny gating, and `Measured<T>`.
+- **Eight stale anchors** left behind when gaps were closed and renamed. All 76 internal links
+  now resolve, checked with GitHub's actual slug rules rather than an approximation of them.
+
 ## Next
 
 Slice 19 only, and it is **blocked on a decision rather than on work**: a static UI has no auth

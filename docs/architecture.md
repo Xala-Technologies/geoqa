@@ -491,10 +491,10 @@ host, and reporting an untested reachability would be worse than reporting none.
 That honesty currently collides with `prepareRun`'s refusal to run an
 `unconfigured` provider, so a placeholder-bearing URL cannot start a `journey run`
 at all; see
-[gaps B-8](gaps.md#b-8--a-proxy-url-with-any-placeholder-in-it-cannot-start-a-journey-run).
+[gaps B-8](gaps.md#b-8--closed--a-template-can-start-a-run).
 And none of this has been exercised against a real vendor: we can show the key
 reaches the URL, not that any vendor honours it
-([gaps A-1](gaps.md#a-1--the-core-claim-is-one-purchase-and-one-health-check-fix-away)).
+([gaps A-1](gaps.md#a-1--closed--proven-against-a-live-residential-vendor)).
 
 ## 9. Durability: the same stages, twice
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Read [`AGENTS.md`](AGENTS.md) first.** It is the working brief for this repo and
 it is vendor-neutral, so there is one copy to keep correct rather than two. It
-covers the commands, the layer map, the thirteen load-bearing invariants, the
+covers the commands, the layer map, the twenty-six load-bearing invariants, the
 testing and TypeScript conventions, and the wiring checklists for adding a check,
 a step action, an experiment, or an egress provider.
 
