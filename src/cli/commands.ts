@@ -52,6 +52,14 @@ import { seedFrom } from "../journeys/random.js";
 import { redactProxyUrl, selectProvider, type TcpProbe } from "../network/provider.js";
 import { buildRuntime, newRunId, type RunEngine, type RunSpec } from "../run/context.js";
 import { loadTenant, tenantEvidenceRoot, tenantOwnsTarget } from "../tenant/registry.js";
+import {
+  checkQuota,
+  estimateTrafficMb,
+  runsStartedToday,
+  usageFor,
+  type QuotaDecision,
+} from "../tenant/quota.js";
+import { decodoUsageProbe, type UsageProbe } from "../tenant/usage-probe.js";
 import type { Tenant } from "../tenant/types.js";
 import { executeRun, prepareRun } from "../run/execute.js";
 import {
@@ -148,6 +156,12 @@ export interface CommandDeps {
    * value nobody would notice going stale.
    */
   browserTimeouts?: GeoQaConfig["browser"];
+  /**
+   * Injectable so the unit suite never reads the vendor's usage API. Same reason
+   * `probe` and `pruneFs` exist: a quota check that could only be tested by spending
+   * real traffic would not be tested.
+   */
+  usageProbe?: UsageProbe;
 }
 
 /**
@@ -317,6 +331,54 @@ export function checkTenantScope(tenant: Tenant, options: { url?: string; market
     }
   }
   return errors;
+}
+
+/**
+ * Enforce a tenant's proxy budget before anything launches.
+ *
+ * The three-state result is the whole design, and it mirrors every other honest
+ * reading in this codebase. `refused` stops the run. `within` proceeds. `unknown`
+ * proceeds and SAYS SO — because with a vendor-enforced cap per sub-account,
+ * exhaustion is isolated to the tenant that caused it, so blocking every tenant's
+ * work because a usage API is down would cause more harm than it prevents. What it
+ * must never do is read an unmeasured figure as nothing spent.
+ *
+ * `pageLoads` is how many page loads the caller is about to perform — scenarios for a
+ * matrix, one for a journey. The estimate is deliberately coarse and named as an
+ * estimate wherever it surfaces; its job is to catch the 430-page sweep against a
+ * tenant with 100 MB left, not to bill anybody.
+ */
+export async function enforceQuota(
+  deps: CommandDeps,
+  tenant: Tenant,
+  pageLoads: number,
+): Promise<QuotaDecision> {
+  const estimate = estimateTrafficMb(pageLoads);
+  // The sub-account username comes from the environment, via the NAME the tenant
+  // declares. A tenant naming a variable that is not set is unmeasurable, which is
+  // the same state as naming no variable at all — and both are distinct from
+  // measuring zero.
+  const subUser = tenant.proxySubUser === null ? null : (deps.env[tenant.proxySubUser] ?? null);
+  const apiKey = deps.env.DECODO_API_KEY ?? null;
+  const probe = deps.usageProbe ?? decodoUsageProbe;
+  const subUsers = apiKey === null || subUser === null ? null : await probe(apiKey);
+  const runs = runsStartedToday(existingRunIds(deps.evidenceRoot), deps.now());
+  return checkQuota(tenant, usageFor(tenant, subUsers, subUser, runs), estimate);
+}
+
+/**
+ * The run ids already in a tenant's evidence tree.
+ *
+ * A missing directory is an empty list, not an error: a tenant's first run has
+ * nowhere to have written yet, and refusing it would make the quota check the thing
+ * that prevents a tenant from ever starting.
+ */
+function existingRunIds(root: string): string[] {
+  try {
+    return readdirSync(root).filter((entry) => entry.startsWith("run_"));
+  } catch {
+    return [];
+  }
 }
 
 export const profilesDir = (deps: CommandDeps): string => path.join(deps.repoRoot, "profiles");

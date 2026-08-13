@@ -244,6 +244,60 @@ string, so a prefix test would authorise an attacker's host.
 parsed and validated and nothing reads them — which is precisely the defect B-1 closed
 for the config file, so it is named here rather than left to be discovered. Slice 7.
 
+### A-7 · CLOSED — per-tenant proxy quota, enforced before launch
+
+The incident this closes: one 430-page sweep consumed an entire allowance, and every
+run afterwards returned a bare `407` that reads exactly like a wrong password. An hour
+went into the wrong place.
+
+Two numbers, two sources, deliberately not interchangeable. **Traffic** comes from the
+vendor (`GET /v2/sub-users`) because bytes are counted at the proxy and an estimate
+that drifted would be worse than none — it would be trusted. **Run count** is derived
+from the tenant's own evidence directories, because the vendor has no idea what a run
+is; derived rather than stored, because a counter file can be deleted, written twice
+or left behind by a crash, and every one of those makes the ceiling wrong in the
+direction that lets work through.
+
+A matrix is EXPANDED first so the check knows the real page count. Verified live:
+
+```
+this run is estimated at 202 MB and tenant "digilist" has 14 MB left of 700 MB —
+refusing before anything launches.
+```
+
+**The third state is the point.** A traffic figure that could not be read is `null`,
+never `0` — the DataForSEO lesson in `network/types.ts`, where a credentials-present
+check let a zero-balance account pass for weeks. It warns and proceeds rather than
+blocking, and that is a deliberate trade: with a vendor-enforced cap per sub-account,
+exhaustion is isolated to the tenant that caused it, so refusing every tenant's work
+because a usage API is down would cause more harm than it prevents. The run ceiling
+still applies, because that number is ours and is always readable.
+
+**A live finding, and it is about the isolation model rather than the code.** The
+account's only sub-user has `traffic_limit: null` — **no vendor-side cap is set**. So
+the strong half of the owner's chosen isolation is not in force, and geoqa's own check
+is currently the only guard. It says so on every metered run:
+
+```
+warning: the vendor enforces no traffic cap on tenant "digilist"'s sub-account, so
+this check is the ONLY thing standing between it and the whole account allowance.
+```
+
+`auto_disable` is also `false`, so exhaustion will not stop the sub-account either.
+**Action for the owner: set a per-sub-account traffic limit at Decodo.** A cap geoqa
+enforces can be bypassed by a bug in geoqa; one the vendor enforces cannot.
+
+When a vendor cap IS set, the effective ceiling is the LOWER of the two — a tenant
+budget above the vendor's limit is a budget that cannot be spent, and pretending
+otherwise refuses late instead of early.
+
+**Residual:** `MB_PER_PAGE_LOAD` is 1, from a measured ~1.2 MB/page on digilist.no
+through residential. It is rounded DOWN on purpose (an estimate used to refuse work
+should under-state, or it blocks runs that would have fitted) and is named as an
+estimate everywhere it surfaces. A tenant whose pages are much heavier will
+under-estimate; per-tenant calibration from observed usage is the fix and needs run
+persistence.
+
 ### A-4 · Findings have nowhere to go
 
 Read-only by design: no Linear, no Convex, no repo write, no dashboard, no

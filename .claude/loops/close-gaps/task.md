@@ -130,7 +130,7 @@ against, 90% is likely unreachable and the threshold is wrong.
       targets, credentials reference, quota. Evidence root becomes
       `<root>/<tenantId>/<runId>`. **A path that can escape its tenant's root is
       a security defect, not a bug** — test it explicitly.
-- [ ] **7 · Per-tenant proxy metering.** Read Decodo's usage per sub-user, hold
+- [x] **7 · Per-tenant proxy metering.** Read Decodo's usage per sub-user, hold
       a per-tenant budget, and REFUSE a run that would exceed it rather than
       discovering it as a 407 mid-sweep. Today's failure mode, prevented.
 - [ ] **8 · Tenant-scoped profiles and journeys.** Loaded from tenant storage,

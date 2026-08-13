@@ -172,6 +172,25 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-123** A tenant's proxy budget is enforced **before anything launches**, not
+  discovered as a 407 mid-sweep. A matrix is expanded first so the check knows the real
+  page count: a 430-page sweep against a tenant with 100 MB left is refused before the
+  browser starts, rather than dying at page 90 and leaving 340 pages unmeasured while
+  an operator debugs a proxy that is fine.
+- **R-124** Traffic is read from the **vendor** and the run count is derived from **our
+  own evidence tree**, and the two are not interchangeable. Bytes are counted at the
+  proxy, so an estimate that drifted would be worse than none because it would be
+  trusted; and the vendor has no idea what a run is. The run count is derived rather
+  than stored, because a counter file can be deleted, written twice or left behind by a
+  crash, and every one of those makes a ceiling wrong in the direction that lets work
+  through.
+- **R-125** A usage figure that could not be read is **unmeasured, never zero** — the
+  same rule as every other reading in this system. It warns and proceeds rather than
+  blocking, because with a vendor-enforced cap per sub-account exhaustion is isolated to
+  the tenant that caused it, and refusing every tenant's work because a usage API is
+  down would cause more harm than it prevents. The warning states that the guard is not
+  in force. When the vendor enforces no cap of its own, that is said out loud too: a cap
+  geoqa enforces can be bypassed by a bug in geoqa, and one the vendor enforces cannot.
 - **R-118** A tenant is **data**, in `tenants/<id>.yaml`, with the same reasoning as a
   profile: it cannot reach the browser, a non-engineer can edit it, and it diffs in a
   review. Unknown keys are an error — a misspelled `retentionDay` that silently became

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import type { BrowserSessionConfig } from "../../browser/types.js";
 import type { EvidenceManifest } from "../../evidence/manifest.js";
 import { DEFAULT_POLICY, type DirSize, type PruneFs } from "../../evidence/prune.js";
 import type { GeoQaRunResult } from "../../findings/types.js";
+import type { Tenant } from "../../tenant/types.js";
 import type { ExecuteOptions } from "../../run/execute.js";
 import { fakeRuntime, bad, ok, IPINFO_OSLO } from "../../run/__tests__/fake-runtime.js";
 import {
@@ -29,6 +30,7 @@ import {
   renderPruneResult,
   renderRunResult,
   checkTenantScope,
+  enforceQuota,
   resolveEvidenceRoot,
   resolveProfileId,
   resolveTenant,
@@ -1343,5 +1345,84 @@ describe("tenant scoping", () => {
     const loaded = resolveTenant(deps(), "digilist");
     if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
     expect(checkTenantScope(loaded.tenant, { url: "" })).toEqual([]);
+  });
+})
+
+describe("enforceQuota", () => {
+  const digilist = (): Tenant => {
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    return loaded.tenant;
+  };
+
+  const withUsage = (over: Partial<CommandDeps>, traffic: number | null, subUserName = "sub-1"): CommandDeps =>
+    deps({
+      env: { DECODO_API_KEY: "key", GEOQA_SUBUSER_DIGILIST: subUserName },
+      usageProbe: () => Promise.resolve(traffic === null ? null : [{ username: "sub-1", trafficMb: traffic, trafficLimitMb: null, status: "active" }]),
+      ...over,
+    });
+
+  it("allows a run that fits inside the tenant's budget", async () => {
+    const decision = await enforceQuota(withUsage({}, 10), digilist(), 5);
+    expect(decision.state).toBe("within");
+    expect(decision.estimateMb).toBe(5);
+  });
+
+  it("REFUSES a sweep that would not fit, with the real page count", async () => {
+    // Tenant zero's budget is 5000 MB. Already spent 4900, and 430 pages is ~430 MB.
+    const decision = await enforceQuota(withUsage({}, 4900), digilist(), 430);
+    expect(decision.state).toBe("refused");
+    expect(decision.errors[0]).toContain("430 MB");
+  });
+
+  it("treats an unreadable vendor as UNMEASURED and says the guard is not in force", async () => {
+    // Never zero. An unread figure read as nothing spent authorises exactly the
+    // unbounded sweep this exists to prevent.
+    const decision = await enforceQuota(withUsage({}, null), digilist(), 100);
+    expect(decision.state).toBe("unknown");
+    expect(decision.warnings.join(" ")).toContain("NOT being enforced");
+  });
+
+  it("is unmeasurable when the sub-account variable is not set, rather than unlimited", async () => {
+    // The tenant names a variable; an unset variable is the same state as naming none
+    // — and both are distinct from measuring zero.
+    const probe = vi.fn(() => Promise.resolve([]));
+    const decision = await enforceQuota(deps({ env: { DECODO_API_KEY: "key" }, usageProbe: probe }), digilist(), 1);
+    expect(decision.state).toBe("unknown");
+    // Not even asked: there is nothing to attribute a figure to.
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("does not call the vendor without an API key", async () => {
+    const probe = vi.fn(() => Promise.resolve([]));
+    const decision = await enforceQuota(deps({ env: { GEOQA_SUBUSER_DIGILIST: "sub-1" }, usageProbe: probe }), digilist(), 1);
+    expect(decision.state).toBe("unknown");
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("counts the tenant's own runs today toward its run ceiling", async () => {
+    // Derived from the evidence tree rather than a ledger: a counter file drifts, and
+    // every way it drifts lets work through.
+    const root = path.join(evidenceRoot, "digilist");
+    mkdirSync(root, { recursive: true });
+    const now = 1_800_000_000_000;
+    for (let i = 0; i < 3; i++) mkdirSync(path.join(root, `run_${now - i * 1000}_oslo-desktop`), { recursive: true });
+    // A directory that is not a run must not count.
+    mkdirSync(path.join(root, "visitors"), { recursive: true });
+    const scoped = withUsage({ evidenceRoot: root, now: () => now }, 10);
+    const decision = await enforceQuota(scoped, digilist(), 1);
+    expect(decision.state).toBe("within");
+
+    const capped = { ...digilist(), quota: { trafficMb: 5000, runsPerDay: 3 } };
+    const refused = await enforceQuota(scoped, capped, 1);
+    expect(refused.state).toBe("refused");
+    expect(refused.errors[0]).toContain("3 run(s) today");
+  });
+
+  it("treats a tenant's first run as zero runs rather than an error", async () => {
+    // The tenant's directory does not exist yet. Refusing here would make the quota
+    // check the thing that stops a tenant ever starting.
+    const decision = await enforceQuota(withUsage({ evidenceRoot: path.join(evidenceRoot, "never-written") }, 10), digilist(), 1);
+    expect(decision.state).toBe("within");
   });
 })

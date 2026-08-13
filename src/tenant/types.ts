@@ -77,6 +77,19 @@ export interface Tenant {
    * Never the credential itself. See the file comment.
    */
   proxyCredentials: string | null;
+  /**
+   * The NAME of an environment variable holding this tenant's proxy SUB-ACCOUNT
+   * username, or null when the tenant shares the default account.
+   *
+   * A name and not the username itself, for the same reason `proxyCredentials` is:
+   * a sub-account username is half of a credential pair and identifies a billable
+   * account at a vendor. Neither belongs in a file that is checked in.
+   *
+   * Without it a tenant is UNMEASURABLE rather than unlimited — it shares the default
+   * account, so the vendor's traffic figure describes every tenant on that account
+   * and attributing it to one of them would be a fabrication.
+   */
+  proxySubUser: string | null;
   quota: TenantQuota;
   /**
    * How long this tenant's evidence is kept, in days.

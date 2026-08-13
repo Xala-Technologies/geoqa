@@ -568,7 +568,57 @@ Docs: gaps **A-6**; PRD **R-118 … R-122**.
 Gate: lint clean · boundaries clean (97 modules / 387 deps) · **1070 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
-## Next: slice 7
+## Slice 7 · Per-tenant proxy metering — DONE
 
-Per-tenant proxy metering — read Decodo usage per sub-user, hold the budget, and
-REFUSE a run that would exceed it rather than discovering it as a 407 mid-sweep.
+Two numbers, two sources, deliberately not interchangeable. **Traffic** from the
+vendor (`GET /v2/sub-users`, shape captured live) because bytes are counted at the
+proxy and an estimate that drifted would be worse than none — it would be trusted.
+**Run count** derived from the tenant's own evidence directories, because the vendor
+has no idea what a run is. Derived rather than stored: a counter file can be deleted,
+written twice or left by a crash, and every one of those makes the ceiling wrong in the
+direction that lets work through.
+
+A matrix is expanded FIRST so the check knows the real page count. Verified live:
+
+```
+this run is estimated at 202 MB and tenant "digilist" has 14 MB left of 700 MB —
+refusing before anything launches.
+```
+
+The third state is the point: an unread traffic figure is `null`, **never `0`** — the
+DataForSEO lesson, where a credentials-present check let a zero-balance account pass
+for weeks. It warns and proceeds rather than blocking, deliberately: with a
+vendor-enforced cap per sub-account, exhaustion is isolated to the tenant that caused
+it, so refusing every tenant's work because a usage API is down causes more harm than
+it prevents. The run ceiling still applies, because that number is ours.
+
+### A live finding, about the isolation model rather than the code
+
+**The account's only sub-user has `traffic_limit: null` — no vendor-side cap is set.**
+The strong half of the chosen isolation is not in force, so geoqa's own check is
+currently the only guard, and it says so on every metered run. `auto_disable` is
+`false` too, so exhaustion will not stop the sub-account either.
+
+**Owner action: set a per-sub-account traffic limit at Decodo.** A cap geoqa enforces
+can be bypassed by a bug in geoqa; one the vendor enforces cannot. When one IS set, the
+effective ceiling becomes the lower of the two — a tenant budget above the vendor's
+limit is a budget that cannot be spent.
+
+### Two shapes carried over deliberately
+
+`usage-probe.ts` is coverage-excluded with a named reason, exactly like
+`network/auth-probe.ts` and `browser/playwright-launch.ts`: one HTTP read and a
+hand-off, with every judgement in `quota.ts` against injected data. And every failure
+returns `null` rather than an empty list — an empty list is a real answer ("this
+account has no sub-accounts") that refuses, and a timeout must not be able to
+masquerade as it, because the two lead to opposite actions.
+
+Docs: gaps **A-7**; PRD **R-123 … R-125**.
+
+Gate: lint clean · boundaries clean (100 modules / 395 deps) · **1102 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
+## Next: slice 8
+
+Tenant-scoped profiles and journeys, loaded from tenant storage rather than the repo.
+`containedPath` was extracted in slice 6 for exactly this.

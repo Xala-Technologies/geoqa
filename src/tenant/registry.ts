@@ -63,6 +63,7 @@ export const TenantSchema = z
     // names an empty variable — hence a nullable field rather than an optional one
     // defaulted to "".
     proxyCredentials: z.string().min(1).nullable().default(null),
+    proxySubUser: z.string().min(1).nullable().default(null),
     quota: TenantQuotaSchema,
     retentionDays: z.number().int().positive(),
   })

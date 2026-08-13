@@ -38,6 +38,11 @@ export default defineConfig({
         // MEANS for a run is decided in provider.ts's health(), which is covered
         // against an injected probe. Exercising this file means dialling a vendor.
         "src/network/auth-probe.ts",
+        // One HTTP read of the vendor's usage endpoint and a hand-off to
+        // `parseSubUsers`. No judgement here: what a figure means for a run, and
+        // what an UNREAD figure means, is `tenant/quota.ts` and is fully covered
+        // against injected data.
+        "src/tenant/usage-probe.ts",
         // Every activity is a thin wrapper that news up a real provider /
         // runtime and delegates; the logic each one calls is at 100%.
         "src/temporal/activities.ts",

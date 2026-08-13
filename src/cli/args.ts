@@ -272,7 +272,28 @@ Multi-tenancy:
       https://acme.no as a string.
 
       A tenant file holds the NAME of an environment variable for its proxy
-      credentials, never a credential. Credentials come from the environment only.
+      credentials and for its proxy sub-account username, never either value.
+      Credentials come from the environment only, and a sub-account username
+      identifies a billable account at a vendor.
+
+      QUOTA is enforced before anything launches. A tenant declares trafficMb and
+      runsPerDay; traffic is read from the VENDOR (the only authoritative figure,
+      since bytes are counted at the proxy) and the run count is derived from the
+      tenant's own evidence directories, because the vendor has no idea what a run
+      is. A matrix is expanded first so the check knows the real page count: a
+      430-page sweep against a tenant with 100 MB left is refused before the browser
+      starts, instead of dying at page 90 with a 407 that looks like a broken proxy.
+
+      A traffic figure that could NOT be read is unmeasured, never zero. It warns and
+      proceeds rather than blocking — with a vendor-enforced cap per sub-account,
+      exhaustion is isolated to the tenant that caused it, so refusing every tenant's
+      work because a usage API is down would cause more harm than it prevents. The
+      warning says the guard is not in force. The run ceiling still applies, because
+      that number is ours and is always readable.
+
+      When the vendor enforces its own cap the effective ceiling is the LOWER of the
+      two. When it enforces none, geoqa says so: a cap geoqa enforces can be bypassed
+      by a bug in geoqa, and one the vendor enforces cannot.
 
       Omitting --tenant is not an error: single-target use is still the common case
       and the shared evidence root is still correct for it. No tenant rule applies

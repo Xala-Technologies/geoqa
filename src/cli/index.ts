@@ -31,6 +31,7 @@ import {
   evidenceInspect,
   evidencePrune,
   experimentRun,
+  enforceQuota,
   loadUrlList,
   resolveTenant,
   tenantList,
@@ -258,6 +259,16 @@ async function main(argv: string[]): Promise<number> {
       console.error(scope.join("\n"));
       return 2;
     }
+    if (tenant !== null) {
+      // One journey is one page load's worth of budget, roughly — the estimate is
+      // coarse on purpose and named as an estimate wherever it surfaces.
+      const quota = await enforceQuota(deps, tenant, flagNumber(args, "repeat", 1));
+      for (const w of quota.warnings) console.error(`warning: ${w}`);
+      if (quota.state === "refused") {
+        console.error(quota.errors.join("\n"));
+        return 2;
+      }
+    }
     const result = await journeyRun(deps, {
       url: flagString(args, "url", ""),
       profileId,
@@ -288,6 +299,25 @@ async function main(argv: string[]): Promise<number> {
     if (scope.length > 0) {
       console.error(scope.join("\n"));
       return 2;
+    }
+    // Expanded first, so the quota check knows the real page count rather than
+    // guessing at it — a 430-page sweep against a tenant with 100 MB left is exactly
+    // the case worth refusing, and the number is free from the dry run.
+    const planned = await matrixRun(deps, {
+      url: flagString(args, "url", ""),
+      markets: flagList(argv, "market"),
+      journeys: flagList(argv, "journey"),
+      devices: flagList(argv, "device"),
+      ...(urls !== null ? { targets: urls.urls } : {}),
+      dryRun: true,
+    });
+    if (tenant !== null) {
+      const quota = await enforceQuota(deps, tenant, planned.scenarios.length * flagNumber(args, "repeat", 1));
+      for (const w of quota.warnings) console.error(`warning: ${w}`);
+      if (quota.state === "refused") {
+        console.error(quota.errors.join("\n"));
+        return 2;
+      }
     }
     const result = await matrixRun(deps, {
       url: flagString(args, "url", ""),
