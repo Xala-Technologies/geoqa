@@ -298,6 +298,67 @@ estimate everywhere it surfaces. A tenant whose pages are much heavier will
 under-estimate; per-tenant calibration from observed usage is the fix and needs run
 persistence.
 
+### B-11 · FIXED — a profile or journey id could be a path
+
+**Security fix, and it predates multi-tenancy.** `profilePath` and `journeyPath`
+`path.join`ed a CLI-supplied id straight onto a directory, so:
+
+```
+$ geoqa proxy verify --geo ../../../../etc/hosts
+profile "…": /Volumes/etc/hosts.yaml: ENOENT
+```
+
+Verified against the code before the fix. The blast radius was limited — only `.yaml`
+files were reachable and a parse failure was the usual outcome — but the id came from
+the command line, the resolved path was echoed back, and a YAML parse error can quote
+the line it failed on. An attacker-controlled read attempt with a disclosure channel is
+enough to call it a defect rather than a wart.
+
+Closed by `DataIdSchema` (same shape and same reasoning as `TenantIdSchema`: these ids
+become filenames) plus `containedPath` on every candidate, which is the belt to the
+pattern's braces. Found while building tenant-scoped data, which is the honest story:
+the traversal was not what the slice was for, and adding a second search root is what
+made anybody look at how the first one was joined.
+
+The error also improved: `no profile named "x" — looked in <paths>` instead of the
+loader's ENOENT, which told a reader about the filesystem rather than about their typo.
+
+### A-8 · CLOSED — profiles and journeys can be tenant-scoped
+
+`tenants/<id>/profiles/` and `tenants/<id>/journeys/`, resolved BEFORE the repo's own.
+A tenant's file wins by name, and everything it has not customised falls back to the
+shared set — so a tenant declaring one custom journey still gets the other seven,
+without forking the engine.
+
+Proven live. `tenants/digilist/journeys/landing-page.yaml` tightens the LCP budget from
+the shared 2500ms to 1200ms:
+
+```
+shared:  landing-page   13 steps  Landing page validation
+tenant:  landing-page    8 steps  Landing page validation (digilist budgets)
+
+$ geoqa journey run --tenant digilist … --journey landing-page
+  ✓ fast for THIS tenant
+PASS
+```
+
+The listing de-duplicates by filename, so a tenant's override REPLACES the shared entry
+rather than appearing twice — a listing that disagreed with the resolver would be worse
+than no listing.
+
+**One regression caught by the suite and worth recording.** Making the path builders
+throw broke `matrix run`'s "report every problem at once" contract: it aborted on the
+first bad name, turning "these four names are wrong" into "this one is", once per run.
+The matrix now resolves through `resolveDataPath` and collects refusals like any other
+validation error.
+
+**And a process mistake of mine, recorded because it shipped.** A live-verification step
+used `git checkout tenants/digilist.yaml` to undo a temporary edit, and silently
+discarded the `proxySubUser` field added minutes earlier in the same slice — so
+[A-7](#a-7--closed--per-tenant-proxy-quota-enforced-before-launch) was committed
+describing a field the tenant file did not have. Restored here. `git checkout` is not an
+undo for a file with other uncommitted work in it.
+
 ### A-4 · Findings have nowhere to go
 
 Read-only by design: no Linear, no Convex, no repo write, no dashboard, no

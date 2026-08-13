@@ -618,7 +618,63 @@ Docs: gaps **A-7**; PRD **R-123 … R-125**.
 Gate: lint clean · boundaries clean (100 modules / 395 deps) · **1102 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
-## Next: slice 8
+## Slice 8 · Tenant-scoped profiles and journeys — DONE, and it found a traversal
 
-Tenant-scoped profiles and journeys, loaded from tenant storage rather than the repo.
-`containedPath` was extracted in slice 6 for exactly this.
+`tenants/<id>/profiles/` and `tenants/<id>/journeys/`, resolved before the repo's set.
+A tenant's file wins by name; everything it has not customised falls back — so one
+custom journey does not mean maintaining all eight.
+
+Proven live. `tenants/digilist/journeys/landing-page.yaml` tightens LCP from the shared
+2500ms to 1200ms:
+
+```
+shared:  landing-page   13 steps  Landing page validation
+tenant:  landing-page    8 steps  Landing page validation (digilist budgets)
+
+$ geoqa journey run --tenant digilist … --journey landing-page
+  ✓ fast for THIS tenant
+PASS
+```
+
+### The security fix was not what the slice was for
+
+`profilePath` and `journeyPath` joined a CLI-supplied id straight onto a directory:
+
+```
+$ geoqa proxy verify --geo ../../../../etc/hosts
+profile "…": /Volumes/etc/hosts.yaml: ENOENT
+```
+
+Verified against the old code. Limited blast radius — only `.yaml` files were reachable
+— but the id came from the command line, the resolved path was echoed back, and a YAML
+parse error can quote the line it failed on. Closed by `DataIdSchema` plus
+`containedPath` on every candidate. Recorded as **B-11**.
+
+The honest story is that adding a second search root is what made anybody look at how
+the first one was joined. The traversal had been there since before multi-tenancy.
+
+### Two things the suite caught
+
+**A regression I introduced:** making the path builders throw broke `matrix run`'s
+"report every problem at once" contract — it aborted on the first bad name, turning
+"these four names are wrong" into "this one is", once per run. Now resolves through
+`resolveDataPath` and collects refusals like any other validation error. Verified:
+three bad names, three messages.
+
+**A process mistake of mine that had already shipped:** a live-verification step in
+slice 7 used `git checkout tenants/digilist.yaml` to undo a temporary edit, and silently
+discarded the `proxySubUser` field added minutes earlier in the same slice. Slice 7 was
+committed describing a field the tenant file did not have. Restored, metering
+re-verified against the live account. `git checkout` is not an undo for a file that has
+other uncommitted work in it.
+
+Docs: gaps **A-8**, **B-11**; PRD **R-126 … R-128**.
+
+Gate: lint clean · boundaries clean (100 modules / 396 deps) · **1109 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
+## Next: slice 9
+
+Run persistence — findings and verdicts queryable across runs. This is what trends,
+regression detection and any UI need, and it is where the database decision from slice 6
+comes due.

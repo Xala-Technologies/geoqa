@@ -133,7 +133,7 @@ against, 90% is likely unreachable and the threshold is wrong.
 - [x] **7 · Per-tenant proxy metering.** Read Decodo's usage per sub-user, hold
       a per-tenant budget, and REFUSE a run that would exceed it rather than
       discovering it as a 407 mid-sweep. Today's failure mode, prevented.
-- [ ] **8 · Tenant-scoped profiles and journeys.** Loaded from tenant storage,
+- [x] **8 · Tenant-scoped profiles and journeys.** Loaded from tenant storage,
       not the repo. The YAML shape stays — it is data, it cannot reach the
       browser, and a non-engineer can edit it.
 - [ ] **9 · Run persistence.** Findings and verdicts queryable across runs. This

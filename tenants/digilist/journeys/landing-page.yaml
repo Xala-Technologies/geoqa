@@ -1,0 +1,22 @@
+# A tenant's OWN version of a shared journey, overriding the repo's.
+#
+# This is what tenant-scoped data is for: digilist tightens the LCP budget below the
+# shared default because its pages are light and it wants to know sooner. Nothing in
+# src/ knows this file exists, and nothing had to be forked to add it.
+id: landing-page
+title: Landing page validation (digilist budgets)
+description: >
+  The shared landing-page journey with budgets this tenant chose. Overrides
+  journeys/landing-page.yaml by name — a tenant's own file wins, and the repo's set
+  stays the shared baseline for everything the tenant has not customised.
+writes: false
+steps:
+  - { action: open, url: "{target}", label: open target }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: selector-visible, selector: h1, severity: critical, label: has a primary heading }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: no-page-errors, severity: high }
+  - { action: screenshot, label: hero }
+  # Tighter than the shared 2500ms, on purpose.
+  - { action: assert, check: lcp-below, value: 1200, severity: medium, label: fast for THIS tenant }
+  - { action: assert, check: cls-below, value: 0.1, severity: low }

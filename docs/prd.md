@@ -172,6 +172,19 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-126** A profile or journey id is **not a path**. It becomes a filename, so it is
+  constrained to lowercase letters, digits and inner hyphens, and every resolved
+  candidate is re-checked to be inside the directory it belongs to. Before this,
+  `--geo ../../../../etc/hosts` resolved outside the profiles directory and tried to
+  read it: only `.yaml` files were reachable, but the id came from the command line, the
+  resolved path was echoed back, and a YAML parse error can quote the line it failed on.
+- **R-127** A tenant may carry its **own** profiles and journeys, resolved before the
+  shared set and overriding by name, with fallback for everything it has not customised
+  — so a tenant tightens one budget without forking the engine. A listing shows the
+  override INSTEAD of the shared entry, never both: a listing that disagreed with the
+  resolver would be worse than no listing.
+- **R-128** A name that matches nothing says **where it looked**. The loader's ENOENT
+  tells a reader about the filesystem; the operator's mistake was a typo.
 - **R-123** A tenant's proxy budget is enforced **before anything launches**, not
   discovered as a 407 mid-sweep. A matrix is expanded first so the check knows the real
   page count: a 430-page sweep against a tenant with 100 MB left is refused before the

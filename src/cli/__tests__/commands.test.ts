@@ -26,6 +26,7 @@ import {
   profileList,
   profilePath,
   proxyVerify,
+  resolveDataPath,
   renderMatrixResult,
   renderPruneResult,
   renderRunResult,
@@ -172,7 +173,10 @@ describe("path helpers", () => {
   });
 
   it("throws a named error for a missing profile", () => {
-    expect(() => loadProfileOrThrow(deps(), "atlantis")).toThrow(/profile "atlantis"/);
+    // Names the profile AND where it looked. The old message was the loader's ENOENT,
+    // which tells a reader about the filesystem rather than about their typo.
+    expect(() => loadProfileOrThrow(deps(), "atlantis")).toThrow(/no profile named "atlantis"/);
+    expect(() => loadProfileOrThrow(deps(), "atlantis")).toThrow(/looked in/);
   });
 });
 
@@ -317,7 +321,7 @@ describe("browserVerify", () => {
   it("refuses a --geo that names no profile, on either engine", async () => {
     // The flag must mean something even where only one engine reads it, or a
     // typo would be silently ignored on agent-browser and fatal on Playwright.
-    await expect(browserVerify(deps(), "https://x", { profileId: "atlantis" })).rejects.toThrow(/profile "atlantis"/);
+    await expect(browserVerify(deps(), "https://x", { profileId: "atlantis" })).rejects.toThrow(/no profile named "atlantis"/);
   });
 });
 
@@ -1424,5 +1428,76 @@ describe("enforceQuota", () => {
     // check the thing that stops a tenant ever starting.
     const decision = await enforceQuota(withUsage({ evidenceRoot: path.join(evidenceRoot, "never-written") }, 10), digilist(), 1);
     expect(decision.state).toBe("within");
+  });
+})
+
+describe("tenant-scoped profiles and journeys", () => {
+  it("REFUSES an id that is a path — a traversal that predates multi-tenancy", () => {
+    // Verified against the old code before the fix: `--geo ../../../../etc/hosts`
+    // resolved to /Volumes/etc/hosts.yaml and tried to read it. Only .yaml files were
+    // reachable and a parse failure was the usual outcome, but the id came from the
+    // command line, the resolved path was echoed back, and a YAML parse error can quote
+    // the line it failed on. An attacker-controlled read attempt with a disclosure
+    // channel is enough.
+    for (const id of ["../../../../etc/hosts", "../oslo-desktop", "a/b", "..", "oslo/../../x", "/etc/passwd"]) {
+      const result = resolveDataPath(deps(), "profiles", id);
+      expect(result.ok, id).toBe(false);
+      if (!result.ok) expect(result.errors[0]).toContain("refused");
+    }
+    expect(() => profilePath(deps(), "../../etc/hosts")).toThrow(/refused/);
+    expect(() => journeyPath(deps(), "../../etc/hosts")).toThrow(/refused/);
+  });
+
+  it("resolves a shared profile and journey, with or without the .yaml suffix", () => {
+    const withSuffix = resolveDataPath(deps(), "profiles", "oslo-desktop.yaml");
+    const without = resolveDataPath(deps(), "profiles", "oslo-desktop");
+    expect(withSuffix).toEqual(without);
+    expect(resolveDataPath(deps(), "journeys", "landing-page").ok).toBe(true);
+  });
+
+  it("says WHERE it looked when a name matches nothing", () => {
+    // The old behaviour returned a path that did not exist and let the loader report
+    // ENOENT, which tells a reader about the filesystem rather than about their typo.
+    const result = resolveDataPath(deps(), "profiles", "oslo-desktopp");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("looked in");
+  });
+
+  it("prefers the TENANT's file over the shared one, and falls back for everything else", () => {
+    // The point of the feature: a tenant customises one journey without forking the
+    // engine, and still gets the other seven.
+    const scoped = deps({ tenantId: "digilist" });
+    const own = resolveDataPath(scoped, "journeys", "landing-page");
+    if (!own.ok) throw new Error(own.errors.join("\n"));
+    expect(own.value).toContain(path.join("tenants", "digilist", "journeys"));
+
+    const shared = resolveDataPath(scoped, "journeys", "browse");
+    if (!shared.ok) throw new Error(shared.errors.join("\n"));
+    expect(shared.value).toContain(path.join(repoRoot, "journeys"));
+  });
+
+  it("lists the tenant's overriding file INSTEAD of the shared one, never both", () => {
+    // A listing that disagreed with the resolver would be worse than no listing.
+    const scoped = journeyList(deps({ tenantId: "digilist" })).journeys.filter((j) => j.id === "landing-page");
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]?.title).toContain("digilist");
+    const shared = journeyList(deps()).journeys.filter((j) => j.id === "landing-page");
+    expect(shared[0]?.title).not.toContain("digilist");
+  });
+
+  it("treats a tenant with no data directory as using the shared set", () => {
+    // Normal, not an error: most tenants customise nothing.
+    const scoped = deps({ tenantId: "acme" });
+    const result = resolveDataPath(scoped, "profiles", "oslo-desktop");
+    if (!result.ok) throw new Error(result.errors.join("\n"));
+    expect(result.value).toContain(path.join(repoRoot, "profiles"));
+    expect(profileList(scoped).profiles.length).toBeGreaterThan(0);
+  });
+
+  it("refuses a traversing id even WITH a tenant scoped, before trying either root", () => {
+    // A refusal is not "try the next root": it means the id got past the pattern and is
+    // trying to leave.
+    expect(resolveDataPath(deps({ tenantId: "digilist" }), "profiles", "../../../etc/hosts").ok).toBe(false);
   });
 })

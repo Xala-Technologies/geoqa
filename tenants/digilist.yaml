@@ -18,6 +18,12 @@ targets:
 # from the environment only. null means "use the shared default", which is what this
 # tenant does today — its own Decodo sub-user is slice 7.
 proxyCredentials: null
+# The NAME of the variable holding this tenant's proxy sub-account username, for
+# metering. Also a name: a sub-account username is half a credential pair and
+# identifies a billable account. Set GEOQA_SUBUSER_DIGILIST to meter this tenant;
+# until then its traffic is UNMEASURABLE rather than unlimited, because the shared
+# account's figure describes every tenant on it.
+proxySubUser: GEOQA_SUBUSER_DIGILIST
 quota:
   # Measured, not guessed: a 430-page sweep of digilist.no costs roughly 0.5 GB, so
   # 5 GB is ten full sweeps a month. The number exists because one sweep once

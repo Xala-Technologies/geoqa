@@ -135,6 +135,8 @@ async function main(argv: string[]): Promise<number> {
   const tenant = tenancy.tenant;
   if (tenant !== null) {
     deps.evidenceRoot = tenancy.evidenceRoot;
+    // The tenant's own profiles and journeys now take precedence over the shared set.
+    deps.tenantId = tenant.id;
     console.error(`tenant: ${tenant.id} (${tenant.name}) — evidence under ${tenancy.evidenceRoot}`);
   }
 

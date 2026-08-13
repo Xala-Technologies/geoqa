@@ -7,7 +7,8 @@
  * That is what lets these be covered without launching Chrome, while keeping
  * `index.ts` thin enough to be honestly coverage-excluded.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { z } from "zod";
 import path from "node:path";
 import { parseUrlList } from "./args.js";
 import { AgentBrowserRuntime, type RuntimeOptions } from "../browser/agent-browser.js";
@@ -51,7 +52,7 @@ import { loadJourney } from "../journeys/spec.js";
 import { seedFrom } from "../journeys/random.js";
 import { redactProxyUrl, selectProvider, type TcpProbe } from "../network/provider.js";
 import { buildRuntime, newRunId, type RunEngine, type RunSpec } from "../run/context.js";
-import { loadTenant, tenantEvidenceRoot, tenantOwnsTarget } from "../tenant/registry.js";
+import { containedPath, loadTenant, tenantEvidenceRoot, tenantOwnsTarget } from "../tenant/registry.js";
 import {
   checkQuota,
   estimateTrafficMb,
@@ -162,6 +163,14 @@ export interface CommandDeps {
    * real traffic would not be tested.
    */
   usageProbe?: UsageProbe;
+  /**
+   * The tenant whose own profiles and journeys take precedence, when one is scoped.
+   *
+   * Just the id: the tenant's data directory is derived from it, so there is one place
+   * that knows the layout. Absent means the shared set only, which is what
+   * single-target use has always done.
+   */
+  tenantId?: string;
 }
 
 /**
@@ -384,29 +393,138 @@ function existingRunIds(root: string): string[] {
 export const profilesDir = (deps: CommandDeps): string => path.join(deps.repoRoot, "profiles");
 export const journeysDir = (deps: CommandDeps): string => path.join(deps.repoRoot, "journeys");
 
-const yamlFiles = (dir: string): string[] => readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort();
+/** A tenant's own data lives beside its registry entry: `tenants/<id>/…`. */
+export const tenantDataDir = (deps: CommandDeps, tenantId: string, kind: "profiles" | "journeys"): string =>
+  path.join(tenantsDir(deps), tenantId, kind);
+
+const yamlFiles = (dir: string): string[] => {
+  try {
+    return readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort();
+  } catch {
+    // A tenant with no profiles of its own is normal, not an error: it uses the
+    // shared set. Only a missing SHARED directory would be a broken install, and
+    // that surfaces as "no profile named X" a moment later.
+    return [];
+  }
+};
+
+/**
+ * A profile or journey id, constrained so it cannot be a path.
+ *
+ * This closes a real traversal that predates multi-tenancy. `profilePath` used to
+ * `path.join` the id straight onto the directory, so `--geo ../../../../etc/hosts`
+ * resolved to `/Volumes/etc/hosts.yaml` and tried to read it — verified before the
+ * fix. Only `.yaml` files were reachable and a parse failure was the usual outcome,
+ * but the id came from the command line, the resolved path was echoed back in the
+ * error, and a YAML parse error can quote the line it failed on. That is an
+ * attacker-controlled read attempt with a disclosure channel, which is enough.
+ *
+ * Same shape as `TenantIdSchema` and for the same reason: these ids become
+ * filenames. A `.yaml` suffix is tolerated because callers and tests pass both
+ * spellings, but nothing else containing a dot is.
+ */
+export const DataIdSchema = z
+  .string()
+  .regex(
+    /^[a-z0-9][a-z0-9-]*[a-z0-9](\.yaml)?$/,
+    "a profile or journey id is lowercase letters, digits and inner hyphens — it becomes a filename, so dots, slashes and traversal are refused",
+  );
+
+/**
+ * Where a named profile or journey is read from, tenant first.
+ *
+ * A tenant's own file WINS over the repo's, which is the point of the feature: a
+ * tenant customises a journey without forking the engine, and the repo's set stays
+ * the shared baseline. Falling back rather than requiring a full set means a tenant
+ * declaring one custom journey still gets the other seven.
+ *
+ * Every candidate goes through `containedPath` against the directory it is supposed
+ * to be in — the id pattern already refuses traversal, and this refuses anything that
+ * got past it, for the reason recorded on `tenantEvidenceRoot`. Belt and braces is
+ * warranted when the consequence is reading a file the caller chose.
+ *
+ * A name that matches nothing anywhere is a refusal naming both places it looked. The
+ * previous behaviour was to return a path that did not exist and let the loader report
+ * ENOENT, which tells a reader about the filesystem rather than about their typo.
+ */
+export function resolveDataPath(
+  deps: CommandDeps,
+  kind: "profiles" | "journeys",
+  id: string,
+): { ok: true; value: string } | { ok: false; errors: string[] } {
+  const valid = DataIdSchema.safeParse(id);
+  if (!valid.success) {
+    return { ok: false, errors: [`${kind === "profiles" ? "profile" : "journey"} "${id}": ${valid.error.issues[0]?.message ?? "invalid id"}`] };
+  }
+  const file = id.endsWith(".yaml") ? id : `${id}.yaml`;
+  const roots = deps.tenantId === undefined ? [] : [tenantDataDir(deps, deps.tenantId, kind)];
+  roots.push(kind === "profiles" ? profilesDir(deps) : journeysDir(deps));
+
+  const looked: string[] = [];
+  for (const root of roots) {
+    const contained = containedPath(root, file);
+    // A refusal here is not "try the next root": it means the id got past the pattern
+    // and is trying to leave. Stop.
+    if (!contained.ok) return contained;
+    looked.push(contained.value);
+    if (existsSync(contained.value)) return { ok: true, value: contained.value };
+  }
+  return {
+    ok: false,
+    errors: [`no ${kind === "profiles" ? "profile" : "journey"} named "${id}" — looked in ${looked.join(" and ")}`],
+  };
+}
 
 export function profilePath(deps: CommandDeps, id: string): string {
-  return path.join(profilesDir(deps), id.endsWith(".yaml") ? id : `${id}.yaml`);
+  const resolved = resolveDataPath(deps, "profiles", id);
+  if (!resolved.ok) throw new Error(resolved.errors.join("; "));
+  return resolved.value;
 }
 
 export function journeyPath(deps: CommandDeps, id: string): string {
-  return path.join(journeysDir(deps), id.endsWith(".yaml") ? id : `${id}.yaml`);
+  const resolved = resolveDataPath(deps, "journeys", id);
+  if (!resolved.ok) throw new Error(resolved.errors.join("; "));
+  return resolved.value;
 }
 
 export function loadProfileOrThrow(deps: CommandDeps, id: string): GeoProfile {
-  const loaded = loadGeoProfile(profilePath(deps, id));
+  const resolved = resolveDataPath(deps, "profiles", id);
+  if (!resolved.ok) throw new Error(resolved.errors.join("; "));
+  const loaded = loadGeoProfile(resolved.value);
   if (!loaded.ok) throw new Error(`profile "${id}": ${loaded.errors.join("; ")}`);
   return loaded.value;
 }
 
 // ── list ─────────────────────────────────────────────────────────────────
 
+/**
+ * Every name available for a kind, tenant's own first and the shared set after.
+ *
+ * De-duplicated by filename, so a tenant's `oslo-desktop.yaml` REPLACES the repo's in
+ * the listing rather than appearing twice — which is what `resolveDataPath` does when
+ * a run asks for it, and a listing that disagreed with the resolver would be worse
+ * than no listing.
+ */
+function availableData(deps: CommandDeps, kind: "profiles" | "journeys"): { file: string; dir: string }[] {
+  const dirs = deps.tenantId === undefined ? [] : [tenantDataDir(deps, deps.tenantId, kind)];
+  dirs.push(kind === "profiles" ? profilesDir(deps) : journeysDir(deps));
+  const seen = new Set<string>();
+  const found: { file: string; dir: string }[] = [];
+  for (const dir of dirs) {
+    for (const file of yamlFiles(dir)) {
+      if (seen.has(file)) continue;
+      seen.add(file);
+      found.push({ file, dir });
+    }
+  }
+  return found.sort((a, b) => a.file.localeCompare(b.file));
+}
+
 export function profileList(deps: CommandDeps): {
   profiles: { id: string; label: string; country: string; city: string; device: string; visitorType: string }[];
 } {
-  const profiles = yamlFiles(profilesDir(deps)).map((file) => {
-    const loaded = loadGeoProfile(path.join(profilesDir(deps), file));
+  const profiles = availableData(deps, "profiles").map(({ file, dir }) => {
+    const loaded = loadGeoProfile(path.join(dir, file));
     if (!loaded.ok) {
       // An unreadable profile is listed rather than skipped — a profile that
       // vanished from a listing is how a market silently stops being covered — and
@@ -500,8 +618,8 @@ export function resolveProfileId(
 }
 
 export function journeyList(deps: CommandDeps): { journeys: { id: string; title: string; steps: number }[] } {
-  const journeys = yamlFiles(journeysDir(deps)).map((file) => {
-    const loaded = loadJourney(path.join(journeysDir(deps), file));
+  const journeys = availableData(deps, "journeys").map(({ file, dir }) => {
+    const loaded = loadJourney(path.join(dir, file));
     if (!loaded.ok) return { id: file.replace(/\.yaml$/, ""), title: `INVALID: ${loaded.errors[0]}`, steps: 0 };
     return { id: loaded.value.id, title: loaded.value.title, steps: loaded.value.steps.length };
   });
@@ -906,13 +1024,26 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
   const axes = { markets: options.markets, devices, journeys: options.journeys, targets };
   const scenarios = expandMatrix(axes);
 
+  // Resolved through `resolveDataPath` rather than `profilePath`, because a matrix
+  // reports EVERY problem at once and a throwing path builder would abort on the
+  // first — turning "these four names are wrong" into "this one is", once per run.
   for (const profileId of [...new Set(scenarios.map((s) => `${s.market}-${s.device}`))]) {
-    const loaded = loadGeoProfile(profilePath(deps, profileId));
+    const file = resolveDataPath(deps, "profiles", profileId);
+    if (!file.ok) {
+      errors.push(...file.errors);
+      continue;
+    }
+    const loaded = loadGeoProfile(file.value);
     if (!loaded.ok) errors.push(`profile "${profileId}": ${loaded.errors.join("; ")}`);
   }
   const writeJourneys: string[] = [];
   for (const journeyId of [...new Set(scenarios.map((s) => s.journey))]) {
-    const loaded = loadJourney(journeyPath(deps, journeyId));
+    const file = resolveDataPath(deps, "journeys", journeyId);
+    if (!file.ok) {
+      errors.push(...file.errors);
+      continue;
+    }
+    const loaded = loadJourney(file.value);
     if (!loaded.ok) errors.push(`journey "${journeyId}": ${loaded.errors.join("; ")}`);
     else if (loaded.value.writes) writeJourneys.push(journeyId);
   }
