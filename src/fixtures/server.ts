@@ -96,6 +96,8 @@ export interface FixtureResponse {
 export function fixtureBody(path: string, cookie = ""): FixtureResponse | null {
   /** Did the visitor already choose English? */
   const prefersEnglish = /(?:^|;\s*)lang=en(?:;|$)/.test(cookie);
+  /** Has this browser been here before? See `/returning`. */
+  const seenBefore = /(?:^|;\s*)seen=1(?:;|$)/.test(cookie);
   switch (path) {
     // Chrome requests this unprompted on every navigation. Letting it 404 puts
     // an http finding on EVERY fixture including the control, which is how the
@@ -325,6 +327,35 @@ export function fixtureBody(path: string, cookie = ""): FixtureResponse | null {
            </script>`,
         ),
       };
+    /**
+     * A visitor the site RECOGNISES, or does not.
+     *
+     * The one fixture that cannot be proven inside a single run, which is why B-7 sat open with
+     * its mechanism finished: `storageState` is written when the context CLOSES, so
+     * demonstrating that a session survives needs two runs of the same profile and a page that
+     * behaves differently for each.
+     *
+     * The cookie is deliberately the ONLY difference. Both branches return 200, both carry a
+     * heading and links, and no other check in the journey can tell them apart — so a passing
+     * second run is evidence about the saved session and nothing else. A fixture whose returning
+     * branch also fixed a 404 would let a completely unrelated repair look like a restored
+     * cookie.
+     *
+     * `Max-Age` is a year rather than a session cookie: Playwright's `storageState` persists
+     * cookies with an expiry and drops session cookies, so a session cookie here would test the
+     * opposite of what the fixture is named for and fail for the right reason at the wrong layer.
+     */
+    case "/returning":
+      return seenBefore
+        ? {
+            status: 200,
+            html: shell("Tilbake", `<h1>Velkommen tilbake</h1><p id="visitor">returning</p>${LINKS}`),
+          }
+        : {
+            status: 200,
+            headers: { "set-cookie": "seen=1; Path=/; Max-Age=31536000" },
+            html: shell("Hei", `<h1>Hei, første gang</h1><p id="visitor">first-time</p>${LINKS}`),
+          };
     /**
      * A manual language override, and whether it survives the next click.
      *
