@@ -1104,10 +1104,15 @@ There is no evidence about how the journeys behave on a site with a cookie wall,
 client-side router, a login, or lazy-loaded content — all of which change what "the
 page settled" means.
 
-**Cannot be closed by code.** It needs a second and third real site to point at,
-which is a decision about scope and permission, not an implementation.
-`fixtures/server.ts` covers *known* defects on purpose and cannot substitute: a
-fixture we wrote cannot surprise us.
+**The decision has been made: `xala.no` is the second site** (owner, 2026-08-13).
+That was the whole blocker — this needed permission and a name, not an
+implementation. What remains is the measuring, and the measuring is the point:
+`fixtures/server.ts` covers *known* defects on purpose and cannot substitute,
+because a fixture we wrote cannot surprise us.
+
+A third site is still wanted, and the shape that would teach the most is one this
+pair may not have: a cookie wall, a login, or heavy lazy-loading — each changes what
+"the page settled" means, which is the assumption every journey rests on.
 
 ### C-8 · `emulate` is a Playwright descriptor name applied to two engines, and no axis checks it
 

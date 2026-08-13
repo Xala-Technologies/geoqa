@@ -4,7 +4,7 @@ Working brief for any coding agent in this repository. Vendor-neutral — Claude
 Code, Codex, Cursor and friends all read this file. `CLAUDE.md` points here.
 
 Depth lives in [`docs/`](docs/):
-[architecture](docs/architecture.md) · [PRD](docs/prd.md) · [gaps](docs/gaps.md)
+[architecture](docs/architecture.md) · [PRD](docs/prd.md) · [gaps](docs/gaps.md) · [what shipped](development-update.md)
 
 ## What this is
 
@@ -87,7 +87,7 @@ or unreadable file exits 2 rather than falling back.
 
 Two keys documented in `geoqa.config.example.json` are **still inert**
 (`evidence.retention`, `network.cooldownMs`) — see
-[gaps B-1](docs/gaps.md#b-1--the-config-file-is-read-now--except-for-two-keys)
+[gaps B-1](docs/gaps.md#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site)
 before adding a third.
 
 Real-browser commands (`browser verify`, `proxy verify`, `journey run`,
