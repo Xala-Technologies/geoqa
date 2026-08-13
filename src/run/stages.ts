@@ -14,6 +14,7 @@ import { observeBrowser, observeEgressIp, observeNetwork, observeNetworkVia, GEO
 import { loadGeoProfile } from "../geo/profile.js";
 import type { AxisResult, GeoProfile, GeoVerification } from "../geo/types.js";
 import { compareEgressHeld, verifyGeo, withCorroboration } from "../geo/verify.js";
+import { CONTENT_EXPRESSION, parsePageContent } from "../analysis/content.js";
 import type { BrowserRuntime } from "../browser/types.js";
 import { runJourney, type JourneyResult, type StepResult } from "../journeys/engine.js";
 import { loadJourney, resolveSteps, type Journey } from "../journeys/spec.js";
@@ -241,6 +242,23 @@ export async function collectEvidence(
   const dir = ensureRunDirectory({ root: spec.evidenceRoot, runId: spec.runId });
   const tier = RETENTION[verdictTier(journey.verdict)];
   const artifacts: Artifact[] = [];
+
+  /**
+   * Page content, for the site-wide signals a single run cannot produce.
+   *
+   * Captured on EVERY run and written as its own artifact rather than folded into `run.json`,
+   * because it is the one artifact whose value is entirely cross-run: thin pages, orphans and
+   * near-duplicates are all comparisons between pages, and none of them mean anything for one.
+   *
+   * A failure here is a MISSING artifact, never a failed run. The content read is a bonus
+   * observation; a run that verified geography and executed its journey has not failed because
+   * a word count could not be taken.
+   */
+  const content = await runtime.evaluate<unknown>(CONTENT_EXPRESSION);
+  const parsedContent = content.ok ? parsePageContent(content.data) : null;
+  if (parsedContent !== null) {
+    artifacts.push(writeJsonArtifact(dir, "metadata", "content", "content.json", parsedContent));
+  }
 
   artifacts.push(
     writeJsonArtifact(dir, "metadata", "run", "run.json", {

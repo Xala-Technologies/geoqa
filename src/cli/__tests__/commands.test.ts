@@ -35,10 +35,12 @@ import {
   runsList,
   runsRebuild,
   checkTenantScope,
+  contentAnalyse,
   dashboardBuild,
   enforceQuota,
   gateCheck,
   keywordsResearch,
+  renderContentAnalysis,
   renderDashboardBuild,
   renderGateResult,
   renderKeywordReport,
@@ -1943,5 +1945,82 @@ describe("dashboardBuild", () => {
   it("points at the rebuild when index lines could not be parsed", () => {
     const { deps: d } = withIndex(`${line({})}\n{"half\n`);
     expect(dashboardBuild(d).view.warnings.join(" ")).toContain("runs rebuild");
+  });
+})
+
+describe("contentAnalyse", () => {
+  const write = (dir: string, files: Record<string, unknown>): void => {
+    mkdirSync(path.join(evidenceRoot, dir), { recursive: true });
+    for (const [name, body] of Object.entries(files)) {
+      writeFileSync(path.join(evidenceRoot, dir, name), JSON.stringify(body));
+    }
+  };
+  const content = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    wordCount: 800, shingles: ["a b c d e"], headings: ["H"], h1Count: 1, internalLinks: [], title: "T", ...over,
+  });
+
+  it("reads content.json back from the evidence and analyses it", () => {
+    write("run_1000_a", { "run.json": { target: "https://a.test/" }, "content.json": content({ internalLinks: ["/x"] }) });
+    write("run_2000_b", { "run.json": { target: "https://a.test/x" }, "content.json": content({ wordCount: 20 }) });
+    const result = contentAnalyse(deps());
+    expect(result.pages).toBe(2);
+    expect(result.findings.thin).toEqual([{ target: "https://a.test/x", wordCount: 20 }]);
+  });
+
+  it("keeps the NEWEST run per target, so a repeated sweep describes the site as it is now", () => {
+    // Averaging a page against its own history would report a problem that was fixed.
+    write("run_1000_a", { "run.json": { target: "https://a.test/p" }, "content.json": content({ wordCount: 20 }) });
+    write("run_2000_a", { "run.json": { target: "https://a.test/p" }, "content.json": content({ wordCount: 900 }) });
+    const result = contentAnalyse(deps());
+    expect(result.pages).toBe(1);
+    expect(result.findings.thin).toEqual([]);
+  });
+
+  it("SKIPS a run with no content.json and counts it, rather than failing", () => {
+    // The artifact is a bonus, and a sweep from before it existed should still analyse.
+    write("run_1000_a", { "run.json": { target: "https://a.test/" }, "content.json": content() });
+    write("run_2000_b", { "run.json": { target: "https://a.test/x" } });
+    const result = contentAnalyse(deps());
+    expect(result.pages).toBe(1);
+    expect(result.runsWithoutContent).toBe(1);
+  });
+
+  it("counts a run whose content PARSES but describes nothing", () => {
+    // Valid JSON with no word count is not a content record, and treating it as one would put a
+    // page with an invented length into a thin-page report.
+    write("run_4000_d", { "run.json": { target: "https://a.test/z" }, "content.json": { headings: [] } });
+    // And a run.json with no target: there is nothing to attribute the content to.
+    write("run_5000_e", { "run.json": {}, "content.json": content() });
+    const result = contentAnalyse(deps());
+    expect(result.pages).toBe(0);
+    expect(result.runsWithoutContent).toBe(2);
+  });
+
+  it("counts an unreadable run rather than throwing", () => {
+    mkdirSync(path.join(evidenceRoot, "run_3000_c"), { recursive: true });
+    writeFileSync(path.join(evidenceRoot, "run_3000_c", "content.json"), "{ not json");
+    writeFileSync(path.join(evidenceRoot, "run_3000_c", "run.json"), "{}");
+    expect(contentAnalyse(deps()).runsWithoutContent).toBe(1);
+  });
+
+  it("survives an evidence root that does not exist yet", () => {
+    const result = contentAnalyse(deps({ evidenceRoot: path.join(evidenceRoot, "never-written") }));
+    expect(result.pages).toBe(0);
+  });
+
+  it("renders each finding, and says plainly when nothing was captured", () => {
+    write("run_1000_a", { "run.json": { target: "https://a.test/" }, "content.json": content({ internalLinks: ["/x"] }) });
+    write("run_2000_b", { "run.json": { target: "https://a.test/x" }, "content.json": content({ wordCount: 20, h1Count: 0 }) });
+    write("run_3000_c", { "run.json": { target: "https://a.test/y" }, "content.json": content() });
+    const rendered = renderContentAnalysis(contentAnalyse(deps()));
+    expect(rendered).toContain("under 200 words");
+    expect(rendered).toContain("a list to look at, not a verdict");
+    expect(rendered).toContain("without exactly one h1");
+    expect(rendered).toContain("near-duplicate pair(s)");
+    // The orphan claim always states its scope.
+    expect(rendered).toContain("nothing else in this sweep links to");
+
+    const empty = renderContentAnalysis(contentAnalyse(deps({ evidenceRoot: path.join(evidenceRoot, "nope") })));
+    expect(empty).toContain("no page content was captured");
   });
 })

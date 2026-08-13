@@ -1315,34 +1315,43 @@ run, which is now clearly the right call rather than a cautious one.
 
 Where: `network/provider.ts` (`defaultSessionId`, `substituteProxyPlaceholders`).
 
-### A-9 · Content-level SEO signals cannot be computed — the evidence carries no page text
+### A-9 · CLOSED — content-level SEO signals, from an artifact designed not to hold prose
 
-Checked rather than assumed. The slice named thin pages, orphan pages, soft 404s and
-near-duplicate cannibalisation. **Every one of them needs page TEXT or the internal LINK
-GRAPH, and a run records neither.** A run stores verdicts, findings, vitals, geography and
-confidence; the journey's `getText` result is compared by a check and then discarded, and
-`selector-count-min` counts links without recording their targets.
+The gap named its own closing conditions and they are now built. `content.json` is written on
+every run: word count, 5-word shingles, headings, `h1` count and same-origin link targets.
+`geoqa content analyse` reads them back and reports thin pages, orphans, near-duplicates and
+heading problems.
 
-So they are not computed. Approximating them would mean inventing the inputs, and a
-thin-page report built on a guess about page length is worse than no thin-page report,
-because somebody would rewrite a page over it.
+**The artifact stores measurements, not prose, and that is the load-bearing decision.** A page
+can contain personal data — a name in a testimonial, an address in a footer, a review — and an
+evidence tree accumulating the rendered text of every page on a customer's site would be a
+data-protection liability created for a word count. `evidence/redact.ts` exists because this
+project already takes that seriously. A hash-like set of shingles answers "are these two pages
+the same" without any of it being readable.
 
-**What would close it**, and it is a small, additive evidence change rather than a new
-subsystem:
+Three smaller decisions, each with a reason:
 
-| Signal | Needs | Where |
-|---|---|---|
-| thin pages | rendered text length per page | a `content.json` artifact, or a field on `run.json` |
-| orphans, internal link graph | `href` targets of internal links | the same, from a `document.querySelectorAll` read |
-| near-duplicate cannibalisation | text per page, then similarity | as above, plus an offline comparison |
-| soft 404 | text + status, which is already half there | a `text-absent` check on "not found" wording gets most of it today |
+- **`innerText`, not `textContent`.** `textContent` includes `<script>` bodies and hidden
+  elements, so a page with a large inlined JSON-LD blob measures as substantial content while a
+  reader sees an empty page. "Thin" is a claim about what a person reads.
+- **The duplicate threshold is deliberately HIGH** (0.6 Jaccard). Measured against the digilist
+  finding that prompted it: 23 near-duplicate slug pairs whose content was only 6–14% similar.
+  A threshold low enough to catch those would flag every page sharing a nav and a footer.
+- **Orphans are scoped to the sweep and say so.** A page linked only from a page that was not
+  crawled will appear in the list, and a report that blurred "orphaned here" with "orphaned on
+  the site" would send somebody hunting for links that exist.
 
-Note the last row: a soft 404 is largely expressible with existing checks, and that is how
-`/en/blog` was caught. It is the other three that need the artifact.
+Verified over 24 real digilist pages: word counts 162–1652, 61–70 internal links each, **every
+page exactly one `h1`**, one thin page (`/book-demo` at 162 words — a booking form, which is why
+the report calls it a list to look at rather than a verdict), and **zero near-duplicates**. That
+last result independently confirms the earlier manual finding: those slug pairs were
+cannibalisation candidates by URL and not by content.
 
-**What IS built** is the half no other tool has, because no other tool measures from inside
-the market — see `analysis/site.ts` and
-[A-10](#a-10--closed--the-same-page-compared-across-markets).
+A failed content read costs the ARTIFACT, never the run. A run that verified geography and
+executed its journey has not failed because a word count could not be taken.
+
+**Still not built:** soft-404 detection as its own check. It remains largely expressible with
+`text-absent` on "not found" wording, which is how `/en/blog` was caught.
 
 ### A-10 · CLOSED — the same page, compared across markets
 
