@@ -32,8 +32,10 @@ import {
   evidencePrune,
   experimentRun,
   enforceQuota,
+  gateCheck,
   keywordsResearch,
   loadUrlList,
+  renderGateResult,
   renderKeywordReport,
   resolveTenant,
   tenantList,
@@ -56,6 +58,7 @@ import {
 import { configPath, loadConfig } from "../config/load.js";
 import { findExperiment } from "../experiments/definitions.js";
 import { DEFAULT_MATRIX_CONCURRENCY } from "../run/matrix.js";
+import { gateExitCode } from "../gate/publish.js";
 import { experimentKnobs, SAMPLERS } from "./samplers.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -351,6 +354,35 @@ async function main(argv: string[]): Promise<number> {
     // scenarios is zero evidence.
     if (result.result === null) return 0;
     return result.result.verdict === "FAIL" || result.result.verdict === "ERROR" ? 1 : 0;
+  }
+
+  if (group === "gate" && (action === "check" || action === undefined)) {
+    // Tenant scope applies here too: a gate asked about a page the tenant does not own is
+    // either a mistake or this engine being pointed somewhere it was not invited.
+    const scope = tenant === null ? [] : checkTenantScope(tenant, { url: flagString(args, "url", "") });
+    if (scope.length > 0) {
+      console.error(scope.join("\n"));
+      return 2;
+    }
+    const result = await gateCheck(deps, {
+      url: flagString(args, "url", ""),
+      profileId,
+      journeyId: flagString(args, "journey", "landing-page"),
+      providerName,
+      engine,
+      verifyEndpoint,
+      ...(tenant !== null ? { tenantId: tenant.id } : {}),
+      ...(args.flags.seed !== undefined ? { seed: flagNumber(args, "seed", 0) } : {}),
+      ...(args.flags["block-at"] !== undefined
+        ? { blockAtOrAbove: flagString(args, "block-at", "high") as "critical" | "high" | "medium" | "low" }
+        : {}),
+      ...(args.flags["min-confidence"] !== undefined ? { minConfidence: flagNumber(args, "min-confidence", 70) } : {}),
+      ...(args.flags["min-geo-confidence"] !== undefined ? { minGeoConfidence: flagNumber(args, "min-geo-confidence", 0) } : {}),
+    });
+    emit(result, renderGateResult(result));
+    // 0 allows and ANYTHING else does not — including `unknown`. A publisher conditioning
+    // on this exit code cannot accidentally publish on a run that could not be read.
+    return gateExitCode(result.gate);
   }
 
   if (group === "keywords" && (action === "research" || action === undefined)) {

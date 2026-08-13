@@ -159,7 +159,7 @@ against, 90% is likely unreachable and the threshold is wrong.
 
 - [x] **13 · Copy the keyword-research agent.** Market and language from tenant
       config. Serper is the data source.
-- [ ] **14 · Copy the content agent.** Tenant product and voice as inputs.
+- [x] **14 · The publish GATE (generation stays in agent-fleet — see progress.md).** Tenant product and voice as inputs.
       **Publish gated on a geoqa verdict** — the producer never grades itself.
 - [ ] **15 · AEO/GEO/SEO analysis.** Reuse what the sweep already detects: thin
       pages, orphans, soft 404s, near-duplicate cannibalisation, and (with

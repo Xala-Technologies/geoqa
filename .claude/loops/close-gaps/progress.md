@@ -960,10 +960,59 @@ Docs: PRD **R-137 … R-140**.
 Gate: lint clean · boundaries clean (111 modules / 441 deps) · **1228 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
+## Slice 14 · The publish gate — DONE, and the slice was deliberately narrowed
+
+The slice said "copy the content agent". **Generation does not come here, and that is the
+point rather than a shortcut.** The division the whole loop rests on is *agents produce,
+geoqa verifies* — so putting a content generator inside the verifier would collapse exactly
+the separation it exists to enforce. The first time an LLM in this repo wrote a page that
+this repo then approved, the approval would be worth nothing.
+
+Publishing stays in `agent-fleet` for a plainer reason: it is OAuth tokens, LinkedIn and X
+API calls and blog markdown writes. None of that is geographic QA.
+
+What geoqa owes the pipeline is a verdict it cannot argue with, and that is what landed.
+
+**Three states, and the middle one is where gates usually go wrong:**
+
+```
+allow    measured, and clean by the declared thresholds
+block    the page has a problem we MEASURED        → fix the page
+unknown  we could NOT measure — a geoqa defect     → fix the instrumentation
+```
+
+`unknown` still prevents publishing. It is a different SENTENCE from `block`, not a different
+outcome: telling an author their page is broken when the truth is that our browser could not
+read it wastes their time and costs the gate its credibility.
+
+**Default deny throughout.** No run, a thrown error, an errored run, one unread step — every
+one blocks, and `gateExitCode` returns 0 only for `allow`. The one way this could have gone
+wrong is a publisher wrapping the call in a try/catch and treating an exception as
+permission, so a throw becomes `unknown` rather than propagating.
+
+Verified live against the fixture server, all three states:
+
+```
+ALLOW   — measured clean: verdict PASS, overall confidence 100
+BLOCK   — blocked by 1 measured problem(s) at severity high or above
+          ✗ [critical] has a primary heading — expected h1 is visible, observed not visible
+UNKNOWN — cannot decide: 1 step(s) could not be read — this is a geoqa defect, not a
+          problem with the page
+```
+
+Lower-severity findings are recorded as warnings rather than discarded, so the floor stays
+visible to whoever set it, and `actionableFindings` hands a producer the structured findings
+worst-first while excluding instrumentation ones — a producer cannot fix our browser.
+
+Docs: PRD **R-141 … R-143**.
+
+Gate: lint clean · boundaries clean (113 modules / 447 deps) · **1248 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
 ## Next
 
-Slice 14 (the content agent, publish gated on a geoqa verdict), 15 (AEO/GEO/SEO analysis),
-then 16–19 (frontend). The milestone is unblocked and
+Slice 15 (AEO/GEO/SEO analysis, reusing what the sweep already detects), then 16–19
+(frontend). The milestone is unblocked and
 worth running now that per-session identity actually works. Then slices 13–15 (the agents, generalised) and
 16–19 (frontend), neither of which depends on it.
 
