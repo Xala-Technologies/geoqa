@@ -23,44 +23,21 @@
  *   unrunnable without a Temporal server, exactly as it would for a stage.
  */
 import type { GeoQaRunResult } from "../findings/types.js";
+import { boundedPool, resolveConcurrency } from "./pool.js";
 import { executeRun, type ExecuteOptions } from "./execute.js";
 
 /**
- * How many scenarios may be in flight at once when a caller does not say.
+ * The concurrency bound and the pool that enforces it live in `run/pool.ts`.
  *
- * Each in-flight scenario costs a browser context and, on agent-browser, an
- * ENTIRE Chrome process — one profile is one browser there, because the proxy is
- * a launch flag (architecture §13). Picking a parallelism number before
- * measuring is how the first OOM happens, so this is the smallest bound that is
- * not sequential: it proves the scheduler and at most doubles peak memory.
+ * Moved there, not copied: invariant 12 says two execution modes and ONE implementation, and
+ * the durable matrix workflow needs the same bound and the same loop. It cannot import THIS
+ * file — `runMatrix` reaches `executeRun`, which reaches a browser — and a Temporal workflow
+ * runs in a deterministic sandbox, so `pool.ts` has no imports at all.
  *
- * MEASURED, finally, but on one machine — so raised rather than derived. EXP-007
- * now runs, and on a 14-core / 36 GB laptop against a local fixture server it
- * reported 100% completion, 100% verdict agreement and 100% egress-held at every
- * level tried, with wall clock per session barely moving:
- *
- *   concurrency  2 → x1.01     8 → x1.14
- *                4 → x1.01    12 → x1.09
- *                             16 → x1.30
- *
- * Four is the new default and not sixteen, deliberately. The measurement covers ONE
- * machine, and a default has to be safe on the smallest one that will run this — a
- * 2-core CI runner would be worse at 4 than the old 2, let alone at 16. Raising to 4
- * captures most of the win (the numbers are flat to 12 here) while staying within
- * `cores - 2` on any machine anybody would run a browser matrix on.
- *
- * `peak-memory-per-session` remains permanently unmeasurable from this process — the
- * browser is a separate daemon on one engine and an unsampled child on the other — so
- * EXP-007's overall verdict is `unmeasured` and the OOM risk that originally kept this
- * at 1 is still unquantified. That is the honest reason not to go higher on the
- * strength of wall clock alone.
- *
- * A CPU-derived bound (`min(4, max(2, cores - 2))`) is the obvious next step and is
- * NOT taken here, because it would be generalising a formula from a single data point
- * — which is the kind of unmeasured leap this file's history is a record of avoiding.
- * `MatrixResult.concurrency` still carries both the bound and the peak reached.
+ * The measurement that produced the number, and the reasoning for taking 4 rather than 16,
+ * moved with it. Re-exported here so every existing caller keeps its import.
  */
-export const DEFAULT_MATRIX_CONCURRENCY = 4;
+export { DEFAULT_MATRIX_CONCURRENCY, resolveConcurrency } from "./pool.js";
 
 /** The three axes. Values are ids, not paths — `plan` resolves those. */
 export interface MatrixAxes {
@@ -210,18 +187,6 @@ export function expandMatrix(axes: MatrixAxes): MatrixScenario[] {
   return scenarios;
 }
 
-/**
- * At least one, an integer, and never unbounded by accident.
- *
- * A non-finite request (`NaN` from a bad `--concurrency` parse) falls back to
- * the default instead of becoming `Infinity` in-flight scenarios: an argument
- * this runner could not understand must not be read as "launch everything".
- */
-export function resolveConcurrency(requested?: number): number {
-  if (requested === undefined || !Number.isFinite(requested)) return DEFAULT_MATRIX_CONCURRENCY;
-  return Math.max(1, Math.floor(requested));
-}
-
 export function countScenarios(results: MatrixScenarioResult[]): MatrixCounts {
   const of = (outcome: MatrixOutcome): number => results.filter((r) => r.outcome === outcome).length;
   return {
@@ -261,11 +226,6 @@ export async function runMatrix(options: MatrixOptions): Promise<MatrixResult> {
   const scenarios = expandMatrix(options.axes);
   const startedMs = now();
 
-  let peakInFlight = 0;
-  let inFlight = 0;
-  let next = 0;
-  const collected: MatrixScenarioResult[] = [];
-
   /**
    * One scenario, and the reason this returns instead of throwing: a scenario
    * that threw is a RECORDED outcome with its error attached. If it propagated,
@@ -301,26 +261,20 @@ export async function runMatrix(options: MatrixOptions): Promise<MatrixResult> {
     }
   };
 
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const scenario = scenarios[next++];
-      if (scenario === undefined) return;
-      inFlight++;
-      peakInFlight = Math.max(peakInFlight, inFlight);
-      try {
-        const outcome = await attempt(scenario);
-        collected.push(outcome);
-        options.onScenario?.(outcome);
-      } finally {
-        // In a `finally` so a bug in the bookkeeping above cannot leave the pool
-        // believing a slot is permanently occupied.
-        inFlight--;
-      }
-    }
-  };
-
-  // Never more workers than scenarios, so an empty matrix starts nothing.
-  await Promise.all(Array.from({ length: Math.min(limit, scenarios.length) }, worker));
+  // The SHARED pool: the same loop and the same bound the durable matrix workflow uses. It
+  // lives in `run/pool.ts` with no imports, because a Temporal workflow cannot pull in this
+  // file's dependency graph and invariant 12 does not accept two copies of one rule.
+  //
+  // `attempt` never throws — see its comment — which is the pool's stated contract rather than
+  // something it defends against: a rejected task would reject the pool and leave every queued
+  // scenario unattempted, so the gaps would be indistinguishable from markets that were fine.
+  const pooled = await boundedPool(scenarios, limit, async (scenario) => {
+    const outcome = await attempt(scenario);
+    options.onScenario?.(outcome);
+    return outcome;
+  });
+  const collected = pooled.results;
+  const peakInFlight = pooled.peakInFlight;
 
   // Sorted back into expansion order, because the array is filled in completion
   // order and two runs of the same matrix have to be diffable.

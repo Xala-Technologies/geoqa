@@ -220,20 +220,45 @@ describe("geoQaRunWorkflow", () => {
 });
 
 describe("geoQaMatrixWorkflow", () => {
-  it("runs each market sequentially and returns one result per run", async () => {
+  const SEQUENTIAL_FIRST_RUN = [
+    "prepare", "verifyGeoActivity", "runJourneyActivity", "collectEvidenceActivity", "assemble", "closeSession",
+  ];
+
+  it("returns one result per run, in INPUT order", async () => {
+    // The pool hands results back in COMPLETION order, so the workflow sorts them. A matrix
+    // whose output shuffled by timing would make two identical sweeps look different and
+    // neither of them wrong.
     const order: string[] = [];
-    const out = (await runWorkflow(
-      stubs(order),
-      order,
-      "geoQaMatrixWorkflow",
-      { runs: [INPUT, INPUT] },
-    )) as { result: GeoQaRunResult }[];
+    const out = (await runWorkflow(stubs(order), order, "geoQaMatrixWorkflow", {
+      runs: [INPUT, INPUT],
+    })) as { result: GeoQaRunResult }[];
     expect(out).toHaveLength(2);
     expect(order.filter((s) => s === "runJourneyActivity")).toHaveLength(2);
-    // Sequential in Phase 0: concurrency is unmeasured, and each profile costs
-    // its own Chrome process.
-    expect(order.slice(0, 6)).toEqual([
-      "prepare", "verifyGeoActivity", "runJourneyActivity", "collectEvidenceActivity", "assemble", "closeSession",
-    ]);
+  }, 90_000);
+
+  it("runs children CONCURRENTLY by default, converging on the in-process runner", async () => {
+    // This ran sequentially, and the reason it gave had expired: EXP-007 was unmeasured when
+    // the comment was written and has since reported 100% completion and verdict agreement at
+    // 2, 4, 8, 12 and 16. The in-process runner adopted 4 on that evidence while this path kept
+    // obeying a caution whose reason no longer existed — invariant 12 says two execution modes,
+    // one implementation.
+    //
+    // Asserted by INTERLEAVING rather than by wall clock: with a bound above 1, the second
+    // child starts before the first has finished, so the activity log is not two clean blocks.
+    const order: string[] = [];
+    await runWorkflow(stubs(order), order, "geoQaMatrixWorkflow", { runs: [INPUT, INPUT] });
+    expect(order.slice(0, SEQUENTIAL_FIRST_RUN.length)).not.toEqual(SEQUENTIAL_FIRST_RUN);
+  }, 90_000);
+
+  it("HONOURS a bound of 1, which restores the old sequential shape exactly", async () => {
+    // The bound is real rather than decorative, and this is the assertion that proves it: at 1
+    // the interleaving disappears and the first child completes before the second begins.
+    const order: string[] = [];
+    const out = (await runWorkflow(stubs(order), order, "geoQaMatrixWorkflow", {
+      runs: [INPUT, INPUT],
+      concurrency: 1,
+    })) as { result: GeoQaRunResult }[];
+    expect(out).toHaveLength(2);
+    expect(order.slice(0, SEQUENTIAL_FIRST_RUN.length)).toEqual(SEQUENTIAL_FIRST_RUN);
   }, 90_000);
 });
