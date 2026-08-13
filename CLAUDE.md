@@ -15,6 +15,7 @@ Depth, when the brief is not enough:
 | [`docs/architecture.md`](docs/architecture.md) | why a seam is where it is, the full run lifecycle, the verdict/evidence/confidence models, the durability design |
 | [`docs/prd.md`](docs/prd.md) | what the system is required to do (R-1…R-47), the acceptance thresholds, the deliberate design refusals |
 | [`docs/gaps.md`](docs/gaps.md) | what is not built, what is unproven, and four verified defects — check this before assuming a feature works |
+| [`development-update.md`](development-update.md) | what has shipped and what it means, newest first — the human-facing record |
 | [`README.md`](README.md) | the short pitch and the Phase 0 experiment results |
 
 Two things worth knowing before you touch anything:

@@ -50,6 +50,24 @@ export const EMPTY_READING: PageReading = {
   a11y: null,
 };
 
+/**
+ * Zero characters is not a reading about the page's CONTENT.
+ *
+ * It is a reading about whether anything had rendered, and the two are not the same claim.
+ * `getText` is `innerText`; on a client-rendered site the shell's `<html>` and `<body>` are
+ * ATTACHED immediately, so a read that only auto-waits for attachment returns `""` before
+ * hydration. Measured on xala.no: 0 characters at `load`, 6,077 one second later, against a
+ * site whose `<html lang>` is `nb-NO` and correct.
+ *
+ * The adapter re-reads once after a settle before it gets here (see `PlaywrightRuntime.getText`),
+ * so an empty string at this point has already survived that. It is still not attributed to the
+ * SITE: "the page rendered nothing" and "we looked too early" are indistinguishable from here,
+ * and when this engine cannot distinguish, it does not blame the page. `unreadable` lands as
+ * `errored`/instrumentation, which still blocks the publish gate — a different sentence, the
+ * same outcome.
+ */
+const NOTHING_RENDERED = "0 characters rendered — the page had no text at all, which says nothing about whether it contains the value";
+
 const pass = (expected: string, observed: string): CheckResult => ({ verdict: "passed", expected, observed });
 const fail = (expected: string, observed: string): CheckResult => ({ verdict: "failed", expected, observed });
 const unread = (expected: string, why: string): CheckResult => ({
@@ -96,7 +114,41 @@ export function checkNeeds(check: Check): (keyof PageReading)[] {
 const statusBand = (requests: NetworkRequest[], low: number, high: number): NetworkRequest[] =>
   requests.filter((r) => r.status !== null && r.status >= low && r.status <= high);
 
+/**
+ * A `{placeholder}` that survived substitution.
+ *
+ * `resolveSteps` leaves an unfilled placeholder INTACT rather than blanking it, and that rule
+ * is right where it was made: `open ""` would navigate somewhere meaningless and report a page
+ * failure for a config typo ([R-11](../../docs/prd.md)). Carried into an assert, the same rule
+ * produces two different lies, and the second is the dangerous one:
+ *
+ * - `text-contains "{expectLanguageMarker}"` asks whether the page contains that literal
+ *   string. It does not, so a HIGH-severity site finding is filed for a variable the operator
+ *   forgot to pass.
+ * - `text-absent "{forbiddenCurrency}"` asks whether the page LACKS that literal string. Every
+ *   page on earth does. **The check passes, green, having verified nothing.**
+ *
+ * A false FAIL wastes an afternoon. A false PASS is the exact conflation of "we could not
+ * measure" with "it is fine" that this engine exists to refuse, and it is invisible — the run
+ * reports PASS and nobody looks. So a check that still carries a placeholder is neither: it is
+ * OUR defect, reported as unreadable, which lands as `errored` and category `instrumentation`.
+ *
+ * Matches `resolveSteps`'s own pattern, so a value that merely contains braces (a JSON blob, a
+ * template literal in copy) is not caught by accident — only `{word}`, which is the one shape
+ * substitution would have filled.
+ */
+const UNFILLED_PLACEHOLDER = /\{(\w+)\}/;
+
 export function evaluateCheck(check: Check, reading: PageReading): CheckResult {
+  if ("value" in check && typeof check.value === "string") {
+    const unfilled = UNFILLED_PLACEHOLDER.exec(check.value);
+    if (unfilled !== null) {
+      return unread(
+        `${check.check} "${check.value}"`,
+        `the journey variable {${unfilled[1] ?? ""}} was never supplied, so this check would compare against the placeholder itself — pass --var ${unfilled[1] ?? ""}=<value>`,
+      );
+    }
+  }
   switch (check.check) {
     case "title-exists": {
       if (reading.title === null) return unread("a non-empty <title>", "title was not read");
@@ -140,6 +192,7 @@ export function evaluateCheck(check: Check, reading: PageReading): CheckResult {
     }
     case "text-contains": {
       if (reading.text === null) return unread(`${check.selector} contains "${check.value}"`, "text was not read");
+      if (reading.text === "") return unread(`${check.selector} contains "${check.value}"`, NOTHING_RENDERED);
       return verdictOf(
         reading.text.toLowerCase().includes(check.value.toLowerCase()),
         `${check.selector} contains "${check.value}"`,
@@ -148,6 +201,10 @@ export function evaluateCheck(check: Check, reading: PageReading): CheckResult {
     }
     case "text-absent": {
       if (reading.text === null) return unread(`${check.selector} lacks "${check.value}"`, "text was not read");
+      // The same guard as `text-contains`, and here it prevents a false PASS rather than a
+      // false FAIL: an empty page trivially lacks every string, so this check would go green
+      // on a page that rendered nothing at all.
+      if (reading.text === "") return unread(`${check.selector} lacks "${check.value}"`, NOTHING_RENDERED);
       return verdictOf(
         !reading.text.toLowerCase().includes(check.value.toLowerCase()),
         `${check.selector} lacks "${check.value}"`,

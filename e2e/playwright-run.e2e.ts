@@ -321,6 +321,47 @@ describe("human pacing, end to end", () => {
   });
 });
 
+describe("a client-rendered page whose body is EMPTY at load", () => {
+  it("does not report a text check against the pre-hydration shell", async () => {
+    // Found by pointing the engine at a second real site. `getText` is `innerText`, and
+    // Playwright auto-waits only for the element to be ATTACHED — so on a client-rendered site
+    // the read returns zero characters before hydration, every text check compares against an
+    // empty string, and the result is filed as a SITE finding.
+    //
+    // Measured on xala.no: 0 characters at `load`, 6,077 one second later. The engine reported
+    // "page carries the market's language marker — 0 chars read" against a page whose
+    // `<html lang>` is `nb-NO` and entirely correct. `/hydrates-late` reproduces it at 300ms.
+    const result = await run({
+      runId: "e2e_hydrates_late",
+      target: `${fixtures.origin}/hydrates-late`,
+      journeyPath: path.join(journeysDir, "localization.yaml"),
+      vars: { expectLanguageMarker: "saksbehandlingssystemer", forbiddenCurrency: "USD" },
+    });
+    expect(result.verdict).toBe("PASS");
+    expect(result.findings).toEqual([]);
+  });
+
+  it("REFUSES the check rather than blaming the page when nothing renders at all", async () => {
+    // A settle is not a guarantee, and the engine does not pretend it is. `/no-links` renders a
+    // page with no body text, and "the page rendered nothing" is indistinguishable from "we
+    // looked too early" — so it is OUR defect, not a site failure. An ERROR still blocks the
+    // publish gate: a different sentence, the same outcome.
+    const result = await run({
+      runId: "e2e_no_text",
+      target: `${fixtures.origin}/empty-body`,
+      journeyPath: path.join(journeysDir, "localization.yaml"),
+      vars: { expectLanguageMarker: "kr", forbiddenCurrency: "USD" },
+    });
+    expect(result.verdict).toBe("ERROR");
+    // Filed against US, never against the page — and this assertion caught a second defect
+    // when it was first written. `localization.yaml` declares `category: localization` on both
+    // text steps, and `categoryFor` read the declaration BEFORE the errored check, so an
+    // unreadable step was filed as a localization defect titled "Could not verify: …".
+    expect(result.findings.every((f) => f.category === "instrumentation")).toBe(true);
+    expect(result.findings.every((f) => f.title.startsWith("Could not verify"))).toBe(true);
+  });
+});
+
 describe("a heading that arrives late", () => {
   it("WAITS for it instead of inventing a missing-heading defect", async () => {
     // The regression this exists for: under load, `selector-visible` reported a

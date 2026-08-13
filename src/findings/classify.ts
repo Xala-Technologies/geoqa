@@ -31,8 +31,22 @@ const CATEGORY_BY_CHECK: Record<string, FindingCategory> = {
 };
 
 export function categoryFor(step: StepResult): FindingCategory {
-  if (step.category) return step.category;
+  // An errored step is OURS, whatever the journey declared — the same rule `severityFor`
+  // applies just below, and for the same reason.
+  //
+  // This used to read the declared category FIRST, which quietly reversed the rule this file
+  // opens with. `localization.yaml` declares `category: localization` on both of its text
+  // checks, so when those steps could not be read the findings were filed under a SITE
+  // category with the title "Could not verify: …" — a pile of localization defects on a run
+  // where the engine had simply looked before the page rendered. Somebody investigates the
+  // site; our defect stays invisible. That is the exact failure the split exists to prevent,
+  // and the journey that exhibited it is the one this project is named for.
+  //
+  // [R-13](../../docs/prd.md) is unchanged and this honours it as written: a step may override
+  // the category **derived from its check kind**. `instrumentation` is derived from the
+  // OUTCOME, and no journey author can know in advance that a step will be unreadable.
   if (step.outcome === "errored") return "instrumentation";
+  if (step.category) return step.category;
   return (step.check && CATEGORY_BY_CHECK[step.check]) || "unknown";
 }
 

@@ -238,3 +238,21 @@ describe("startFixtureServer", () => {
     }
   });
 });
+
+describe("the client-rendering fixtures", () => {
+  it("/hydrates-late ships an empty body and fills it from script", () => {
+    // Modelled on xala.no: 0 characters at `load`, 6,077 one second later. A read that only
+    // auto-waits for ATTACHMENT sees the first number and files it as a site finding.
+    const page = fixtureBody("/hydrates-late");
+    expect(page?.html).toContain("<body><script>");
+    expect(page?.html).toContain("saksbehandlingssystemer");
+    // The text must not be in the served markup, or the fixture proves nothing.
+    expect(page?.html.split("<script>")[0]).not.toContain("saksbehandlingssystemer");
+  });
+
+  it("/empty-body renders no text at all, ever", () => {
+    // The other half: a settle is not a guarantee, and a still-empty read is reported as our
+    // defect rather than as a site failure.
+    expect(fixtureBody("/empty-body")?.html).toContain("<body></body>");
+  });
+});

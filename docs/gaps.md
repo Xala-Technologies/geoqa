@@ -1104,10 +1104,15 @@ There is no evidence about how the journeys behave on a site with a cookie wall,
 client-side router, a login, or lazy-loaded content — all of which change what "the
 page settled" means.
 
-**Cannot be closed by code.** It needs a second and third real site to point at,
-which is a decision about scope and permission, not an implementation.
-`fixtures/server.ts` covers *known* defects on purpose and cannot substitute: a
-fixture we wrote cannot surprise us.
+**The decision has been made: `xala.no` is the second site** (owner, 2026-08-13).
+That was the whole blocker — this needed permission and a name, not an
+implementation. What remains is the measuring, and the measuring is the point:
+`fixtures/server.ts` covers *known* defects on purpose and cannot substitute,
+because a fixture we wrote cannot surprise us.
+
+A third site is still wanted, and the shape that would teach the most is one this
+pair may not have: a cookie wall, a login, or heavy lazy-loading — each changes what
+"the page settled" means, which is the assumption every journey rests on.
 
 ### C-8 · `emulate` is a Playwright descriptor name applied to two engines, and no axis checks it
 
@@ -1485,6 +1490,182 @@ and a market's reading is the MEDIAN across its repeats rather than the latest, 
 single slow run is noise and "latest" means whichever finished last.
 
 ## D. Tooling and process gaps
+
+### C-13 · CLOSED — an empty text read is confirmed, then refused rather than blamed on the page
+
+**Found by pointing the engine at a second real site**, which is exactly what
+[C-7](#c-7--one-live-target) said a second site was for.
+
+`getText` is `locator.innerText()`. Playwright auto-waits for the element to be
+ATTACHED, and on a client-rendered site the `<html>` and `<body>` of the shell are
+attached immediately — so the read returns `""` instantly, before hydration. Every
+text check then compares against an empty string and files a **site** finding.
+
+Measured on `xala.no`, a Next-style SPA:
+
+| Moment | `body.innerText` | `body.innerHTML` | `h1` visible |
+|---|---|---|---|
+| `load` | **0 chars** | 1,404 | no |
+| +1s | 6,077 | 80,534 | yes |
+| +3s | 6,325 | 83,555 | yes |
+
+The `localization` journey duly reported
+`[high] page carries the market's language marker — observed 0 chars read`
+against a site whose `<html lang>` is `nb-NO`, i.e. correct.
+
+**This is a lesson the engine already learned once and never generalised.** `d7a4700`
+and `9f10d48` made a negative VISIBILITY reading confirm itself before being reported,
+because an element mid-entrance-animation reads as absent. A text read has exactly the
+same failure mode and none of the protection — and it is worse, because
+`selector-visible` at least has a 5-second budget, which is why the `landing-page`
+journey passes on the same site in the same second that the text check reads zero.
+
+**CLOSED in two places, because one was not enough.** `PlaywrightRuntime.getText`
+re-reads once after a settle when the first read is EMPTY — the same shape as
+`isVisible`, sharing the same `absenceSettleMs`. Only an empty read is retried: a
+non-empty read that simply lacks the value is a real reading of a real page, and
+re-reading it would be the silent retry this engine refuses everywhere else, turning
+an intermittent site defect into a green run.
+
+A settle is not a guarantee, so `assertions.ts` does not treat it as one. Text that is
+still `""` afterwards is reported **unreadable**, never failed: "the page rendered
+nothing" and "we looked too early" are indistinguishable from inside a check, and when
+this engine cannot distinguish it does not blame the page. That lands as
+`errored`/instrumentation and still blocks the publish gate — a different sentence,
+the same outcome. It also closes the same hole on `text-absent`, where an empty page
+trivially lacks every string and the check went green.
+
+Proven three ways: unit tests on both halves, a `/hydrates-late` fixture reproducing
+the shape at 300ms, and the live site — the same journey against the same xala.no page
+now reads 6,000 characters and passes.
+
+**Both engines confirm, not just Playwright.** agent-browser is the DEFAULT, so leaving
+the retry to the other adapter would have given the default the weaker protection. The
+`assertions.ts` refusal covers both regardless — what the retry adds is the difference
+between a genuine PASS and an honest refusal, and a run that could have read the page
+should read it.
+
+Worth noting where this site had appeared before: `agent-browser.ts`'s `isVisible`
+comment already names xala.no, whose `h1` has an entrance fade and read `opacity: 0`
+for the first second — 4 failures of 4 runs, deterministic rather than flaky. The same
+site produced this defect through a second primitive, a month apart. A page that is
+slower than the engine breaks every read the engine does not settle, one at a time.
+
+Where: `browser/playwright.ts` and `browser/agent-browser.ts` (`getText`),
+`journeys/assertions.ts` (`NOTHING_RENDERED`), `fixtures/server.ts`
+(`/hydrates-late`, `/empty-body`).
+
+### C-14 · CLOSED — an unfilled `{placeholder}` is our defect, not a verdict
+
+Found in the same run, and it is the more dangerous of the two.
+
+[R-11](prd.md) leaves an unknown placeholder intact rather than replacing it with an
+empty string, and that reasoning is sound where it was made: `open ""` would navigate
+somewhere meaningless and report a page failure for a config typo. Carried into an
+**assert**, the same rule produces two different lies:
+
+- `text-contains` with `value: "{expectLanguageMarker}"` → asks whether the page
+  contains the literal string `{expectLanguageMarker}`. It does not, so a **high**
+  severity site finding is filed for a variable the operator forgot to pass.
+- `text-absent` with `value: "{forbiddenCurrency}"` → asks whether the page LACKS the
+  literal string `{forbiddenCurrency}`. Every page on earth does. **The check passes,
+  green, having verified nothing.**
+
+The second is the one that matters. A false FAIL wastes an afternoon; a false PASS is
+the exact conflation of "we could not measure" with "it is fine" that this engine
+exists to refuse, and it is invisible — the run reports PASS and nobody looks.
+
+**CLOSED.** `evaluateCheck` refuses any check whose value still carries a `{word}`
+after resolution, and names the missing variable in the message: *"the journey variable
+{forbiddenCurrency} was never supplied … pass --var forbiddenCurrency=<value>"*. It
+matches `resolveSteps`'s own pattern, so a value that merely contains braces — a JSON
+blob, a template literal in real copy — is not caught by accident.
+
+Proven live: the same journey against xala.no went from one false FAIL plus one silent
+green PASS to two named refusals telling the operator exactly what to pass.
+
+Where: `journeys/assertions.ts` (`UNFILLED_PLACEHOLDER`).
+
+### C-15 · The localization journey looks for a markup ATTRIBUTE in rendered TEXT
+
+`localization.yaml` asserts
+`text-contains selector: html value: "{expectLanguageMarker}"`, and its own
+description calls it "the reason this project exists".
+
+`getText` is `innerText`. A language marker lives in `<html lang="nb-NO">` — an
+**attribute**, which `innerText` never returns. So even against a fully hydrated,
+correctly-localised page the check cannot detect the thing it is named for.
+
+Confirmed rather than reasoned: `digilist.no` renders 11,542 characters of
+`innerText` and carries `lang="en"`; the string `en` as a *marker* is not findable in
+that text in any meaningful way, and `nb-NO` would not be either.
+
+The check needs to read the attribute — `evaluate` already exists and
+`observeBrowser` already reads `navigator.language` — or the journey needs to name a
+marker that genuinely appears in visible copy (a Norwegian word, a `kr` price). The
+first is the honest one, because a visible-copy marker tests the copy, not the
+document's declared language.
+
+Where: `journeys/localization.yaml`, `journeys/assertions.ts`.
+
+### C-17 · CLOSED — an errored step was filed under the category the journey declared
+
+Found by writing the e2e assertion for C-13, which stated the intended rule and failed.
+
+`categoryFor` read the step's DECLARED category before the errored check:
+
+```ts
+if (step.category) return step.category;      // ← ran first
+if (step.outcome === "errored") return "instrumentation";
+```
+
+`classify.ts` opens by stating the opposite: *a step we could not read never becomes a
+site finding.* `localization.yaml` declares `category: localization` on both of its
+text checks, so a run where the engine looked before the page rendered produced a pile
+of **localization defects** titled "Could not verify: …". Somebody investigates the
+site; our defect stays invisible — the exact failure the split exists to prevent, in
+the journey this project is named for.
+
+The inconsistency that gave it away is one function below: `severityFor` has always
+overridden the step's declared severity for an errored step, with a comment saying why.
+Category now does the same.
+
+[R-13](prd.md) is unchanged and this honours it as written — a step may override the
+category **derived from its check kind**. `instrumentation` is derived from the
+OUTCOME, and no journey author can know in advance that a step will be unreadable.
+
+Where: `findings/classify.ts` (`categoryFor`).
+
+### C-16 · xala.no, the second live target: what the journeys found
+
+Not geoqa gaps — **findings about the second site**, recorded so they are not lost,
+and because C-7 is only worth closing if the measuring actually happens.
+
+- **`landing-page`: PASS**, every axis verified, evidence complete.
+- **`reader`: PASS**, journey confidence 74 — four steps never ran.
+- **`search`: correctly FAILS, and there is no search box to find.** Verified directly
+  at 1440px and 390px: `input[type='search']`, `input[name='q']`, `input[name='s']`,
+  `[role='searchbox']` and every `input` on the page — **zero matches at either
+  width**, hidden or otherwise. Unlike [C-10](#c-10--digilistno-the-search-box-is-reachable-at-no-profile-width-live-finding)
+  on digilist, where the input exists and is hidden by a breakpoint, xala.no simply
+  has no search. The follow-on `fill` then errors, which is [C-9](#c-9--closed--an-action-step-no-longer-spends-a-navigation-budget-on-a-missing-element)'s
+  known and deliberate remaining behaviour — now at 8 seconds rather than 30.
+- **`localization`: FAILS for two reasons that are both OURS**, C-13 and C-15. The
+  site's `<html lang>` is `nb-NO` and correct.
+- **The `h1` ROTATES between reads.** At +3s: "Vi bygger saksbehandlingssystemer";
+  at +8s: "Vi bygger bevillingsportaler". Any text assertion against this page's
+  headline is a coin flip, and no shipped journey does that — but a `text-contains`
+  on an `h1` is an obvious thing for the next journey author to write.
+
+**A methodological note worth keeping.** The first probe of this investigation read
+`innerText` at `load` with no settle, got 0 characters, and produced the confident
+hypothesis that `locator("html").innerText()` was broken. Running the same probe
+against `digilist.no` returned 11,542 characters and killed it in one line. That is
+[C-12](#c-12--j06-does-not-complete-on-digilistno-and-the-reason-is-not-established)'s
+lesson arriving again from a new direction: **a measurement taken at the wrong moment
+is not a weaker version of the right answer, it is a different and confident wrong
+one.** The rule that saved it was comparing against a second subject before believing
+the first.
 
 ### D-1 · The layer map is enforced by a tool now, and it has already earned it
 

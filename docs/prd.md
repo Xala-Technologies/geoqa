@@ -441,6 +441,22 @@ unmeasured guess until EXP-007 runs.
   completeness would fall for obeying the config. Both read one table, carried on the
   `RunSpec` so a durable run and a local one score identically — and as a COPY, so one
   run narrowing a tier cannot narrow what every later run in the process keeps.
+- **R-164** A reading of **zero** is a reading about whether anything rendered, not
+  about what the page contains. An empty text read is confirmed after a settle and then
+  reported **unreadable**, never failed and never passed: "the page rendered nothing"
+  and "we looked too early" are indistinguishable from inside a check, and when the
+  engine cannot distinguish it does not blame the page. Only the EMPTY read is retried
+  — re-reading a non-empty one would be the silent retry the engine refuses everywhere.
+- **R-165** A check whose value still carries an unfilled `{placeholder}` is **our
+  defect**, never a verdict. Left intact by R-11 — correctly, for `open` — the same
+  placeholder inside an assert files a site finding for a variable nobody passed, and
+  inside `text-absent` passes VACUOUSLY, because every page lacks the literal string
+  `{forbiddenCurrency}`. A false PASS is invisible; nobody looks at a green run.
+- **R-166** An **errored** step is ours whatever the journey declared. A step may
+  override the category derived from its check kind (R-13); it may not override the one
+  derived from its outcome, because no author can know in advance that a step will be
+  unreadable — and a journey that could would file our blindness as its own subject
+  area.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never

@@ -376,3 +376,30 @@ describe("close", () => {
     expect(calls[0]).toContain("close");
   });
 });
+
+describe("getText settles an EMPTY reading", () => {
+  it("confirms an empty read on the DEFAULT engine too", async () => {
+    // Leaving this to the Playwright adapter would give the default engine the weaker
+    // protection. `assertions.ts` refuses a still-empty read on either engine, so the safety
+    // property held regardless — what the retry adds is the difference between a genuine PASS
+    // and an honest refusal, and a run that could have read the page should read it.
+    const replies = [{ text: "" }, { text: "Vi bygger saksbehandlingssystemer" }];
+    const calls: string[][] = [];
+    let i = 0;
+    const exec: ExecFn = (args) => {
+      calls.push(args);
+      if (args.includes("wait")) return Promise.resolve(ok({}));
+      return Promise.resolve(ok(replies[i++] ?? {}));
+    };
+    const rt = new AgentBrowserRuntime({ sessionId: "run1" }, { exec });
+    const out = await rt.getText("body");
+    expect(out.ok && out.data).toBe("Vi bygger saksbehandlingssystemer");
+    expect(calls.some((c) => c.includes("wait"))).toBe(true);
+  });
+
+  it("does NOT re-read a page that rendered text and simply lacks the value", async () => {
+    const { rt, calls } = make({ text: "hello" });
+    expect((await rt.getText("body")).ok).toBe(true);
+    expect(calls.some((c) => c.includes("wait"))).toBe(false);
+  });
+});

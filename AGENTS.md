@@ -4,7 +4,7 @@ Working brief for any coding agent in this repository. Vendor-neutral — Claude
 Code, Codex, Cursor and friends all read this file. `CLAUDE.md` points here.
 
 Depth lives in [`docs/`](docs/):
-[architecture](docs/architecture.md) · [PRD](docs/prd.md) · [gaps](docs/gaps.md)
+[architecture](docs/architecture.md) · [PRD](docs/prd.md) · [gaps](docs/gaps.md) · [what shipped](development-update.md)
 
 ## What this is
 
@@ -87,7 +87,7 @@ or unreadable file exits 2 rather than falling back.
 
 Two keys documented in `geoqa.config.example.json` are **still inert**
 (`evidence.retention`, `network.cooldownMs`) — see
-[gaps B-1](docs/gaps.md#b-1--the-config-file-is-read-now--except-for-two-keys)
+[gaps B-1](docs/gaps.md#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site)
 before adding a third.
 
 Real-browser commands (`browser verify`, `proxy verify`, `journey run`,
@@ -391,6 +391,20 @@ retention table reaches both `collectEvidence` and `buildManifest` — honouring
 the collector alone would report the kinds the config excluded as MISSING and drop
 completeness for obeying the config. Carried as a copy: `RETENTION` is module-level
 and mutable, and one run narrowing a tier must not narrow every later run's.
+
+**33. A zero reading is not a reading about the page.** An empty text read is confirmed
+after a settle (`getText`, mirroring `isVisible`) and then reported **unreadable** —
+never failed, never passed. Only the empty read is retried; a non-empty one that lacks
+the value is a real site finding, and re-reading it would be the silent retry the
+engine refuses everywhere else. Same rule for an unfilled `{placeholder}`: it is our
+defect, not a verdict, and `text-absent` is where it mattered — every page lacks the
+literal string `{forbiddenCurrency}`, so the check went green having verified nothing.
+
+**34. An ERRORED step is ours, whatever the journey declared.** `categoryFor` checks
+the outcome before the declaration, exactly as `severityFor` already did. R-13 lets a
+step override the category derived from its CHECK KIND, not the one derived from its
+OUTCOME — no author can know in advance that a step will be unreadable, and
+`localization.yaml` was filing our blindness as localization defects.
 
 ## Testing conventions
 

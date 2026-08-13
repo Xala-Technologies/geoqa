@@ -204,3 +204,69 @@ describe("describeCheck", () => {
     expect(line).toBe('title-exists: expected a non-empty <title>, observed "T"');
   });
 });
+
+describe("a check whose variable was never supplied", () => {
+  // `resolveSteps` leaves an unfilled placeholder INTACT rather than blanking it (R-11), which
+  // is right for `open` and produces two different lies inside an assert.
+
+  it("REFUSES rather than filing a site finding for a variable the operator forgot", () => {
+    const result = evaluateCheck(
+      { check: "text-contains", selector: "html", value: "{expectLanguageMarker}" },
+      reading({ text: "Vi bygger saksbehandlingssystemer" }),
+    );
+    expect(result.verdict).toBe("unreadable");
+    expect(result.observed).toContain("expectLanguageMarker");
+    expect(result.observed).toContain("--var");
+  });
+
+  it("REFUSES the absent-check too, which would otherwise pass VACUOUSLY", () => {
+    // The dangerous half. "Does the body lack the literal string {forbiddenCurrency}?" is true
+    // of every page on earth, so this check went green having verified nothing — and unlike a
+    // false FAIL, nobody ever looks at it.
+    const result = evaluateCheck(
+      { check: "text-absent", selector: "body", value: "{forbiddenCurrency}" },
+      reading({ text: "kr 1 200 per måned" }),
+    );
+    expect(result.verdict).not.toBe("passed");
+    expect(result.verdict).toBe("unreadable");
+  });
+
+  it("applies to every check carrying a value, not just the text pair", () => {
+    expect(evaluateCheck({ check: "title-contains", value: "{brand}" }, reading({ title: "Xala" })).verdict).toBe("unreadable");
+  });
+
+  it("does NOT catch a value that merely contains braces", () => {
+    // A JSON blob or a template literal in real copy is not an unfilled variable, and refusing
+    // it would replace a false failure with a false refusal. Only `{word}` — the one shape
+    // substitution would have filled.
+    const result = evaluateCheck(
+      { check: "text-contains", selector: "body", value: "{ }" },
+      reading({ text: "a { } b" }),
+    );
+    expect(result.verdict).toBe("passed");
+  });
+});
+
+describe("a page that rendered no text at all", () => {
+  it("is UNREADABLE, not a failed site check", () => {
+    // Zero characters is a reading about whether anything rendered, not about what the page
+    // contains. On a client-rendered site the shell is attached before a single character
+    // exists — measured on xala.no: 0 chars at load, 6,077 one second later — and the engine
+    // filed "0 chars read" as a high-severity site defect against a correct page.
+    const result = evaluateCheck({ check: "text-contains", selector: "html", value: "nb-NO" }, reading({ text: "" }));
+    expect(result.verdict).toBe("unreadable");
+    expect(result.observed).toContain("0 characters rendered");
+  });
+
+  it("cannot pass an absent-check by vacuity either", () => {
+    // An empty page trivially lacks every string, so this went green on a page that rendered
+    // nothing — the same false PASS as an unfilled placeholder, from a different direction.
+    expect(evaluateCheck({ check: "text-absent", selector: "body", value: "USD" }, reading({ text: "" })).verdict).toBe("unreadable");
+  });
+
+  it("still judges a page that rendered SOMETHING and lacks the value", () => {
+    // The line that matters: a real reading that simply does not contain the value is a real
+    // site finding, and softening it would hide the defects this check exists to catch.
+    expect(evaluateCheck({ check: "text-contains", selector: "body", value: "nb-NO" }, reading({ text: "hello" })).verdict).toBe("failed");
+  });
+});
