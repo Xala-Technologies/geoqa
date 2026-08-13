@@ -76,16 +76,47 @@ alone would have known none of that.
 
 One run does **only** the next unchecked box.
 
+### The milestone gate
+
+Everything after this waits on it. See `test-plan.md` for the full audit of the
+owner's 12-category plan — **9 of the recommended first 15 are already proven.**
+
+> Prove Decodo Residential + a browser engine can execute **100 repeatable
+> geo-specific sessions** across Oslo, Stockholm and Berlin, with **≥98% country
+> match, ≥90% city match, ≥95% journey completion**, evidence on every failure.
+
+Decodo is now the **default** `networkProvider`, with `GeoNetworkProvider` kept
+as the domain type so Bright Data or a custom exit needs no rewrite.
+`one-journey-one-session` is invariant 16 and is enforced by `verifyEgressHeld`.
+
+**Decide before the run:** does `city: unverified` count against the 90%? A
+neighbouring exchange is reported `unverified`, not `mismatch`, by design — and
+measured on 20 Norwegian cities that is 13 exact of 20. If `unverified` counts
+against, 90% is likely unreachable and the threshold is wrong.
+
 ### Foundation
 
-- [ ] **0 · Commit the baseline.** 104 files, all green, zero commits. Split into
+- [x] **0 · Commit the baseline.** 104 files, all green, zero commits. Split into
       coherent commits (Playwright engine · rotation/pools · proxy fixes ·
       profiles · docs · infra · loop). **Human go-ahead required.**
-- [ ] **1 · Truth up `docs/gaps.md`.** B-8 and B-10 are already fixed; there are
+- [x] **1 · Truth up `docs/gaps.md`.** B-8 and B-10 are already fixed; there are
       two `### D-1c` headings. A gap list nobody trusts is worse than none.
 - [ ] **2 · CLI flags for plumbing that exists.** `--urls-file` for the matrix
       target axis (the axis landed, nothing reaches it, so a sweep is still a
-      shell loop) and a flag for EXP-002's stability window (C-1).
+      shell loop) and `--stability-window` reaching EXP-002 (C-1, T03/T04) — the
+      only reason stickiness is still measured over 24s instead of the PRD's ten
+      minutes. Also `--country`/`--city`/`--network` on the CLI as the owner spec'd.
+- [ ] **2b · T10: two IP-geo sources, disagreement flagged.** Already a live
+      finding — one ISP exit resolved to São Paulo per Decodo's endpoint and New
+      York per ipinfo. An engine whose job is proving *where* a visitor is cannot
+      treat one lookup as ground truth. Second source, and a third verdict when
+      they disagree.
+- [ ] **2c · J03 internal-search journey, and clicking.** No journey clicks
+      anything — `browse.yaml` has zero click steps. J03 (search → results →
+      filter → open result) and J05's "follow a contextual link" both need it.
+- [ ] **2d · J06 manual language override.** Oslo IP → Norwegian homepage →
+      select English → navigate → English persists. Expressible with existing
+      steps plus `storageState`; cheap, and it exposes bad geo-redirects.
 - [ ] **3 · D-1c: `proxy verify` honours `--engine`.** Runs on agent-browser
       regardless and hangs with no Chrome. Cost an hour during the Decodo work.
 - [ ] **4 · D-1b: experiment samplers honour the engine.**
