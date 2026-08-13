@@ -486,32 +486,16 @@ sets a cookie, second run sees it) is what would prove it.
 Where: `browser/playwright.ts`, `run/context.ts` (`VISITOR_STATE_DIR`,
 `resolveVisitorState`), `profiles/*.yaml`.
 
-### B-8 · A proxy URL with any placeholder in it cannot start a `journey run`
+### B-8 · CLOSED — a template can start a run
 
-**Verified now**, unchanged, by reading the two functions against each other. It
-is the first wall an exit purchase will hit:
-
-- `health()` cannot probe a URL containing `{` — correct, a placeholder is not a
-  host — and reports `state: "unconfigured"`, detail *"proxy is a template or not a
-  parseable URL — not probed"* (`network/provider.ts:228-235`).
-- `prepareRun` throws on `unconfigured` for any provider other than `direct`
-  (`run/execute.ts:79`, R-8: no silent downgrade). Also correct in isolation.
-
-Together: `GEOQA_PROXY_OSLO="http://user-sessid-{session}:pw@gw.vendor.net:7777"`
-makes `geoqa journey run --provider http-proxy` fail before the browser opens,
-with a message saying the provider is not configured when it is configured
-correctly. The placeholder mechanism and the health gate disagree about what a
-brace means: unprobeable and unconfigured are being treated as one state.
-
-`proxy verify` and the experiment samplers are unaffected — the first tolerates
-`unconfigured`, the second never calls `health` — which is why the suite is green
-and nothing has noticed.
-
-Fix: `ProviderHealth` needs a fourth state, "configured, not probeable", that
-`prepareRun` treats as usable-with-a-warning. The alternative, probing a
-substituted URL, means giving `health()` a market, and `anyConfiguredUrl` exists
-precisely because health is a question about the vendor rather than about one
-market.
+**Closed 2026-08-13.** `health()` bailed on seeing `{` and returned
+`unconfigured`, which `prepareRun` treats as a hard refusal for any non-direct
+provider — so a template, the only way a residential vendor is ever configured,
+could never start a run at all. The reasoning was wrong where it counted:
+placeholders live in the USERNAME while the gateway host and port are literal,
+which is exactly what a reachability probe needs. Placeholders are now replaced
+with an inert token before parsing. Two tests that pinned the old behaviour were
+rewritten to assert the fix.
 
 ### B-9 · Closed: the boundary lint's first catch
 
@@ -547,28 +531,12 @@ function, so no exclusion was needed.
 
 Where: `browser/engines.ts`, `run/context.ts`, `.dependency-cruiser.mjs`.
 
-### B-10 · The e2e suite still asserts `trace.json` on the Playwright engine
+### B-10 · CLOSED — the e2e derives the trace filename
 
-**Verified now** by reading the two files against each other.
-`traceArtifactFormat` now writes `trace.zip` on Playwright (see
-[D-1c](#d-1c--closed-a-trace-carries-its-own-format)), and
-`e2e/playwright-run.e2e.ts:168` still does
-`evidenceFile("e2e_missing_cta", "trace.json")`. **`pnpm test:e2e` fails** on the
-one assertion whose whole purpose is proving a fail-tier trace is real. The unit
-suite is unaffected, so nothing else will tell you.
-
-Fix is one filename, and the same test is the right place to also assert that the
-manifest agrees with the disk — `{ path: "trace.zip", mime: "application/zip" }`
-for the `trace` artifact — because "the manifest describes a zip as JSON" is
-exactly the class of defect the e2e suite exists to catch.
-
-Where: `e2e/playwright-run.e2e.ts:165-171`, `run/stages.ts` (`traceArtifactFormat`).
-
----
-
-## C. Measurement gaps
-
-Built, plausibly correct, not proven by anything.
+**Closed 2026-08-13.** The e2e hardcoded `trace.json` and drifted the moment the
+two engines started writing different formats. It now calls
+`traceArtifactFormat("playwright")`, so the assertion cannot disagree with the
+collector again.
 
 ### C-1 · The stability window is a parameter now, and no flag reaches it
 
@@ -795,7 +763,7 @@ are deliberately shared across engines.
 Where: `.dependency-cruiser.mjs`, `package.json` (`boundaries`),
 `.github/workflows/ci.yml`.
 
-### D-1c · `proxy verify` still runs on agent-browser
+### D-1e · `proxy verify` still runs on agent-browser
 
 `proxy verify --provider http-proxy` ignores `--engine` and uses agent-browser,
 which has no Chrome installed — so it hangs rather than verifying. The Decodo
