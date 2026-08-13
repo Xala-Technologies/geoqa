@@ -420,6 +420,17 @@ unmeasured guess until EXP-007 runs.
 - **R-24** An evidence package must answer: what happened, where, when, in which
   market, on which device, at which journey step, can we reproduce it, and what
   technical evidence exists. (Encoded as `REQUIRED_QUESTIONS`.)
+- **R-158** "Can we reproduce it?" is answered by the **package**, not only by the
+  result. A finding's `reproducibility` and the evidence's attempt count are derived
+  once and written to both, because two derivations of one number are two chances to
+  disagree — and a finding claiming 3-of-3 beside evidence recording something else
+  leaves no way to tell which is lying. A single-attempt run records nothing rather
+  than a `1`, which would read as a decision not to repeat.
+- **R-159** An occurrence count is keyed per **step**, not per label. Labels are not
+  unique — an unlabelled assert's label is its check kind — so a label-only key merges
+  two steps into one count and can report `reproduced` for a step never seen to fail
+  twice. Sound because a journey is deterministic (R-10): index N is the same step in
+  every attempt.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never

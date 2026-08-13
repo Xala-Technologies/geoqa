@@ -224,6 +224,22 @@ export interface CollectInput {
    * recording a default that would read as "not restored".
    */
   visitor?: { declared: GeoProfile["visitorType"]; restored: boolean; unmet: string | null };
+  /**
+   * How many attempts the merged journey stands for, and which steps failed in how many.
+   *
+   * Without it a `--repeat 3` run emitted findings whose `reproducibility` said 3 while the
+   * evidence package held no trace of the other two attempts — and R-24 makes "can we reproduce
+   * this?" a question the package itself must answer. A number in a result nobody can check
+   * against the evidence is exactly the shape of claim this project refuses everywhere else.
+   *
+   * `steps` in `run.json` is still the MERGED list (worst outcome per index), so this does not
+   * make the package a record of each attempt: it records what the merge was over. That
+   * distinction is stated here so nobody later reads `attempts: 3` as three step lists.
+   *
+   * Optional, so a single-attempt run records nothing rather than a `1` that would read as a
+   * deliberate choice not to repeat.
+   */
+  reproducibility?: { attempts: number; occurrences: Record<string, number> };
 }
 
 /**
@@ -275,7 +291,13 @@ export async function collectEvidence(
         seed: journey.seed,
         writes: journey.writes,
         touchedForm: journey.touchedForm,
+        // The MERGED steps: the worst outcome at each index across every attempt. `attempts`
+        // below says what that merge was over; it does not promise a list per attempt.
         steps: journey.steps,
+        // Purely additive and omitted entirely for a single run, so a consumer that does not
+        // know the field is unaffected and one that does can check a finding's
+        // `reproducibility` against the evidence instead of taking the result's word for it.
+        ...(input.reproducibility ? { reproducibility: input.reproducibility } : {}),
       },
       // Purely additive, so no schema bump: a consumer that does not know the field
       // is unaffected, and one that does can tell a returning-visitor run from a

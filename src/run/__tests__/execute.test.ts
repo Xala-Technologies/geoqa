@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -335,6 +335,22 @@ describe("executeRun with --repeat", () => {
     expect(finding?.reproducibility).toEqual({ attempts: 3, occurrences: 3 });
     expect(finding?.status).toBe("reproduced");
     expect(finding?.confidence).toBeGreaterThan(92);
+  });
+
+  it("writes the SAME reproducibility into the evidence that the finding claims", async () => {
+    // The property that matters, and it is why the two are derived once rather than twice: a
+    // finding claiming 3-of-3 beside an evidence package recording something else is worse
+    // than either alone, because there is then no way to tell which one is lying.
+    await withFakeBrowser({ isVisible: () => Promise.resolve(ok(false)) });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const result = await executeRun({ spec: prepared.spec, provider: directProvider(), repeat: 3 });
+    const finding = result.findings.find((f) => f.title === "has a primary heading");
+    const written = JSON.parse(readFileSync(path.join(prepared.spec.evidenceRoot, prepared.spec.runId, "run.json"), "utf8")) as {
+      journey: { reproducibility: { attempts: number; occurrences: Record<string, number> } };
+    };
+    expect(written.journey.reproducibility.attempts).toBe(finding?.reproducibility.attempts);
+    // And the step's own count is findable in the package, not merely the total.
+    expect(Object.values(written.journey.reproducibility.occurrences)).toContain(finding?.reproducibility.occurrences);
   });
 
   it("leaves a single-attempt run's findings exactly as they were", async () => {

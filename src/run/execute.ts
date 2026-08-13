@@ -14,7 +14,7 @@ import type { GeoProfile } from "../geo/types.js";
 import type { GeoNetworkProvider } from "../network/types.js";
 import { noteProviderOutcome } from "../network/provider.js";
 import { withEgressHeld } from "../geo/verify.js";
-import { mergeAttempts, withExtraStep, type JourneyResult } from "../journeys/engine.js";
+import { mergeAttempts, occurrenceKey, withExtraStep, type JourneyResult } from "../journeys/engine.js";
 import type { GeoQaRunResult } from "../findings/types.js";
 import { buildRuntime, newRunId, resolveVisitorState, writeInitScript, type RunSpec } from "./context.js";
 import { appendRun } from "../history/store.js";
@@ -223,6 +223,23 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
     );
     const verifiedGeo = withEgressHeld(geo, held.axis);
     const result = held.step === null ? merged.result : withExtraStep(merged.result, held.step);
+
+    // Reproducibility, computed once and told to BOTH consumers.
+    //
+    // The result carries it so a finding can say `reproduced`; the evidence carries it so that
+    // claim can be checked against the package rather than believed. Built here rather than
+    // twice, because two derivations of the same number are two chances for them to disagree —
+    // and a finding claiming 3-of-3 beside evidence recording 2 attempts is worse than either.
+    const reproducibility = {
+      attempts: attempts.length,
+      occurrences: {
+        ...merged.occurrences,
+        // A whole-run check is measured ONCE for the whole set, not once per attempt, so it
+        // must not be discounted as "seen in 1 of 3": it was seen in the only measurement
+        // there was.
+        ...(held.step ? { [occurrenceKey(held.step)]: attempts.length } : {}),
+      },
+    };
     if (held.step !== null) log(`egress: ${held.axis.reasons.join("; ")}`);
 
     log(`evidence: collecting for verdict ${result.verdict}`);
@@ -233,6 +250,9 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
       journey: result,
       createdAt: startedAt,
       visitor: { declared: profile.visitorType, restored: visitor.restored, unmet: visitor.unmet },
+      // Only when there was something to repeat. A `1` on a single run would read as a
+      // deliberate decision not to repeat rather than as the absence of one.
+      ...(reproducibility.attempts > 1 ? { reproducibility } : {}),
     });
 
     const assembled = assembleResult({
@@ -247,14 +267,8 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
       // every real run was `observed` at a flat confidence, and `reproduced` was
       // unreachable from the CLI — the mechanism the design uses instead of
       // retrying existed and nothing ever called it.
-      attempts: attempts.length,
-      occurrences: {
-        ...merged.occurrences,
-        // A whole-run check is measured ONCE for the whole set, not once per
-        // attempt, so it must not be discounted as "seen in 1 of 3": it was seen
-        // in the only measurement there was.
-        ...(held.step ? { [held.step.label]: attempts.length } : {}),
-      },
+      attempts: reproducibility.attempts,
+      occurrences: reproducibility.occurrences,
     });
 
     /**

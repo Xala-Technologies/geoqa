@@ -361,6 +361,14 @@ that reads identically whether the click hit the first search result or the nav 
 that happened to come first in the document. Visible-only, silent at one match, and
 an engine that cannot count (`agent-browser`) says nothing rather than guessing.
 
+**29. A reproducibility claim is written to the EVIDENCE too, and derived once.**
+`executeRun` builds `{attempts, occurrences}` a single time and hands it to both
+`collectEvidence` and `assembleResult`. Two derivations of one number are two chances
+to disagree, and a finding claiming 3-of-3 beside a package recording 2 attempts
+leaves no way to tell which is lying. Occurrences are keyed by `occurrenceKey(step)`
+— index AND label — because labels are not unique and a label-only key can report
+`reproduced` for a step never seen to fail twice.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

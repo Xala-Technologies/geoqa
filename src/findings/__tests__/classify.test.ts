@@ -160,9 +160,9 @@ describe("findingsFromSteps", () => {
   });
 
   it("marks a finding reproduced only when it occurred on every attempt", () => {
-    const repeated = findingsFromSteps([step()], { ...ctx, attempts: 3, occurrences: { "has a primary heading": 3 } });
+    const repeated = findingsFromSteps([step()], { ...ctx, attempts: 3, occurrences: { "0:has a primary heading": 3 } });
     expect(repeated[0]?.status).toBe("reproduced");
-    const flaky = findingsFromSteps([step()], { ...ctx, attempts: 3, occurrences: { "has a primary heading": 1 } });
+    const flaky = findingsFromSteps([step()], { ...ctx, attempts: 3, occurrences: { "0:has a primary heading": 1 } });
     expect(flaky[0]?.status).toBe("observed");
     expect(flaky[0]?.reproducibility).toEqual({ attempts: 3, occurrences: 1 });
   });
