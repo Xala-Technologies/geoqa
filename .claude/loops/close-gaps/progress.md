@@ -1360,17 +1360,34 @@ Gate: lint clean · boundaries clean · **1371 tests at 100%** · e2e **31/31**.
 
 ## Next
 
-Slice 19 only, and it is **blocked on a decision rather than on work**: a static UI has no auth
-surface, which is why it needs no server, and adding auth means running one. Everything else in
-the loop is closed.
+**Every code-closable gap in this loop is closed.** What remains needs a decision, a live
+environment, or the durable path — none of which is work I can do alone.
 
-Outstanding for the owner: the ≥90% city-match threshold, a vendor-side traffic cap at Decodo,
-and the 100-session milestone (unblocked now that B-12 is fixed). Slice 16 was an approval gate on React vs Electron; the criterion
-recorded in `task.md` is whether it needs filesystem access beyond a served directory, and it
-does not — evidence is files under a root, and a static app can read them over HTTP. React,
-and the reasoning goes in the commit. The milestone is unblocked and
-worth running now that per-session identity actually works. Then slices 13–15 (the agents, generalised) and
-16–19 (frontend), neither of which depends on it.
+Blocked on you:
+
+1. **The ≥90% city-match threshold.** 84.3% measured over 102 sessions, `unverified` at 0 after
+   the distance change. Four options are laid out in `docs/milestone.md`.
+2. **Slice 19, auth and tenant onboarding.** A static UI has no auth surface — that is *why* it
+   needs no server — so adding one means running one. R-147 records the refusal; reversing it is
+   yours.
+3. **A vendor-side traffic cap at Decodo.** Still unset, so geoqa's own quota check is the only
+   guard between a bug and a bill.
+4. **C-8's mobile user agent.** Mobile profiles are mobile by VIEWPORT only and present a
+   desktop UA, so a site doing server-side device detection serves them the desktop variant.
+   Closing it means choosing: emulation (and losing `window.innerWidth` control, measured at
+   980 vs 390) or a hand-maintained `userAgent` per mobile profile.
+
+Blocked on an environment, not a decision:
+
+5. **A-3b / EXP-007** — exists, never run; needs live proxy traffic and your approval past ~1 GB.
+6. **A-1 proper** — provision a Norwegian exit, or check the office address.
+7. **C-12** — J06 on digilist.no needs a headed run against the live site.
+8. **D-2 and B-4's last residual** — the durable path runs a single attempt and nothing starts a
+   Temporal worker, so the repeat wiring cannot be exercised end to end. A-3's scheduler waits
+   behind the same thing.
+
+Known limits recorded rather than scheduled: C-6 (coverage proves execution, not assertion —
+closing it means mutation testing), C-7 (one live target).
 
 ## Earlier plan for slices 10–12 (search intelligence)
 
