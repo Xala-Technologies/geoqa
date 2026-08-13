@@ -20,7 +20,9 @@ export interface RunView {
   startedAt: string;
   evidenceId: string | null;
   seed: number;
-  findings: { total: number; bySeverity: Record<string, number> };
+  /** `labels` names the checks that failed — the difference between counting problems and naming one. */
+  findings: { total: number; bySeverity: Record<string, number>; byCategory: Record<string, number>; labels: string[] };
+  durationMs: number;
   confidence: {
     overall: Measured<number>;
     geo: Measured<number>;

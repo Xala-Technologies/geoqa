@@ -112,7 +112,7 @@ export function Overview({ view }: { view: DashboardView }): JSX.Element {
             </thead>
             <tbody>
               {view.runs.slice(0, 8).map((r) => (
-                <tr key={r.runId}>
+                <tr key={r.runId} className="link" onClick={() => (window.location.hash = `#/run/${r.runId}`)} title={`open ${r.runId}`}>
                   <td>
                     <Verdict value={r.verdict} />
                   </td>
@@ -154,6 +154,16 @@ function Split({ total, pass, fail, error }: { total: number; pass: number; fail
 function Attention({ view }: { view: DashboardView }): JSX.Element {
   const items: { tone: string; label: string; detail: string; href: string }[] = [];
 
+  const failing = view.runs.filter((r) => r.findings.total > 0);
+  if (failing.length > 0) {
+    const checks = new Set(failing.flatMap((r) => r.findings.labels));
+    items.push({
+      tone: "bad",
+      label: "findings",
+      detail: `${checks.size} distinct check(s) failing across ${failing.length} run(s)`,
+      href: "#/findings",
+    });
+  }
   for (const r of view.regressions) {
     items.push({
       tone: "bad",

@@ -36,7 +36,16 @@ export interface RunView {
   /** For a link to the evidence directory. Null when none was written. */
   evidenceId: string | null;
   seed: number;
-  findings: { total: number; bySeverity: Record<string, number> };
+  /**
+   * Counts, groupings, and the LABELS of the checks that produced a finding.
+   *
+   * The labels are the difference between a dashboard that says "2 findings" and one that says
+   * *which* check is failing, where, and how often. They are the only per-finding detail the run
+   * index keeps — deliberately, because it is what makes regression detection possible — and
+   * dropping them here left the UI able to count problems and unable to name one.
+   */
+  findings: { total: number; bySeverity: Record<string, number>; byCategory: Record<string, number>; labels: string[] };
+  durationMs: number;
   confidence: {
     overall: Measured<number>;
     geo: Measured<number>;
@@ -76,7 +85,14 @@ export function toRunView(record: RunRecord): RunView {
     startedAt: record.startedAt,
     evidenceId: record.evidenceId,
     seed: record.seed,
-    findings: { total: record.findings.total, bySeverity: record.findings.bySeverity },
+    findings: {
+      total: record.findings.total,
+      bySeverity: record.findings.bySeverity,
+      byCategory: record.findings.byCategory,
+      // Which checks failed, not just how many. See the interface comment.
+      labels: record.findings.labels,
+    },
+    durationMs: record.durationMs,
     confidence: {
       overall: score(record.confidence.overall),
       geo: score(record.confidence.geo),

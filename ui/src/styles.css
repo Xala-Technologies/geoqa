@@ -621,6 +621,47 @@ a.tag:hover {
   min-width: 0;
 }
 
+/* ── Interaction ────────────────────────────────────────────────────────── */
+
+/* What is clickable looks clickable. A row that navigates without saying so is a trap the
+   second time somebody uses it. */
+tr.link {
+  cursor: pointer;
+}
+
+tr.link:hover td {
+  background: var(--machine-3);
+  box-shadow: inset 3px 0 0 var(--signal);
+}
+
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.sortable:hover {
+  color: var(--signal);
+}
+
+th[aria-sort="ascending"],
+th[aria-sort="descending"] {
+  color: var(--signal);
+}
+
+.sort-mark {
+  display: inline-block;
+  width: 10px;
+  margin-left: var(--s-1);
+}
+
+/* A count that means something is wrong. Not the pill treatment — a pill on every row of a
+   numeric column is noise, and the number itself carries the news. */
+.bad-num {
+  color: var(--fail);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
 /* ── Utilities ──────────────────────────────────────────────────────────── */
 
 /* The only alignment and sizing helpers in the app. They exist so no component types a

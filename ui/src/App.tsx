@@ -16,29 +16,44 @@ import { Runs } from "./views/Runs.tsx";
 import { Geography } from "./views/Geography.tsx";
 import { Coverage } from "./views/Coverage.tsx";
 import { Trends } from "./views/Trends.tsx";
+import { Findings } from "./views/Findings.tsx";
+import { RunDetail } from "./views/RunDetail.tsx";
 
-type ViewId = "overview" | "runs" | "geography" | "coverage" | "trends";
+type ViewId = "overview" | "runs" | "findings" | "geography" | "coverage" | "trends";
+
+/** A route is a view, or a drill-down into one run. */
+type Route = { view: ViewId; runId?: string };
 
 const VIEWS: { id: ViewId; label: string; group: string }[] = [
   { id: "overview", label: "Overview", group: "Monitor" },
   { id: "runs", label: "Runs", group: "Monitor" },
+  { id: "findings", label: "Findings", group: "Monitor" },
   { id: "geography", label: "Geography", group: "Analyse" },
   { id: "coverage", label: "Coverage", group: "Analyse" },
   { id: "trends", label: "Trends", group: "Analyse" },
 ];
 
-const viewFromHash = (): ViewId => {
-  const id = window.location.hash.replace(/^#\/?/, "") as ViewId;
-  return VIEWS.some((v) => v.id === id) ? id : "overview";
+/**
+ * `#/runs`, or `#/run/<id>` for a drill-down.
+ *
+ * A run detail is addressable rather than modal state, so a row can be linked to from a finding,
+ * shared in a message, and survive a reload. A console whose deepest page has no URL is one
+ * where "look at this run" means "click these four things".
+ */
+const routeFromHash = (): Route => {
+  const raw = window.location.hash.replace(/^#\/?/, "");
+  const [head, ...rest] = raw.split("/");
+  if (head === "run" && rest.length > 0) return { view: "runs", runId: rest.join("/") };
+  return { view: VIEWS.some((v) => v.id === head) ? (head as ViewId) : "overview" };
 };
 
 export function App(): JSX.Element {
   const [view, setView] = useState<DashboardView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [route, setRoute] = useState<ViewId>(viewFromHash);
+  const [route, setRoute] = useState<Route>(routeFromHash);
 
   useEffect(() => {
-    const onHash = (): void => setRoute(viewFromHash());
+    const onHash = (): void => setRoute(routeFromHash());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -46,7 +61,9 @@ export function App(): JSX.Element {
   // The tab title follows the view. With five of them, a static title makes two open tabs
   // indistinguishable — and this is a console somebody keeps open beside their work.
   useEffect(() => {
-    document.title = `geoqa — ${VIEWS.find((v) => v.id === route)?.label.toLowerCase() ?? "runs"}`;
+    document.title = route.runId
+      ? `geoqa — run ${route.runId}`
+      : `geoqa — ${VIEWS.find((v) => v.id === route.view)?.label.toLowerCase() ?? "runs"}`;
   }, [route]);
 
   useEffect(() => {
@@ -76,17 +93,20 @@ export function App(): JSX.Element {
   const counts: Record<ViewId, number> = {
     overview: 0,
     runs: view.runs.length,
+    // Distinct failing CHECKS, not total findings: the number somebody has to work through.
+    findings: new Set(view.runs.flatMap((r) => r.findings.labels)).size,
     geography: view.site.geographicallyDivergent.length,
     coverage: view.site.coverageGaps.length,
     trends: view.trends.length,
   };
   const alerts: Record<string, boolean> = {
+    findings: view.runs.some((r) => r.findings.total > 0),
     geography: view.site.geographicallyDivergent.length > 0,
     coverage: view.site.coverageGaps.length > 0,
   };
 
   const groups = [...new Set(VIEWS.map((v) => v.group))];
-  const current = VIEWS.find((v) => v.id === route);
+  const current = VIEWS.find((v) => v.id === route.view);
 
   return (
     <div className="app">
@@ -98,7 +118,7 @@ export function App(): JSX.Element {
       </div>
 
       <header className="bar">
-        <span className="bar-title">{current?.label}</span>
+        <span className="bar-title">{route.runId === undefined ? current?.label : "Run"}</span>
         <div className="bar-stats">
           <Stat k="runs" v={String(view.summary.total)} />
           <Stat k="confidence" v={view.summary.meanConfidence.text} />
@@ -116,7 +136,7 @@ export function App(): JSX.Element {
                 key={v.id}
                 className="nav"
                 href={`#/${v.id}`}
-                aria-current={route === v.id ? "page" : undefined}
+                aria-current={route.view === v.id && route.runId === undefined ? "page" : undefined}
               >
                 {v.label}
                 {counts[v.id] > 0 && (
@@ -129,11 +149,13 @@ export function App(): JSX.Element {
       </nav>
 
       <main className="readout">
-        {route === "overview" && <Overview view={view} />}
-        {route === "runs" && <Runs view={view} />}
-        {route === "geography" && <Geography view={view} />}
-        {route === "coverage" && <Coverage view={view} />}
-        {route === "trends" && <Trends view={view} />}
+        {route.runId !== undefined && <RunDetail view={view} runId={route.runId} />}
+        {route.runId === undefined && route.view === "overview" && <Overview view={view} />}
+        {route.runId === undefined && route.view === "runs" && <Runs view={view} />}
+        {route.runId === undefined && route.view === "findings" && <Findings view={view} />}
+        {route.runId === undefined && route.view === "geography" && <Geography view={view} />}
+        {route.runId === undefined && route.view === "coverage" && <Coverage view={view} />}
+        {route.runId === undefined && route.view === "trends" && <Trends view={view} />}
       </main>
     </div>
   );
