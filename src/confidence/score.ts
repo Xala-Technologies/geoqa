@@ -7,10 +7,14 @@
  * weighted combination CAPPED by the weakest axis, and `notes` says in words
  * why the number is what it is.
  *
- * `searchObservation` is `null` here and stays `null` until a SERP source is
- * wired. Reporting a number for a thing we do not measure is the exact failure
- * agent-fleet recorded as "a perfect score is the most suspicious number on the
- * board".
+ * `searchObservation` is a REAL number when a SERP source produced one, and `null`
+ * when nothing could be measured — never a fabricated 0. `search/observation.ts` owns
+ * that decision; this file records the result.
+ *
+ * It is deliberately excluded from `overall`. The other four axes answer "can this
+ * run's readings be believed"; this one answers "is this page visible in search". They
+ * are different questions about different subjects, and averaging them would let good
+ * search visibility disguise a run that could not read the page.
  */
 import type { EvidenceManifest } from "../evidence/manifest.js";
 import type { GeoVerification } from "../geo/types.js";
@@ -89,6 +93,17 @@ export interface ScoreInput {
   geo: GeoVerification;
   journey: JourneyResult;
   manifest: EvidenceManifest | null;
+  /**
+   * The search-visibility axis, when a SERP source produced one.
+   *
+   * Absent or null means UNMEASURED and is reported as such. It is deliberately NOT
+   * folded into `overall`: the other four axes answer "can this run's readings be
+   * believed", which is a question about the measurement, while this one answers "is
+   * this page visible in search", which is a question about the site. Averaging them
+   * would let a site with excellent search visibility disguise a run that could not
+   * read the page — and that is the exact conflation the whole score exists to prevent.
+   */
+  searchObservation?: number | null;
 }
 
 export function scoreRun(input: ScoreInput): ConfidenceReport {
@@ -135,7 +150,12 @@ export function scoreRun(input: ScoreInput): ConfidenceReport {
     notes.push(`evidence missing: ${input.manifest.missing.join(", ")}`);
   if (notes.length === 0) notes.push("every axis verified; evidence complete");
 
-  return { geo, browser, journey, evidence, searchObservation: null, overall, notes };
+  // A REAL observation when one was taken, `null` when it could not be. Never a
+  // fabricated 0: an exhausted SERP account returns no results, and "your site is
+  // invisible" is far too alarming a claim to make on the strength of an empty list.
+  // `search/observation.ts` decides which of the three states applies; this only
+  // records it, and deliberately does not fold it into `overall` — see below.
+  return { geo, browser, journey, evidence, searchObservation: input.searchObservation ?? null, overall, notes };
 }
 
 /** One-line rendering for a terminal summary. */

@@ -141,11 +141,11 @@ against, 90% is likely unreachable and the threshold is wrong.
 
 ### Search intelligence
 
-- [ ] **10 · A-2: the Serper provider.** Behind a seam shaped like
+- [x] **10 · A-2: the search provider (SerpApi, not Serper — that is the key we have).** Behind a seam shaped like
       `GeoNetworkProvider`, with a REAL `health()` probe. Read the DataForSEO
       warning in `network/types.ts` first: a credentials-present check let a
       zero-balance account pass for weeks.
-- [ ] **11 · A-2: wire `searchObservation`.** Three-state, and this is the whole
+- [x] **11 · A-2: wire `searchObservation`.** Three-state, and this is the whole
       point: no results at all is `null`; results but not us is a real low score;
       401/quota is `null` with a reason. Never a fabricated 0.
 - [ ] **12 · A-3b + C-1: run EXP-007 and EXP-002 for real.** Both `unmeasured`.

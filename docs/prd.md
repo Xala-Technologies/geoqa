@@ -172,6 +172,27 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-132** A search source's `health()` is a **real probe** distinguishing bad
+  credentials from an exhausted account. Valid credentials with no quota left is
+  `unusable`, not usable: a search source that cannot answer is worse than an absent one,
+  because empty results read as "nobody ranks". A missing quota figure is "does not say",
+  never zero.
+- **R-133** `searchObservation` has **three** states. The provider could not answer →
+  `null`. Results came back and we are not in them → a real low score, expressed as a
+  small number rather than 0 so a measured absence is distinguishable from an unmeasured
+  one. Results came back and we rank → scored by position. "No results at all" is `null`,
+  because an exhausted account, an unparsed response and a genuinely empty SERP are
+  indistinguishable, and "your site is invisible" is too alarming a claim to make on that.
+- **R-134** Search visibility is **not folded into `overall`**. The other axes answer
+  whether a run's readings can be believed; this one answers whether a page is visible in
+  search. Averaging them would let good search visibility disguise a run that could not
+  read the page.
+- **R-135** A city-scoped search **resolves** the city against the provider's own
+  gazetteer, filtered by country, and REFUSES when it cannot. `Oslo` matches
+  `Oslo,Minnesota,United States` as well as `Oslo,Oslo,Norway`, so an unfiltered first
+  match would run a Norwegian market's SERP from Minnesota. Dropping an unresolvable city
+  and searching the whole country would be worse still: the caller asked what a visitor in
+  that city sees.
 - **R-129** Runs are queryable across time, and the index is a **derived cache** over
   the evidence tree rather than the record itself. Each run's own artifact is the
   authority on that run, so a corrupt or deleted index costs nothing permanent and is

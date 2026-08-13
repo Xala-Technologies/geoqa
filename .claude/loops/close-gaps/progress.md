@@ -738,7 +738,76 @@ Docs: gaps **A-4** closed; PRD **R-129 … R-131**.
 Gate: lint clean · boundaries clean (102 modules / 402 deps) · **1151 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
-## Next: slices 10–12 (search intelligence)
+## Slices 10 + 11 · A real SERP source, and `searchObservation` wired — DONE
+
+Taken together because 11 is meaningless without 10. `src/search/` with a SerpApi
+adapter — named for the vendor we actually have credentials for; the register said
+"Serper", the working account is SerpApi, and building against a key nobody has would
+have produced an adapter nothing could prove.
+
+**`health()` verified live in all three states:**
+
+```
+real key : usable       — SerpApi account Active, 2505 search(es) left
+bad key  : unusable     — SerpApi rejected the credentials: Invalid API key…
+no key   : unconfigured — SERPAPI_KEY is not set
+```
+
+The state a credentials check cannot see is the one that matters: valid credentials with
+`total_searches_left: 0` is **unusable**, because empty results read as "nobody ranks".
+That is the DataForSEO failure, and that account is still overdrawn while authenticating.
+
+**The three-state observation:** provider could not answer → `null`; results came back and
+we are not in them → a real low score of **2**; we rank → scored by position. A small
+number rather than 0 for a measured absence, so it is distinguishable at a glance from an
+unmeasured one. And it is deliberately **excluded from `overall`** — the other four axes
+answer "can this run's readings be believed", this one answers "is this page visible in
+search", and averaging them would let good visibility disguise a run that could not read
+the page.
+
+### Two bugs the first live queries found, both mine, both minutes old
+
+**`hl=nb` is refused.** Google's interface language for Norwegian is the macrolanguage
+`no`, not the correct BCP-47 tag a browser sends. My blind reduction to the primary subtag
+was wrong for the first market this project was built for.
+
+**`location=Oslo,NO` is refused.** The accepted form is a canonical name from the vendor's
+gazetteer, shape not derivable: `Oslo,Oslo,Norway`, `Bergen,Vestland,Norway`,
+`Stockholm,Stockholm Municipality,Stockholm County,Sweden`, `Berlin,Germany`. Cities are
+now resolved via the free `/locations.json` **filtered by country code** — a search for
+"Oslo" returns `Oslo,Minnesota,United States` in the same list, and taking the first match
+would have run a Norwegian market's SERP from Minnesota and called it Oslo. An
+unresolvable city **refuses** rather than quietly widening to the country.
+
+Both were caught on the first live query *because* the adapter reports an unreadable
+response as unmeasured rather than as an empty SERP. A client that returned `[]` would have
+told me "digilist ranks nowhere in Norway", twice, confidently. The design caught my own
+bug before it became a finding about the tenant.
+
+### A live finding
+
+For `leie lokaler`, digilist.no is absent from the top 10 in both markets — measured, score 2:
+
+```
+Oslo    9 results  | top3: booking.oslo.kommune.no, aktivioslo.no, selskapslokaler.no
+Bergen 10 results  | top3: www.bergen.kommune.no, selskapslokaler.no, www.kulturhusetibergen.no
+```
+
+**Residual, named:** nothing in the run path calls `search()` yet — the axis accepts an
+observation and no command produces one. That is the wiring for slices 13–15, and an
+option nothing reads is the defect B-1 closed, so it is recorded rather than left.
+
+Docs: gaps **A-2** closed; PRD **R-132 … R-135**.
+
+Gate: lint clean · boundaries clean (107 modules / 418 deps) · **1202 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
+## Next: slice 12
+
+A-3b + C-1 — run EXP-007 (which also answers what the matrix concurrency bound should be)
+and the 100-session milestone.
+
+## Earlier plan for slices 10–12 (search intelligence)
 
 A-2 Serper with a REAL `health()`; wire `searchObservation` three-state; then run EXP-007
 and the 100-session milestone. Read the DataForSEO warning in `network/types.ts` first —

@@ -125,17 +125,77 @@ Where: `network/provider.ts`, `cli/samplers.ts` (`NO_VENDOR_NOTE`), `infra/`,
 **Cannot be closed by code.** An exit IP is a purchase (or a colleague's spare
 Pi). Everything the code can do about it is done.
 
-### A-2 · No search/SERP observation
+### A-2 · CLOSED — a real SERP source, and `searchObservation` is wired
 
-`ConfidenceReport.searchObservation` is hardcoded `null` and documented to stay
-that way until a source is wired. Correct behaviour (R-36), but it means one of
-the five confidence axes never contributes.
+`src/search/` with a SerpApi adapter. Named for the vendor we actually have credentials
+for: the register said "Serper", the working account is SerpApi, and building against a
+vendor whose key nobody has would have produced an adapter nothing could prove.
 
-**Cannot be closed by code.** It needs a SERP data source — an API subscription
-or a scraper with its own legal and rate-limit story. Inventing a number for it
-is the one thing that is definitely wrong.
+**`health()` is a real probe with three states, verified live:**
 
-Where: `confidence/score.ts`.
+```
+real key : usable      — SerpApi account Active, 2505 search(es) left
+bad key  : unusable    — SerpApi rejected the credentials: Invalid API key…
+no key   : unconfigured — SERPAPI_KEY is not set
+```
+
+The middle state a credentials check cannot see is the one that matters:
+`total_searches_left: 0` with valid credentials is **`unusable`**, because a search
+source that cannot answer is worse than an absent one. Empty results read as "nobody
+ranks" — which is the DataForSEO failure in `network/types.ts`, and that account is
+overdrawn right now while still authenticating. A missing quota field is
+`searchesLeft: null` ("does not say"), never `0`.
+
+**The three-state observation, which is the whole point:**
+
+| What happened | `searchObservation` |
+|---|---|
+| Provider could not answer | `null`, with a reason |
+| Results came back, we are NOT in them | a real LOW score (2) |
+| Results came back, we rank | scored by position |
+
+"No results at all" is `null`, not zero. An exhausted account returns an empty list, and
+so does a parse we got wrong, while "your site is invisible" is one of the most alarming
+things this system could say. But "results, but not us" IS a real reading and scores 2 —
+a small NUMBER rather than 0, so a measured absence is distinguishable at a glance from an
+unmeasured one.
+
+`searchObservation` is deliberately **excluded from `overall`**. The other four axes answer
+"can this run's readings be believed"; this one answers "is this page visible in search".
+Averaging them would let good search visibility disguise a run that could not read the page.
+
+**Two bugs the first live queries found, both in code I had just written.**
+
+`hl=nb` is REFUSED: *"Unsupported `nb` interface language"*. Google's interface language
+for Norwegian is the macrolanguage `no`, not the correct BCP-47 tag a browser sends. A
+blind reduction to the primary subtag was wrong for the first market this project was
+built for. Fixed with a documented map of the divergences.
+
+`location=Oslo,NO` is REFUSED too. The accepted form is a canonical name from the
+vendor's own gazetteer, and its shape is not derivable — `Oslo,Oslo,Norway`,
+`Bergen,Vestland,Norway`, `Stockholm,Stockholm Municipality,Stockholm County,Sweden`,
+`Berlin,Germany`. So a city is now RESOLVED via the free `/locations.json`, filtered by
+country code — because a search for "Oslo" returns `Oslo,Minnesota,United States` in the
+same list, and taking the first match would have run a Norwegian market's SERP from
+Minnesota and reported it as Oslo. An unresolvable city **refuses the query** rather than
+quietly running a country-wide search: the caller asked what a visitor in that city sees.
+
+Both failures were caught on the first live query precisely because the adapter reports an
+unreadable response as unmeasured rather than as an empty SERP. A client that returned
+`[]` would have reported "digilist ranks nowhere in Norway" twice, confidently.
+
+**A live finding.** For `leie lokaler`, digilist.no is absent from the top 10 in both Oslo
+and Bergen — a MEASURED absence, score 2:
+
+```
+Oslo    9 results  | digilist: absent  | top3: booking.oslo.kommune.no, aktivioslo.no, selskapslokaler.no
+Bergen 10 results  | digilist: absent  | top3: www.bergen.kommune.no, selskapslokaler.no, www.kulturhusetibergen.no
+```
+
+**Residual:** nothing in the run path calls `search()` yet — the axis accepts an
+observation and no command produces one. That is the wiring for the keyword/SEO agents
+(slices 13–15), and it is named here rather than left to be discovered, because an option
+nothing reads is the defect B-1 closed.
 
 ### A-3 · The matrix runs in process now; nothing schedules it, and the bound is a guess
 

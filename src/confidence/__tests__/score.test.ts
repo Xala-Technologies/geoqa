@@ -215,3 +215,34 @@ describe("source disagreement caps the network axis", () => {
     expect(report.notes.join(" ")).toContain("two IP-geo sources disagree");
   });
 });
+
+describe("searchObservation is real now, and still never fabricated", () => {
+  it("records a measured observation", () => {
+    const report = scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest, searchObservation: 95 });
+    expect(report.searchObservation).toBe(95);
+  });
+
+  it("stays NULL when nothing was measured, including when the field is absent", () => {
+    // Most runs take no SERP observation, and "not measured" must not become a zero.
+    expect(scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest }).searchObservation).toBeNull();
+    expect(
+      scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest, searchObservation: null }).searchObservation,
+    ).toBeNull();
+  });
+
+  it("does NOT fold into overall — it answers a question about the SITE, not the reading", () => {
+    // The other four axes answer "can this run's readings be believed"; this one answers
+    // "is this page visible in search". Averaging them would let good search visibility
+    // disguise a run that could not read the page.
+    const blind = scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest, searchObservation: 2 });
+    const visible = scoreRun({ geo: geo(), journey: journey({ passed: 3 }), manifest: fullPassManifest, searchObservation: 100 });
+    expect(blind.overall).toBe(visible.overall);
+  });
+
+  it("renders as 'n/a' when unmeasured and as a number when measured", () => {
+    expect(describeConfidence(scoreRun({ geo: geo(), journey: journey({ passed: 1 }), manifest: fullPassManifest }))).toContain("search n/a");
+    expect(
+      describeConfidence(scoreRun({ geo: geo(), journey: journey({ passed: 1 }), manifest: fullPassManifest, searchObservation: 55 })),
+    ).toContain("search 55");
+  });
+})
