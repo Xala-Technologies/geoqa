@@ -19,6 +19,55 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — The durable path was doing six fewer things, and one of them was my fault
+
+Closing D-2 made a durable run startable for the first time. The immediate next question
+was what it actually *does* — and diffing `executeRun` against `geoQaRunWorkflow` found
+**six** divergences. Two were recorded. **Four were not.**
+
+| Behaviour | Local | Durable (before) | Consequence |
+|---|---|---|---|
+| journey `--repeat` and merge | ✓ | ✗ | every durable finding `observed`; `reproduced` unreachable |
+| provider cooldown **write** | ✓ | ✗ | a vendor that failed a durable sweep was never frozen |
+| **egress-held check** | ✓ | ✗ | a durable run never verified *one journey is one network session* |
+| **visitor state recorded** | ✓ | ✗ | evidence said `returning` whether or not a session was restored |
+| **history append** | ✓ | ✗ | durable runs invisible to `geoqa runs`, trends, regressions |
+| **unlisted HAR pruned** | ✓ | ✗ | a passing durable run leaked a full network recording |
+
+The egress one matters most on its own: a rotating exit mid-run was invisible, so the
+durable path reported a clean verdict for observations it could not attribute to the
+site — the exact failure this engine exists to refuse.
+
+### The last row was introduced by this morning's fix
+
+The B-3 work added `pruneUnlistedHar` to `executeRun`'s teardown and **not** to
+`closeSession`. Nothing caught it, because nothing could start a durable run — so the
+omission was never executed.
+
+That is the whole mechanism: **a mode nobody can run is a mode nobody can notice is
+wrong**, and every improvement to the other one quietly widens the gap. Six behaviours
+had accumulated that way since Phase 0.
+
+### Closed by removing the copies, not by adding six more
+
+`repeatJourney` and `closeEgress` moved into `run/stages.ts` and **both** modes call
+them — the repeat loop and the egress fold had been written longhand in `executeRun` and
+hand-mirrored, badly, on the durable side. The activities are thin wrappers again, which
+is what their coverage exclusion has always claimed.
+
+### And a guard, because a behavioural test cannot catch this class
+
+Both modes pass their own tests *precisely because* each is asserted against what it
+does. So the guard is structural: `parity.test.ts` names the shared functions and
+requires both callers to reach them, and asserts neither mode re-implements the merge. A
+seventh behaviour added to one side now fails there rather than in somebody's overnight
+sweep.
+
+**Still not proven:** no durable sweep has run against a real browser and a real site.
+The parity is structural and unit-level.
+
+---
+
 ## 2026-08-13 — The durable path can finally be started, and refuses to pretend
 
 `geoQaRunWorkflow` and `geoQaMatrixWorkflow` had been written and tested since Phase 0,

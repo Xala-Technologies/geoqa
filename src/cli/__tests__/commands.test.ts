@@ -556,6 +556,27 @@ describe("journeyRun", () => {
     expect(startDurable).not.toHaveBeenCalled();
   });
 
+  it("passes every run-shaping value to the durable path, not just some", async () => {
+    // The defect D-5 is about, reappearing in the fix for it: a value the in-process path sends
+    // and the durable one does not. `--repeat 3 --durable` would have run once, silently, and
+    // reported three findings as `observed`.
+    let runs: { repeat?: number; cooldownMs?: number; tenantId?: string | null }[] = [];
+    await matrixRun(
+      deps({
+        cooldownMs: 999,
+        tenantId: "digilist",
+        startDurable: async (given, opts) => {
+          runs = given as never;
+          return { workflowId: opts.workflowId, address: "a", namespace: "default", results: given.map(() => ({ result: { verdict: "PASS" } as never, warnings: [] })) };
+        },
+      }),
+      { url: "https://x", markets: ["oslo"], journeys: ["landing-page"], devices: ["mobile"], durable: true, repeat: 3 },
+    );
+    expect(runs[0]?.repeat).toBe(3);
+    expect(runs[0]?.cooldownMs).toBe(999);
+    expect(runs[0]?.tenantId).toBe("digilist");
+  });
+
   it("REFUSES a durable result that does not line up with the scenarios", async () => {
     // Results are matched by POSITION, so a short array would attribute every later result to
     // the wrong market — a sweep quietly reporting Bergen's verdict against Oslo.

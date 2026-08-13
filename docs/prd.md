@@ -492,6 +492,15 @@ unmeasured guess until EXP-007 runs.
   back to running locally. The two execution modes produce identical output, so a silent
   fallback would report durability that never existed — a lie indistinguishable from
   success. The failure names the address, because the fix is one command away.
+- **R-174** A behaviour every run performs lives in **one** function that both execution
+  modes call, never in two that agree today. Six behaviours had drifted apart before
+  anyone noticed — including one introduced by a fix on the day it landed — because the
+  durable mode could not be started, and *a mode nobody can run is a mode nobody can
+  notice is wrong*.
+- **R-175** Parity between execution modes is guarded **structurally**, not
+  behaviourally. Both modes pass their own tests precisely because each is asserted
+  against what it does; what catches a divergence is naming the shared functions and
+  requiring both callers to reach them.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never
