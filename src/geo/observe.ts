@@ -24,8 +24,28 @@ export const UNKNOWN_NETWORK: NetworkObservation = {
   region: null,
   org: null,
   timezone: null,
+  coordinates: null,
   latencyMs: null,
 };
+
+/**
+ * `"59.9139,10.7522"` → `[59.9139, 10.7522]`, or null.
+ *
+ * Refuses anything it cannot fully parse rather than returning a partial pair: a coordinate
+ * with a plausible latitude and a missing longitude would place a session on the Greenwich
+ * meridian, which is a confident wrong answer of exactly the kind a distance check must not
+ * produce.
+ */
+export function parseLoc(value: unknown): [number, number] | null {
+  if (typeof value !== "string") return null;
+  const parts = value.split(",");
+  if (parts.length !== 2) return null;
+  const lat = Number(parts[0]);
+  const lon = Number(parts[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return [lat, lon];
+}
 
 /**
  * Parse an ipinfo.io payload. Captured live in EXP-000:
@@ -49,6 +69,9 @@ export function parseNetworkObservation(raw: string, latencyMs: number | null): 
     region: asString(r.region),
     org: asString(r.org),
     timezone: asString(r.timezone),
+    // `loc` is a "lat,lon" string in ipinfo's payload. Parsed now rather than discarded —
+    // it is what lets a city verdict be a measurement instead of a string comparison.
+    coordinates: parseLoc(r.loc),
     latencyMs,
   };
 }
@@ -87,6 +110,9 @@ export function parseGeoJsObservation(raw: string, latencyMs: number | null): Ne
     // name and is deliberately not the one read.
     org: asString(r.organization),
     timezone: asString(r.timezone),
+    // geojs gives latitude and longitude as separate STRING fields, unlike ipinfo's single
+    // "lat,lon" — so the same reading arrives in two shapes and each parser normalises its own.
+    coordinates: parseLoc(typeof r.latitude === "string" && typeof r.longitude === "string" ? `${r.latitude},${r.longitude}` : null),
     latencyMs,
   };
 }

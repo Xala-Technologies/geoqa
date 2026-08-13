@@ -57,6 +57,16 @@ export interface NetworkObservation {
   region: string | null;
   /** Provider/ASN string, e.g. "AS2116 GLOBALCONNECT AS". */
   org: string | null;
+  /**
+   * Where the identity endpoint says this IP is, as [latitude, longitude].
+   *
+   * Stored because a city NAME cannot answer the question a city verdict is asked. Measured
+   * over 102 sessions: the endpoint returned Kista for a Stockholm request (12 km away) and
+   * Gällivare for another (1100 km away), and string comparison called both "unverified" — so
+   * the axis could not tell an adjacent suburb from the wrong end of the country. Coordinates
+   * can. `ipinfo` has always returned this as `loc`; it was parsed and thrown away.
+   */
+  coordinates: [number, number] | null;
   timezone: string | null;
   latencyMs: number | null;
 }

@@ -48,6 +48,9 @@ describe("parseNetworkObservation", () => {
       region: "Akershus",
       org: "AS2116 GLOBALCONNECT AS",
       timezone: "Europe/Oslo",
+      // `loc` parsed rather than discarded: this is what lets a city verdict be a distance
+      // instead of a string comparison.
+      coordinates: [59.8927, 10.619],
       latencyMs: 42,
     });
   });
@@ -213,6 +216,9 @@ describe("parseGeoJsObservation", () => {
       region: "Viken",
       org: "AS2119 Telenor Norge AS",
       timezone: "Europe/Oslo",
+      // geojs gives latitude and longitude as separate STRING fields, so each parser
+      // normalises its own shape into the same pair.
+      coordinates: [59.9281, 10.4965],
       latencyMs: 55,
     });
   });
