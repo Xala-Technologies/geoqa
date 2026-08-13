@@ -33,6 +33,7 @@ function runtime(over: Partial<BrowserRuntime> = {}): BrowserRuntime {
     getUrl: () => Promise.resolve(ok("https://digilist.no/")),
     getText: () => Promise.resolve(ok("body text")),
     isVisible: () => Promise.resolve(ok(true)),
+    visibleCount: () => Promise.resolve(ok(1)),
     count: () => Promise.resolve(ok(9)),
     console: () => Promise.resolve(ok([])),
     errors: () => Promise.resolve(ok([])),
@@ -825,5 +826,66 @@ describe("a navigating step records where it landed", () => {
     const result = await runJourney(rt, journey([{ action: "click", selector: "#go", label: "click" }]), opts);
     expect(result.steps[0]?.outcome).toBe("passed");
     expect(result.steps[0]?.observed).toBeNull();
+  });
+})
+
+describe("a selector that could have hit more than one element", () => {
+  const clickJourney = () => journey([{ action: "click", selector: "#a, .b", label: "click" }]);
+
+  it("RECORDS the ambiguity rather than refusing it", () => {
+    // A union in a click is legitimate — `#results a, .result` taking the first of three
+    // results is exactly what a journey means. But a CSS comma resolves in DOCUMENT order, not
+    // as a preference list, so "the first of three search results" and "the nav link that
+    // happened to come first" are the same event in a report that counts neither. One of those
+    // is a finding, and it cost a deliberately-broken override run reporting PASS to notice.
+    const rt = runtime({ visibleCount: () => Promise.resolve(ok(12)) });
+    return runJourney(rt, clickJourney(), opts).then((result) => {
+      expect(result.steps[0]?.outcome).toBe("passed");
+      expect(result.steps[0]?.detail).toContain("matched 12 visible elements");
+      expect(result.steps[0]?.detail).toContain("document order");
+    });
+  });
+
+  it("says nothing when the selector hit exactly what it named", async () => {
+    // A note on every row would bury the rows that matter.
+    const result = await runJourney(runtime({ visibleCount: () => Promise.resolve(ok(1)) }), clickJourney(), opts);
+    expect(result.steps[0]?.detail).not.toContain("matched");
+  });
+
+  it("says nothing when the engine CANNOT count, rather than guessing", async () => {
+    // agent-browser has no visible-only count. Reporting its hidden-inclusive number as the
+    // number a click could have hit would make an unambiguous click look ambiguous.
+    const result = await runJourney(runtime({ visibleCount: () => Promise.resolve(bad()) }), clickJourney(), opts);
+    expect(result.steps[0]?.outcome).toBe("passed");
+    expect(result.steps[0]?.detail).not.toContain("matched");
+  });
+
+  it("counts BEFORE the action, because a click navigates", async () => {
+    // Asked afterwards, the selector resolves against the DESTINATION page — so the number
+    // would describe a page the step never acted on. A confidently wrong count is worse than
+    // no count, and it is exactly the failure this note exists to prevent.
+    const counts = [12, 1];
+    let clicked = false;
+    const rt = runtime({
+      visibleCount: () => Promise.resolve(ok(counts[clicked ? 1 : 0] as number)),
+      click: () => {
+        clicked = true;
+        return Promise.resolve(ok(null));
+      },
+    });
+    const result = await runJourney(rt, clickJourney(), opts);
+    expect(result.steps[0]?.detail).toContain("matched 12 visible elements");
+  });
+
+  it("does not ask about actions that target no element", async () => {
+    // `press` sends a key to the page and `scroll` moves the viewport; neither chooses an
+    // element from a set, so an ambiguity note would be meaningless.
+    const counted = vi.fn(() => Promise.resolve(ok(9)));
+    await runJourney(
+      runtime({ visibleCount: counted }),
+      journey([{ action: "press", key: "Enter", label: "press" }, { action: "scroll", direction: "down", px: 10, label: "scroll" }]),
+      opts,
+    );
+    expect(counted).not.toHaveBeenCalled();
   });
 })

@@ -185,6 +185,27 @@ const outcomeOf = (result: CheckResult): StepOutcome =>
  */
 const NAVIGATING_ACTIONS = new Set(["click", "press", "open", "reload"]);
 
+/** Actions that act on ONE element chosen from a selector's matches. */
+const TARGETED_ACTIONS = new Set(["click", "fill", "select", "check"]);
+
+/**
+ * "matched N visible elements, acted on the first", or null when there is nothing to say.
+ *
+ * Only for actions that TARGET a selector, and only when the count is above one — a step that
+ * hit exactly what it named needs no note, and adding one to every row would bury the rows that
+ * matter. An engine that cannot count returns null rather than a guess: agent-browser has no
+ * visible-only count, and saying so by omission is better than reporting its hidden-inclusive
+ * number as the number a click could have hit.
+ */
+async function ambiguityNote(runtime: BrowserRuntime, step: Step): Promise<string | null> {
+  if (!("selector" in step) || typeof step.selector !== "string") return null;
+  if (!TARGETED_ACTIONS.has(step.action)) return null;
+  const out = await runtime.visibleCount(step.selector);
+  if (!out.ok || out.data <= 1) return null;
+  return `matched ${out.data} visible elements and acted on the first — a CSS comma resolves in document order, not as a preference list`;
+}
+
+
 /** The current URL, or null when it could not be read. Never throws into a step. */
 async function currentUrl(runtime: BrowserRuntime): Promise<string | null> {
   const out = await runtime.getUrl();
@@ -253,6 +274,21 @@ export async function runJourney(
       continue;
     }
 
+    // How many elements this action's selector could plausibly have hit — counted BEFORE the
+    // action, which is the whole subtlety.
+    //
+    // Recorded, never refused. A union in a click is legitimate — `#results a, .result` taking
+    // the first of three results is exactly what a journey means — but a CSS comma resolves in
+    // DOCUMENT order rather than as a preference list, so "the first of three search results"
+    // and "the nav link that happened to come first" are the same event in a report that counts
+    // neither. One of those is a finding.
+    //
+    // Counted first because a click NAVIGATES. Asking afterwards resolves the selector against
+    // the destination page, so the number describes a page the step never acted on — a
+    // confidently wrong count, which is worse than none and is precisely the failure this whole
+    // note exists to prevent.
+    const ambiguity = await ambiguityNote(runtime, step);
+
     const out = await act(runtime, step, options.screenshotDir, random);
     if (step.action === "screenshot") screenshots.push(step.label);
     if (step.action === "fill" || step.action === "select" || step.action === "check") touchedForm = true;
@@ -272,7 +308,8 @@ export async function runJourney(
         index, action: step.action, label, outcome: "passed", severity: "info",
         category: null, check: null,
         // `describeAction` exists so a `fill` can never render its own value.
-        detail: describeAction(step), expected: null, observed: landedOn, durationMs: now() - stepStarted,
+        detail: ambiguity === null ? describeAction(step) : `${describeAction(step)} — ${ambiguity}`,
+        expected: null, observed: landedOn, durationMs: now() - stepStarted,
       });
       log(`  ✓ ${label}`);
       continue;

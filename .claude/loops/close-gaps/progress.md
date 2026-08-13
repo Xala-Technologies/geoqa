@@ -1233,6 +1233,47 @@ Docs: gaps **A-9** closed; PRD **R-154 / R-155**.
 
 Gate: lint clean · boundaries clean (122 modules / 477 deps) · **1350 tests at 100%** · e2e 30/30.
 
+## Slice 20 — C-9 and C-11, the two design gaps left open in the journey engine
+
+Both were deliberately deferred out of a slice about clicking, and both are decisions rather
+than fixes — which is why they were held.
+
+**C-9: an action step no longer spends a navigation budget on a missing element.**
+`DEFAULT_ACTION_TIMEOUT_MS = 8_000` on `click`/`fill`/`selectOption`/`check`; navigations keep
+the long budget, because a cold page behind a residential proxy legitimately takes ten seconds
+and shortening *that* would invent timeouts on healthy sites. The 30 seconds this replaces were
+not merely slow: `ERROR` outranks `FAIL`, so waiting them out ended by relabelling *the search
+box is not visible* as *we could not verify*.
+
+The other candidate fix — letting a `critical` visibility check be fatal for later steps naming
+the same selector — was REFUSED and the refusal is recorded: it makes one step's verdict change
+another step's execution, which is a conditional step in disguise, and the DSL rejects those.
+
+**C-11: an ambiguous action is RECORDED, not refused.** Playwright's strict mode is the obvious
+fix and it is wrong here — `#results a, .result` taking the first of three results is exactly
+what that journey means, and strict mode errors on a correct journey. The actual defect is a
+report that reads identically whether the click hit the first search result or the nav link that
+happened to come first in the document. So `visibleCount` was added across the browser seam and
+`runJourney` appends the count to the step detail when it exceeds one.
+
+Three properties are deliberate: **visible** elements only (a click cannot land on a hidden one);
+silent at exactly one (a note on every row buries the rows that matter); and silent when the
+engine cannot count — `agent-browser` has no visible-only count and refuses by name rather than
+handing back its hidden-inclusive `get count`, which would make an unambiguous click look
+ambiguous.
+
+Docs: gaps **C-9** and **C-11** closed; PRD **R-156 / R-157**; AGENTS invariants **27 / 28**.
+
+**Two defects the self-review caught in my own diff, both fixed before merge.** The count was
+asked for AFTER the action ran — and a click navigates, so the selector was resolving against
+the destination page and the number described a page the step never acted on. A confidently
+wrong count is worse than none and is precisely what this note exists to prevent; it now runs
+before `act` and has a regression test that fails under the old ordering. Separately,
+`visibleCount` had been inserted between `isVisible`'s doc comment and `isVisible`, so a comment
+about confirming a negative visibility reading was documenting a counter.
+
+Gate: lint clean · boundaries clean · **1358 tests at 100%** · e2e 30/30.
+
 ## Next
 
 Slice 19 only, and it is **blocked on a decision rather than on work**: a static UI has no auth

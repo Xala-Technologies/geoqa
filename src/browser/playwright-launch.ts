@@ -70,6 +70,7 @@ export interface PlaywrightContextOptions {
   saveStatePath?: string | null;
   /** Override the visibility budget. Lowered in tests so they stay fast. */
   visibilityTimeoutMs?: number;
+  actionTimeoutMs?: number;
 }
 
 /**
@@ -154,7 +155,25 @@ export function playwrightProxy(
  */
 export const DEFAULT_VISIBILITY_TIMEOUT_MS = 5_000;
 
-const asLocator = (page: Page, selector: string, visibilityTimeoutMs: number): PwLocator => {
+/**
+ * How long an ACTION may wait, as against a navigation.
+ *
+ * Playwright's default is 30 seconds for everything, and that is right for `goto` — a slow
+ * market really can take twenty seconds, and a run that gave up early would report a site
+ * defect that is really a network. It is wrong for a click or a fill, and the cost was
+ * measured: J06 asserted `selector-visible` on a search box, the check correctly FAILED
+ * because digilist hides it at every profile width, and the `fill` on the same selector then
+ * waited the full thirty seconds for an element the run had already established was not there.
+ *
+ * The waste was the smaller half. `ERROR` outranks `FAIL`, so a clean, actionable finding —
+ * *the search box is not visible* — was reported as **"we could not verify"**, which sends a
+ * reader hunting for a broken proxy. Eight seconds is generous for an element that is present
+ * (a click waits for actionability, not for the network) and short enough that an absent one
+ * fails as a finding rather than as an outage.
+ */
+export const DEFAULT_ACTION_TIMEOUT_MS = 8_000;
+
+const asLocator = (page: Page, selector: string, visibilityTimeoutMs: number, actionTimeoutMs: number): PwLocator => {
   const all = page.locator(selector);
   const one = all.first();
   // The element an ACTION should reach. See the comment on `click` below.
@@ -214,15 +233,26 @@ const asLocator = (page: Page, selector: string, visibilityTimeoutMs: number): P
      * document order among the visible matches, which is gaps C-11 and is a
      * journey-authoring rule, not something an adapter can decide.
      */
-    click: () => visible.click(),
+    click: () => visible.click({ timeout: actionTimeoutMs }),
     ariaSnapshot: () => one.ariaSnapshot(),
-    fill: (value) => visible.fill(value),
-    selectOption: (values) => visible.selectOption(values),
-    check: () => visible.check(),
+    fill: (value) => visible.fill(value, { timeout: actionTimeoutMs }),
+    selectOption: (values) => visible.selectOption(values, { timeout: actionTimeoutMs }),
+    check: () => visible.check({ timeout: actionTimeoutMs }),
+    /**
+     * How many VISIBLE elements this selector matches.
+     *
+     * Recorded so the evidence can say "clicked 1 of 12 matching elements". A union is
+     * legitimate in a click — `#results a, .result` matching three results and taking the first
+     * is exactly what a journey means — so this cannot refuse. But a CSS comma resolves in
+     * document order rather than as a preference list, and the difference between "the first of
+     * three search results" and "the nav link that happened to come first" is invisible in a
+     * report that records neither. See gaps C-11.
+     */
+    visibleCount: () => all.filter({ visible: true }).count(),
   };
 };
 
-const asPage = (page: Page, visibilityTimeoutMs: number): PwPage => ({
+const asPage = (page: Page, visibilityTimeoutMs: number, actionTimeoutMs: number): PwPage => ({
   goto: async (url) => {
     await page.goto(url);
   },
@@ -232,7 +262,7 @@ const asPage = (page: Page, visibilityTimeoutMs: number): PwPage => ({
   title: () => page.title(),
   url: () => page.url(),
   evaluate: (expression) => page.evaluate(expression),
-  locator: (selector) => asLocator(page, selector, visibilityTimeoutMs),
+  locator: (selector) => asLocator(page, selector, visibilityTimeoutMs, actionTimeoutMs),
   waitForSelector: async (selector) => {
     await page.waitForSelector(selector);
   },
@@ -381,7 +411,7 @@ export async function openContext(browser: Browser, options: PlaywrightContextOp
   });
 
   return {
-    page: asPage(page, options.visibilityTimeoutMs ?? DEFAULT_VISIBILITY_TIMEOUT_MS),
+    page: asPage(page, options.visibilityTimeoutMs ?? DEFAULT_VISIBILITY_TIMEOUT_MS, options.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS),
     context: asContext(context),
     observed,
     deviceName: options.deviceName,

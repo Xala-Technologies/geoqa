@@ -346,3 +346,19 @@ describe("input", () => {
     expect(out.command).toBe("fill #email <redacted>");
   });
 });
+
+describe("visibleCount", () => {
+  it("REFUSES rather than answering with a hidden-inclusive count", async () => {
+    // `get count` includes hidden elements, so returning it here would report an unambiguous
+    // click as having had ten candidates. A named refusal costs the caller a note in the
+    // report; a wrong number costs them a wrong conclusion about their own page.
+    const { rt, calls } = make({ count: 12 });
+    const out = await rt.visibleCount("nav a");
+    expect(out.ok).toBe(false);
+    expect(out.ok === false && out.failure.kind).toBe("reported");
+    expect(out.stderr).toContain("visible-only");
+    expect(out.stderr).toContain("--engine playwright");
+    // And it does not reach the browser at all — no cost, no misleading argv in the evidence.
+    expect(calls).toEqual([]);
+  });
+});

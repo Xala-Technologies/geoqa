@@ -27,6 +27,7 @@ const locator = (over: Partial<PwLocator> = {}): PwLocator => ({
   innerText: () => Promise.resolve("body text"),
   count: () => Promise.resolve(9),
   isVisible: () => Promise.resolve(true),
+  visibleCount: () => Promise.resolve(1),
   click: () => Promise.resolve(),
   ariaSnapshot: () => Promise.resolve("- heading"),
   fill: () => Promise.resolve(),
@@ -846,5 +847,22 @@ describe("VITALS_EXPRESSION", () => {
       { interactionId: 12, duration: 232 },
     ]);
     expect((await evaluateVitals({ window: win })).inp).toBe(232);
+  });
+});
+
+describe("visibleCount", () => {
+  it("reports how many VISIBLE elements a selector matched", async () => {
+    // For the evidence, not for a check: it lets a report tell "the first of three search
+    // results" from "the nav link that happened to come first in the document".
+    const built = session({ locator: { visibleCount: () => Promise.resolve(7) } });
+    expect(dataOf(await runtimeOver(built).visibleCount("nav a"))).toBe(7);
+  });
+
+  it("passes a browser failure through rather than reporting a count of zero", async () => {
+    // Zero visible elements and "we could not count" are different facts, and only one of
+    // them says anything about the page.
+    const built = session({ locator: { visibleCount: () => Promise.reject(new Error("detached")) } });
+    const out = await runtimeOver(built).visibleCount("nav a");
+    expect(out.ok).toBe(false);
   });
 });

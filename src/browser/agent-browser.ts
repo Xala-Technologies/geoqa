@@ -161,6 +161,33 @@ export class AgentBrowserRuntime implements BrowserRuntime {
     return mapOk(await this.run(["get", "url"]), (d) => toText(d, "url"));
   }
 
+  /**
+   * REFUSED on this engine, by name, rather than approximated with `count`.
+   *
+   * agent-browser 0.34.0 has `get count`, which counts every match including hidden ones, and
+   * no visible-only variant. Returning that number would be worse than returning nothing: the
+   * whole point of the reading is to say how many elements a click could plausibly have hit,
+   * and on the digilist nav that is 7 of 12 — so a count of 12 would make an unambiguous click
+   * look ambiguous and an ambiguous one look worse than it is.
+   *
+   * A named failure is the established shape for a primitive an engine does not have (see
+   * `HAR_NOT_ARMED`). The evidence records the absence rather than a wrong number.
+   */
+  visibleCount(selector: string): Promise<BrowserResult<number>> {
+    const detail =
+      "agent-browser has no visible-only element count: `get count` includes hidden elements, and reporting that as the number a click could have hit would make an unambiguous click look ambiguous and an ambiguous one look worse than it is. Use --engine playwright for this reading.";
+    return Promise.resolve({
+      // `reported` is the kind a refusal takes throughout — a well-formed answer of "no", not a
+      // transport failure. Same shape `playwright.ts` uses for HAR and mid-session `setDevice`.
+      ok: false,
+      failure: { kind: "reported", detail, exitCode: null, signal: null },
+      stdout: "",
+      stderr: detail,
+      durationMs: 0,
+      command: `agent-browser:visibleCount ${selector}`,
+    });
+  }
+
   async count(selector: string): Promise<BrowserResult<number>> {
     return mapOk(await this.run(["get", "count", selector]), toCount);
   }
