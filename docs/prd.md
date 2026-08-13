@@ -515,6 +515,20 @@ unmeasured guess until EXP-007 runs.
 - **R-179** The console is a multi-view application, not a page. Wayfinding carries the
   counts that mean "somebody has to look at this", and a count of zero is not rendered: a
   badge reading 0 competes with the badges that mean something.
+- **R-180** The console answers *what should I fix*, not only *what happened*. Findings
+  are aggregated by the CHECK that produced them, because that is the unit somebody
+  fixes — a check failing every run of its journey and a check failing once are the same
+  row in a run list and completely different news. The rate's denominator is runs of the
+  same journey, since a check that only exists in one journey did not "fail 4 of 32
+  times".
+- **R-181** Every run is addressable and drillable. A run detail carries every confidence
+  axis rather than the overall, both geography axes with requested beside observed, the
+  failing checks, and the seed and evidence id that make it repeatable — a run that
+  cannot be repeated is a claim rather than a measurement.
+- **R-182** Sorting a `Measured<T>` puts absences LAST in both directions. Ordering an
+  unmeasured LCP as `0` would put every run the engine could not read at the top of
+  "fastest" — the conflation the whole system refuses, at the exact moment somebody is
+  looking for the fastest page.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never

@@ -19,6 +19,57 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — The console answers "what should I fix" now
+
+The dashboard could count problems and could not name one. `RunRecord` has always kept the
+LABELS of the checks that produced a finding — the one piece of per-finding detail the run
+index keeps, because it is what makes regression detection possible — and `toRunView` threw
+them away. So the UI showed `2 findings` and nothing about *which* check, *where*, or *how
+often*.
+
+### Findings — the page a QA product exists to have
+
+Aggregated by the check that produced them, because that is the unit somebody fixes.
+Against 32 real runs it says, immediately:
+
+| Check | Rate | Meaning |
+|---|---|---|
+| `has a search box` | **100%** | fails every run of its journey — a standing defect |
+| `type the query` | **100%** | the cascade from it |
+| `page carries the market's language marker` | 50% | intermittent |
+
+Seven distinct problems, three that always fail, four intermittent. The rate's denominator
+is runs of the **same journey** — a check that only exists in `search` did not "fail 4 of 32
+times", it failed 4 of the 4 times it ran, which is a different claim and the one a reader
+would act on.
+
+### Run detail — every run is addressable
+
+`#/run/<id>`, linked from every row in every table. Every confidence axis rather than the
+overall, both geography axes with **requested beside observed**, the failing checks with
+whether they failed elsewhere, and a copy-pasteable command with the seed: a run that
+cannot be repeated is a claim rather than a measurement.
+
+The overall confidence figure now names the axis that capped it. A run at 39 is not "39%
+good" — it is one axis at 0 dragging four at 100, and printing the number without the rule
+leaves most readers assuming an average.
+
+### Interaction
+
+Rows navigate. Columns sort. **Absences sort last in both directions** — ordering an
+unmeasured LCP as `0` would put every run the engine could not read at the top of
+"fastest", which is the conflation this whole system refuses, at the exact moment somebody
+is looking for the fastest page.
+
+### A React bug the testing caught
+
+Sorting descending worked; clicking the same column again did nothing. `Th` was defined
+*inside* the render function, so React saw a new component type every render and remounted
+the header — the second click landed on a node that had already been replaced. A component
+defined during render is one that cannot hold state or receive a second event.
+
+---
+
 ## 2026-08-13 — The dashboard became an application, and running it found a bug
 
 Asked to run the app, I did — against 32 real runs across `xala.no` and `digilist.no` —
