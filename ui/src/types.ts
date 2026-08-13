@@ -50,9 +50,27 @@ export interface PageAcrossMarkets {
   divergentMarkets: string[];
 }
 
+export type TrendDirection = "improving" | "worsening" | "stable" | "insufficient-data";
+
+export interface TrendSeries {
+  target: string;
+  marketId: string;
+  metric: "lcp" | "cls" | "ttfb" | "inp" | "confidence";
+  /** Gaps included. A null value is a GAP and must render as one, never interpolated. */
+  points: { at: string; runId: string; value: number | null }[];
+  measuredPoints: number;
+  earlier: Measured<number>;
+  later: Measured<number>;
+  direction: TrendDirection;
+  reason: string;
+}
+
 export interface DashboardView {
   generatedAt: string;
   runs: RunView[];
+  /** Only the series with a real direction. `allTrends` has the rest. */
+  trends: TrendSeries[];
+  allTrends: TrendSeries[];
   summary: {
     total: number;
     byVerdict: Record<string, number>;

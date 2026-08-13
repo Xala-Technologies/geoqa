@@ -1118,9 +1118,66 @@ Docs: PRD **R-147 … R-150**.
 Gate: lint clean · boundaries clean (117 modules / 462 deps) · **1291 tests at 100%**
 lines/statements/functions · e2e **30/30** · `pnpm ui:build` clean.
 
+## Slice 18 · Trends — DONE
+
+Per-metric time series for LCP, CLS, TTFB, INP and confidence, grouped by target × market, in
+the dashboard and rendered in the UI.
+
+The whole file is about **not inventing a trend**, because a time series is the easiest place in
+this system to produce a confident lie — two points make a line, three make a story:
+
+- **No interpolation.** An unmeasured run is a GAP. Drawing through it would fabricate the one
+  thing the reader is looking at.
+- **A direction is refused below six measured points**, so each half has three and a median in
+  each half is not just the middle of two.
+- **Both a relative AND an absolute floor** must be cleared.
+- **Gaps are counted in the reason**, so a trend over 6 of 40 runs says so.
+- **Confidence is inverted** in its own builder rather than behind a flag, because rising
+  confidence is an improvement and a boolean argument at a call site is how that gets forgotten.
+
+### Reading real output caught a flaw in my own design
+
+The first live build reported `ttfb 1.05 → 0.9` as **improving**. That is 14%, comfortably past
+the 10% relative floor — and 0.15ms in absolute terms. Nobody has ever improved a page by
+0.15ms.
+
+So a direction now has to clear an absolute floor too, per metric: 10ms of latency, 0.01 of CLS
+(a tenth of the "good" budget), 2 points of confidence. Re-run, the same series reports:
+
+```
+ttfb  stable  1.05 → 0.9, a change of 0.15 is below the 10 nobody would act on
+inp   insufficient-data  0 measured point(s) of 8 (8 gap(s)) — at least 6 are needed
+```
+
+Nought of five series now qualify as notable, which is the correct answer for eight identical
+runs against a local fixture.
+
+### The drift test earned its keep on its first real change
+
+Adding `trends` to the view model failed `view.test.ts` immediately, because the UI's mirrored
+types did not have it. Exactly what it was written for — without it the dashboard would have
+rendered a blank panel nobody noticed was empty.
+
+### And a dead branch removed rather than excluded
+
+Coverage found an unreachable null check in `median`: after the six-point guard both halves
+provably hold three readings. Defensive code with no reachable failure is not defence, it is a
+claim that the guard above it might not hold — so `median` now takes a non-empty tuple and the
+branch is gone.
+
+Docs: PRD **R-151 … R-153**.
+
+Gate: lint clean · boundaries clean (120 modules / 470 deps) · **1313 tests at 100%**
+lines/statements/functions · e2e **30/30** · `pnpm ui:build` clean.
+
 ## Next
 
-Slice 18's time series, and slice 19 once the auth question is decided. Slice 16 was an approval gate on React vs Electron; the criterion
+Slice 19 only, and it is **blocked on a decision rather than on work**: a static UI has no auth
+surface, which is why it needs no server, and adding auth means running one. Everything else in
+the loop is closed.
+
+Outstanding for the owner: the ≥90% city-match threshold, a vendor-side traffic cap at Decodo,
+and the 100-session milestone (unblocked now that B-12 is fixed). Slice 16 was an approval gate on React vs Electron; the criterion
 recorded in `task.md` is whether it needs filesystem access beyond a served directory, and it
 does not — evidence is files under a root, and a static app can read them over HTTP. React,
 and the reasoning goes in the commit. The milestone is unblocked and

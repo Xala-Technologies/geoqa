@@ -174,7 +174,7 @@ against, 90% is likely unreachable and the threshold is wrong.
 - [x] **17 · Frontend, the geographic view.** Latency by market + verdict divergence. Per-market matrix with city
       verdicts and the TTFB spread. This is what makes "your local numbers are
       4–7× optimistic" legible at a glance.
-- [~] **18 · Frontend, trends.** Regressions done; a per-metric time series is not.
+- [x] **18 · Frontend, trends.** Per-metric series with a refusal to invent a direction.
 - [ ] **19 · Auth and tenant onboarding.** BLOCKED on a decision: a static UI has no auth
       surface, and adding one means running a server. See progress.md. Only after the above works for one
       tenant end to end.

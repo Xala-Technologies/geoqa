@@ -95,6 +95,42 @@ export function App(): JSX.Element {
         </section>
       )}
 
+      {view.trends.length > 0 && (
+        <section>
+          <h2>Trends</h2>
+          <p className="hint">
+            Only series with a real direction. A move inside the 10% noise floor is called stable, and a series with
+            fewer than six measured points reports insufficient data rather than a direction — {view.allTrends.length}{" "}
+            series were computed and {view.allTrends.length - view.trends.length} did not qualify.
+          </p>
+          <table>
+            <thead>
+              <tr><th>metric</th><th>market</th><th>page</th><th>earlier</th><th>later</th><th>points</th><th>direction</th></tr>
+            </thead>
+            <tbody>
+              {view.trends.map((t) => (
+                <tr key={`${t.metric}${t.marketId}${t.target}`}>
+                  <td>{t.metric}</td>
+                  <td>{t.marketId}</td>
+                  <td><code>{t.target}</code></td>
+                  <td><MeasuredValue value={t.earlier} /></td>
+                  <td><MeasuredValue value={t.later} /></td>
+                  {/* Measured points out of total, so a trend over 6 of 40 runs is visible as one. */}
+                  <td title={t.reason}>
+                    {t.measuredPoints}/{t.points.length}
+                  </td>
+                  <td>
+                    <span className={`pill ${t.direction === "worsening" ? "bad" : t.direction === "improving" ? "good" : "unknown"}`}>
+                      {t.direction}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       {view.site.widestLatencyGaps.length > 0 && (
         <section>
           <h2>Latency by market</h2>
