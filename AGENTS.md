@@ -423,6 +423,15 @@ is written out rather than taken from Playwright's version-synced descriptor: a 
 is a declaration, and one that shifted with a dependency upgrade would make two runs
 different subjects under one name.
 
+**37. The concurrency bound and its pool live in `run/pool.ts`, which imports NOTHING.**
+Both execution modes use it — `runMatrix` and `geoQaMatrixWorkflow` — because invariant
+12 does not accept two copies of one rule. It has no imports because workflow code runs
+in a deterministic sandbox and cannot pull in the graph `run/matrix.ts` reaches through
+`executeRun`; the shared part has to be the part that touches nothing. `boundedPool`'s
+contract is that `work` never throws: a rejected task would reject the pool and leave
+every queued scenario unattempted, so the gaps would be indistinguishable from markets
+that were fine.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

@@ -19,6 +19,46 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — The durable path stops disagreeing with the local one
+
+The Temporal matrix workflow ran its children **sequentially**, with a comment explaining
+why: concurrency was unmeasured (EXP-007), each profile costs its own Chrome process,
+and picking a parallelism number before measuring is how the first OOM happens.
+
+All of that was true when it was written. **EXP-007 has since run** — 100% completion,
+verdict agreement and egress-held at 2, 4, 8, 12 and 16 — and the in-process runner
+adopted `DEFAULT_MATRIX_CONCURRENCY = 4` on the strength of it. The durable path kept
+obeying a caution whose reason no longer existed, and would have run a sweep four times
+slower than the local one for no stated reason: a divergence discovered as a mystery
+rather than read as a decision.
+
+Invariant 12 says *two execution modes, one implementation*. Both now share
+`run/pool.ts`, which holds the bound, the resolver and the loop — and **has no imports
+at all**. That is the design constraint rather than a tidiness preference: workflow code
+runs in a deterministic sandbox and cannot pull in the graph `run/matrix.ts` reaches
+through `executeRun`, so the shared part has to be the part that touches nothing.
+`runMatrix` lost its hand-rolled worker loop to it.
+
+Two properties are asserted rather than assumed:
+
+- **Concurrency, proven by interleaving** rather than by wall clock — with a bound above
+  1 the second child starts before the first finishes, so the activity log is not two
+  clean blocks.
+- **`concurrency: 1` restores the old sequential shape exactly**, which is what makes the
+  bound real rather than decorative. A pool that silently ran everything at once would
+  still produce the right results.
+
+The pool returns results in *completion* order and the workflow sorts them back, because
+a matrix whose output shuffled by timing would make two identical sweeps look different
+and neither of them wrong.
+
+**Still open on the durable path:** nothing constructs a Temporal client, so running the
+matrix durably still means writing one by hand. That is what B-4's last residue (the
+durable path runs one attempt) and B-1's (it reads cooldowns and never writes one) are
+also waiting on — all three want a durable run exercised end to end.
+
+---
+
 ## 2026-08-13 — Mobile profiles are finally mobile, and a second false choice dissolves
 
 **C-8 is closed, and like C-15 before it, the entry had framed a choice that was not

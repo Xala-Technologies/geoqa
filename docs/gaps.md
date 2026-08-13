@@ -1949,15 +1949,32 @@ because at matrix scale that is one real form per scenario and an announcement
 alone arrives too late. Exit 1 on `FAIL`/`ERROR`, which deliberately includes an
 executed matrix with zero scenarios: zero scenarios is zero evidence.
 
-**Still open: the durable path.** `geoQaMatrixWorkflow` exists and is tested, and
-**no client starts a workflow at all** — verified: nothing outside
-`temporal/worker.ts` constructs a Temporal `Connection` or `Client`. Running the
-matrix durably still means writing a client by hand, and that path is still
-**sequential** (`workflows.ts:118-127`), so the two execution modes now disagree
-about concurrency as well as about `--repeat`
-([B-4](#b-4--finding-reproducibility-is-fed-the-durable-path-and-runjson-are-not)).
-That divergence is the thing to watch: invariant 12 says two execution modes, one
-implementation.
+**CLOSED: the concurrency divergence, and the reason it existed had expired.** The
+workflow ran children sequentially with a comment saying concurrency was unmeasured
+(EXP-007), each profile costs its own Chrome process, and picking a parallelism number
+before measuring is how the first OOM happens. All true when written. EXP-007 has since
+run — 100% completion, verdict agreement and egress-held at 2, 4, 8, 12 and 16 — and
+the in-process runner adopted `DEFAULT_MATRIX_CONCURRENCY = 4` on that evidence, while
+this path kept obeying a caution whose reason no longer existed.
+
+Both modes now share **one** implementation, which is what invariant 12 asks for.
+`run/pool.ts` holds the bound, the resolver and the loop, and has **no imports at all**
+— deliberately, because workflow code runs in a deterministic sandbox and cannot pull in
+the graph `run/matrix.ts` reaches through `executeRun`. `runMatrix` lost its hand-rolled
+worker loop to it; the boundary linter confirms the workflow's import is legal.
+
+The pool returns results in COMPLETION order and the workflow sorts them back, because
+a matrix whose output shuffled by timing would make two identical sweeps look different
+and neither of them wrong. Proven by INTERLEAVING rather than by wall clock, with a
+second test showing `concurrency: 1` restores the old sequential shape exactly — the
+bound is real rather than decorative.
+
+**Still open: no client starts a workflow.** Verified: nothing outside
+`temporal/worker.ts` constructs a Temporal `Connection` or `Client`, so running the
+matrix durably still means writing a client by hand. That is the remaining half, and it
+is what the last of B-4's residue (the durable path runs one attempt) and B-1's (it
+reads cooldowns and never writes one) are also waiting on. All three want the same
+thing — a durable run exercised end to end — which needs a worker actually running.
 
 ### D-3 · Closed: the JSON contract carries a version
 

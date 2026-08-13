@@ -482,6 +482,12 @@ unmeasured guess until EXP-007 runs.
   declaration of a test subject, and one that changed with a dependency upgrade would
   make two runs different subjects under the same name — the same reasoning that puts
   the seed on the `RunSpec`.
+- **R-172** Two execution modes share **one** implementation of any rule they both
+  obey. The concurrency bound and the pool that enforces it live in a module with no
+  imports, because a durable run's code executes in a deterministic sandbox and cannot
+  reach the graph a local run does — so the shared part has to be the part that touches
+  nothing. A durable sweep four times slower than the local one, for no stated reason,
+  is a divergence discovered as a mystery rather than read as a decision.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never
