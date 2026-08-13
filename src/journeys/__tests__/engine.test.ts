@@ -699,7 +699,7 @@ describe("mergeAttempts", () => {
       attempt([attemptStep(0, "always", "failed"), attemptStep(1, "sometimes", "passed")]),
       attempt([attemptStep(0, "always", "failed"), attemptStep(1, "sometimes", "passed")]),
     ]);
-    expect(merged.occurrences).toEqual({ always: 3, sometimes: 1 });
+    expect(merged.occurrences).toEqual({ "0:always": 3, "1:sometimes": 1 });
   });
 
   it("does not count a skipped step as an occurrence — it was never executed", () => {
@@ -710,15 +710,18 @@ describe("mergeAttempts", () => {
     expect(merged.occurrences).toEqual({});
   });
 
-  it("NEVER lets one attempt push a shared label past the attempt count", () => {
-    // Two steps can carry the same label, and findings look occurrences up BY
-    // label. Counting failing steps rather than attempts would report 2 of 1,
-    // and `occurrences === attempts` — status `reproduced` — would then be
-    // unreachable for exactly the checks that repeat.
+  it("keeps two steps that SHARE a label apart, rather than merging their counts", () => {
+    // An unlabelled assert's label is its check kind, so a journey with two `text-present`
+    // asserts has two steps called the same thing. Keyed by label alone they shared one count:
+    // one step failing every attempt and the other never would read as both failing every
+    // attempt — `reproduced` on a step never seen to fail twice. And within a single attempt
+    // the two would sum to 2 of 1, making `occurrences === attempts` unreachable for exactly
+    // the checks that repeat.
     const merged = mergeAttempts([
       attempt([attemptStep(0, "title-exists", "failed"), attemptStep(1, "title-exists", "failed")]),
+      attempt([attemptStep(0, "title-exists", "failed"), attemptStep(1, "title-exists", "passed")]),
     ]);
-    expect(merged.occurrences).toEqual({ "title-exists": 1 });
+    expect(merged.occurrences).toEqual({ "0:title-exists": 2, "1:title-exists": 1 });
   });
 
   it("returns a single attempt unchanged, with its occurrences counted over one attempt", () => {
@@ -729,7 +732,7 @@ describe("mergeAttempts", () => {
     });
     const merged = mergeAttempts([only]);
     expect(merged.result).toEqual(only);
-    expect(merged.occurrences).toEqual({ b: 1 });
+    expect(merged.occurrences).toEqual({ "1:b": 1 });
   });
 
   it("sums the wall clock, keeps the LAST attempt's screenshots, and unions what was touched", () => {

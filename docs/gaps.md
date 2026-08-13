@@ -656,7 +656,7 @@ re-run, so that needs a guard.
 Where: `browser/playwright.ts` (`harPendingDetail`, `HAR_NOT_ARMED`),
 `browser/playwright-launch.ts`, `run/context.ts`, `run/stages.ts`.
 
-### B-4 · Finding reproducibility is fed; the durable path and `run.json` are not
+### B-4 · Reproducibility is fed and now CORROBORATED; only the durable path is left
 
 **Closed for `journey run`.** `--repeat N` runs the journey N times inside one
 browser and one network session, `mergeAttempts` collapses the attempts taking the
@@ -665,23 +665,38 @@ per-label `occurrences` into `findingsFromSteps`. 3-of-3 lands near 99 and repor
 `reproduced`; 1-of-3 lands far below the flat 92; a single-attempt run behaves
 exactly as before.
 
-Unchanged since the last revision, in three narrower places:
+**CLOSED: `run.json` corroborates the count.** `CollectInput.reproducibility` carries
+the attempt count and the per-step occurrences into the evidence, and `executeRun`
+derives them **once** for both consumers. That last part is the point: the result
+carries them so a finding can say `reproduced`, and the package carries them so that
+claim can be checked rather than believed — and two derivations of one number are two
+chances for them to disagree, which would leave no way to tell which is lying. An
+`executeRun` test asserts the two agree. Omitted entirely on a single run, because a
+`1` reads as a decision not to repeat rather than as the absence of one. `steps`
+remains the MERGED list, and the comment says so, so nobody reads `attempts: 3` as
+three step lists.
 
-- **`run.json` cannot corroborate the count.** **Verified now**: `collectEvidence`
-  records the journey's `seed`, `writes`, `touchedForm` and `steps`, and no attempt
-  count. A `--repeat 3` run emits findings whose `reproducibility` says 3 while the
-  evidence package holds no trace of the other two attempts — and R-24 makes "can we
-  reproduce this?" a question the package itself must answer. `CollectInput` would
-  need to carry it.
+**CLOSED: occurrences are keyed per step, not per label.** `occurrenceKey(step)` is
+`${index}:${label}` — the index makes it correct, the label keeps it readable. Under
+the old label-only key, two steps sharing a label shared one count: an unlabelled
+assert's label is its check kind, so a journey with two `text-present` asserts merged
+them, and one failing every attempt beside one failing never read as *both* failing
+every attempt — `reproduced` on a step never seen to fail twice. Within a single
+attempt the same two summed to 2 of 1, which made `occurrences === attempts`
+unreachable for exactly the checks that repeat. Safe because a journey is
+deterministic (R-10), so index N is the same step in every attempt — the assumption
+`mergeAttempts` already makes when it takes the worst outcome at each index. The
+per-attempt `Set` that used to guard the sum is gone with it, rather than kept as a
+guard that can no longer fire.
+
+Still open in one place:
+
 - **The durable path still runs one attempt.** `runJourneyActivity` calls
   `executeJourney` once and has no repeat path; `assemble` forwards neither
   `attempts` nor `occurrences`, so a Temporal run's findings are all `observed`.
-  Two execution modes, one implementation — except here.
-- **Occurrences are keyed by step label, and labels are not unique.** An
-  unlabelled assert's label is its check kind, so two `text-present` asserts in one
-  journey would share one count. No shipped journey does this — verified across all
-  six — which makes it latent rather than active. A label unique per step index
-  would close it.
+  Two execution modes, one implementation — except here. Blocked with the rest of
+  [D-2](#d-2--the-in-process-matrix-runs-the-durable-one-still-cannot-be-started):
+  nothing starts a worker, so the path cannot be exercised end to end.
 
 ### B-5 · Rotation is detected, but only a PROVEN rotation
 

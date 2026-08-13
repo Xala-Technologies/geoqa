@@ -1274,6 +1274,41 @@ about confirming a negative visibility reading was documenting a counter.
 
 Gate: lint clean · boundaries clean · **1358 tests at 100%** · e2e 30/30.
 
+## Slice 21 — B-4: the evidence can corroborate its own reproducibility claim
+
+Two code-closable residuals in B-4. Both are the same shape of defect the whole project is
+about: a number that nobody can check.
+
+**`run.json` records the attempt count and the per-step occurrences.** A `--repeat 3` run
+emitted findings whose `reproducibility` said 3 while the evidence package held no trace of the
+other two attempts — and R-24 makes "can we reproduce this?" a question the package itself must
+answer. `executeRun` now derives `{attempts, occurrences}` **once** and hands it to both
+`collectEvidence` and `assembleResult`, with a test asserting the two agree. Deriving it twice
+would be two chances to disagree, and a finding claiming 3-of-3 beside a package recording
+2 attempts leaves no way to tell which is lying. Omitted entirely on a single run: a `1` reads
+as a decision not to repeat rather than as the absence of one.
+
+**Occurrences are keyed by `occurrenceKey(step)` = `index:label`, not by label alone.** An
+unlabelled assert's label is its check kind, so a journey with two `text-present` asserts had
+two steps sharing one count — one failing every attempt beside one failing never read as *both*
+failing every attempt, i.e. `reproduced` on a step never seen to fail twice. Within a single
+attempt the two summed to 2 of 1, which made `occurrences === attempts` unreachable for exactly
+the checks that repeat. Latent rather than active (no shipped journey does it), and now closed
+by construction rather than by a naming convention nobody can enforce.
+
+Sound because a journey is deterministic (R-10), so index N is the same step in every attempt —
+the assumption `mergeAttempts` already makes when it takes the worst outcome at each index. The
+per-attempt `Set` that guarded the old sum is deleted with it rather than kept as a guard that
+can no longer fire.
+
+**Still open in B-4:** the durable path runs one attempt. That is blocked with D-2 — nothing
+starts a Temporal worker, so the path cannot be exercised end to end.
+
+Docs: gaps **B-4** narrowed to its one blocked residual; PRD **R-158 / R-159**; AGENTS
+invariant **29**.
+
+Gate: lint clean · boundaries clean · **1361 tests at 100%** · e2e 30/30.
+
 ## Next
 
 Slice 19 only, and it is **blocked on a decision rather than on work**: a static UI has no auth

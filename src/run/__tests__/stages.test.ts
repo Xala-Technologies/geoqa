@@ -193,7 +193,7 @@ describe("assembleResult reproducibility", () => {
   });
 
   it("marks a step that failed in EVERY attempt as reproduced, at high confidence", async () => {
-    const result = await assemble({ attempts: 3, occurrences: { "has a primary heading": 3 } });
+    const result = await assemble({ attempts: 3, occurrences: { "0:has a primary heading": 3 } });
     expect(result.findings[0]?.status).toBe("reproduced");
     expect(result.findings[0]?.confidence).toBeGreaterThan(95);
   });
@@ -201,8 +201,8 @@ describe("assembleResult reproducibility", () => {
   it("pulls a one-in-three failure DOWN rather than reporting it as certain", async () => {
     // The whole point of repeating on purpose: an intermittent failure is real
     // news, but "we saw it once" is a weaker claim than "it failed every time".
-    const once = await assemble({ attempts: 3, occurrences: { "has a primary heading": 1 } });
-    const always = await assemble({ attempts: 3, occurrences: { "has a primary heading": 3 } });
+    const once = await assemble({ attempts: 3, occurrences: { "0:has a primary heading": 1 } });
+    const always = await assemble({ attempts: 3, occurrences: { "0:has a primary heading": 3 } });
     expect(once.findings[0]?.status).toBe("observed");
     expect(once.findings[0]?.confidence).toBeLessThan(always.findings[0]?.confidence ?? 0);
   });
@@ -294,6 +294,31 @@ describe("collectEvidence", () => {
     geo: await geoOf(),
     journey,
     createdAt: "2026-08-12T00:00:00.000Z",
+  });
+
+  it("records the attempt count and per-step occurrences, so a finding's claim can be CHECKED", async () => {
+    // R-24 makes "can we reproduce this?" a question the package itself must answer. Without
+    // this, a `--repeat 3` run emitted findings whose `reproducibility` said 3 while the
+    // evidence held no trace of the other two attempts: a number nobody could check against
+    // anything, which is the shape of claim this project refuses everywhere else.
+    await collectEvidence(fakeRuntime(), {
+      ...(await input(journeyResult())),
+      reproducibility: { attempts: 3, occurrences: { "0:has a primary heading": 2 } },
+    });
+    const written = JSON.parse(readFileSync(path.join(root, "run_1", "run.json"), "utf8")) as {
+      journey: { reproducibility?: { attempts: number; occurrences: Record<string, number> } };
+    };
+    expect(written.journey.reproducibility).toEqual({ attempts: 3, occurrences: { "0:has a primary heading": 2 } });
+  });
+
+  it("omits the field entirely on a single run, rather than writing a 1", async () => {
+    // A `1` reads as a deliberate decision not to repeat. The absence of one is a different
+    // fact, and the caller supplies nothing rather than a default that would state the first.
+    await collectEvidence(fakeRuntime(), await input(journeyResult()));
+    const written = JSON.parse(readFileSync(path.join(root, "run_1", "run.json"), "utf8")) as {
+      journey: Record<string, unknown>;
+    };
+    expect("reproducibility" in written.journey).toBe(false);
   });
 
   it("writes only the PASS tier for a passing run", async () => {

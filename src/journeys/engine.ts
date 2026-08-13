@@ -394,9 +394,28 @@ const OUTCOME_RANK: Record<StepOutcome, number> = { errored: 3, failed: 2, passe
 export interface MergedAttempts {
   /** One result standing for the whole set: the worst reading of every step. */
   result: JourneyResult;
-  /** Per step label, in how many attempts that step failed or errored. */
+  /** Per `occurrenceKey`, in how many attempts that step failed or errored. */
   occurrences: Record<string, number>;
 }
+
+/**
+ * The key an occurrence count is filed under: the step's INDEX and its label.
+ *
+ * The index is what makes it correct and the label is what makes it readable. Keyed by label
+ * alone — which is what this used to do — two steps sharing a label share one count, and an
+ * unlabelled assert's label is its check kind, so a journey with two `text-present` asserts
+ * silently merges them. One failing in every attempt and the other in none then reads as both
+ * failing in every attempt: `reproduced` on a step that was never seen to fail twice.
+ *
+ * No shipped journey has ever done that — all six were checked — which is why this was latent
+ * rather than active. It is closed by construction now rather than by a naming convention
+ * nobody can enforce.
+ *
+ * Safe because a journey is DETERMINISTIC (R-10): the same file produces the same steps in the
+ * same order, so index N is the same step in every attempt. That is the same assumption
+ * `mergeAttempts` already makes when it takes the worst outcome at each index.
+ */
+export const occurrenceKey = (step: { index: number; label: string }): string => `${step.index}:${step.label}`;
 
 /**
  * Collapse N attempts at the same journey into one result plus per-step
@@ -435,19 +454,23 @@ export function mergeAttempts(results: [JourneyResult, ...JourneyResult[]]): Mer
   });
 
   /**
-   * Counted per ATTEMPT, not per failing step, because a journey may carry two
-   * steps with the same label and `findingsFromSteps` looks occurrences up by
-   * label. Counting each failing step would let one attempt contribute 2, push
-   * occurrences past attempts, and make `occurrences === attempts` —
-   * i.e. status `reproduced` — unreachable for exactly the checks that repeat.
+   * One increment per attempt per step, which the KEY is what makes safe.
+   *
+   * This used to count into a per-attempt `Set` of labels first, because a label can repeat
+   * within one journey and counting each failing step would let a single attempt contribute 2
+   * — pushing occurrences past attempts and making `occurrences === attempts`, i.e. status
+   * `reproduced`, unreachable for exactly the checks that repeat. `occurrenceKey` carries the
+   * step's index, so a key appears at most once per attempt and the dedup has nothing left to
+   * do. Kept as a plain increment rather than a Set that can never fire: defensive code with no
+   * reachable failure is a claim that the guard above it might not hold.
    */
   const occurrences: Record<string, number> = {};
   for (const attempt of results) {
-    const failing = new Set<string>();
     for (const step of attempt.steps) {
-      if (step.outcome === "failed" || step.outcome === "errored") failing.add(step.label);
+      if (step.outcome !== "failed" && step.outcome !== "errored") continue;
+      const key = occurrenceKey(step);
+      occurrences[key] = (occurrences[key] ?? 0) + 1;
     }
-    for (const label of failing) occurrences[label] = (occurrences[label] ?? 0) + 1;
   }
 
   return {

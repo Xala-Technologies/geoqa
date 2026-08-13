@@ -8,7 +8,7 @@
  * — stays invisible. Same failure mode as agent-fleet's "the monitor has failed
  * more often than the monitored".
  */
-import type { StepResult } from "../journeys/engine.js";
+import { occurrenceKey, type StepResult } from "../journeys/engine.js";
 import type { EvidenceRef, Finding, FindingCategory, FindingSeverity } from "./types.js";
 
 /** Default category per check kind; a step's own `category` overrides it. */
@@ -80,7 +80,7 @@ export interface ClassifyContext {
   evidence: EvidenceRef[];
   /** How many times the whole journey ran, for reproducibility. */
   attempts?: number;
-  /** Per-step-label occurrence counts across those attempts. */
+  /** Occurrence counts across those attempts, keyed by `occurrenceKey`. */
   occurrences?: Record<string, number>;
 }
 
@@ -97,7 +97,9 @@ export function findingsFromSteps(steps: StepResult[], ctx: ClassifyContext): Fi
 
   for (const step of steps) {
     if (step.outcome === "passed" || step.outcome === "skipped") continue;
-    const occurrences = ctx.occurrences?.[step.label] ?? 1;
+    // Keyed by index AND label. A label alone merges two steps that happen to share one — see
+    // `occurrenceKey` — which reports `reproduced` for a step never seen to fail twice.
+    const occurrences = ctx.occurrences?.[occurrenceKey(step)] ?? 1;
     const reproducibility = { attempts, occurrences };
     findings.push({
       id: `${ctx.runId}-${String(step.index).padStart(2, "0")}`,
