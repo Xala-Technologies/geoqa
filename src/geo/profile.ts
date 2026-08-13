@@ -34,6 +34,10 @@ const DeviceSchema = z.object({
   viewport: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }),
   emulate: z.string().min(1).optional(),
   userAgent: z.string().min(1).optional(),
+  hasTouch: z.boolean().optional(),
+  // A positive number rather than an integer: 2.75 is a real device's ratio, and rounding it
+  // would change which `srcset` candidate a page picks — the one thing this option affects.
+  deviceScaleFactor: z.number().positive().optional(),
 });
 
 export const GeoProfileSchema = z.object({

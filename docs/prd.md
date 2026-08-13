@@ -472,6 +472,16 @@ unmeasured guess until EXP-007 runs.
   claim names. A page whose `lang` varies by `Accept-Language` is correct, and looks
   broken to a probe that never said what language it wanted — so a localization check
   runs under the market's own locale, which is what the profile already carries.
+- **R-170** A mobile profile presents a mobile IDENTITY without accepting a mobile
+  LAYOUT. `isMobile` is the only Playwright option that makes `window.innerWidth` a
+  property of the page's markup (980 without a viewport meta tag, 390 with one), and it
+  is the one never set; `userAgent`, `hasTouch` and `deviceScaleFactor` are independent
+  and are all declared. The viewport axis is the engine's most safety-critical, and
+  trading it for a user agent would be the wrong way round.
+- **R-171** A profile's user agent is **written out, not derived**. A profile is a
+  declaration of a test subject, and one that changed with a dependency upgrade would
+  make two runs different subjects under the same name — the same reasoning that puts
+  the seed on the `RunSpec`.
 - **R-25** Redaction happens **at write time**, not on export: URL credentials,
   sensitive query parameters, emails, and Norwegian national ID numbers.
 - **R-26** Proxy credentials are resolved from environment variables only, never

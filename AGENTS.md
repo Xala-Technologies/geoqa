@@ -414,6 +414,15 @@ a language is not writing it. And it runs under the market's locale: a site serv
 `lang` by `Accept-Language` is correct, and looks broken to a probe that never said
 what language it wanted — a mistake made three times now, recorded as gaps C-18.
 
+**36. A mobile profile takes the mobile IDENTITY and refuses the mobile LAYOUT.**
+`userAgent`, `hasTouch` and `deviceScaleFactor` are declared; `isMobile` never is,
+because it alone hands `window.innerWidth` to the page's markup — 980 without a
+viewport meta tag against the 390 the profile declares. The viewport is the axis this
+engine is most careful about, and a descriptor would trade it for a user agent. The UA
+is written out rather than taken from Playwright's version-synced descriptor: a profile
+is a declaration, and one that shifted with a dependency upgrade would make two runs
+different subjects under one name.
+
 ## Testing conventions
 
 - `src/**/__tests__/*.test.ts`. Helpers without a `.test.ts` suffix (e.g.

@@ -36,6 +36,8 @@ export interface PlaywrightContextOptions {
   coordinates: { latitude: number; longitude: number };
   viewport: { width: number; height: number };
   userAgent: string | null;
+  hasTouch: boolean | null;
+  deviceScaleFactor: number | null;
   /** A key of Playwright's `devices`, e.g. "Pixel 5". */
   deviceName: string | null;
   headed: boolean;
@@ -346,6 +348,12 @@ export async function openContext(browser: Browser, options: PlaywrightContextOp
     permissions: ["geolocation"],
     viewport: options.viewport,
     ...(options.userAgent ? { userAgent: options.userAgent } : {}),
+    // Touch and pixel density WITHOUT `isMobile`, which is the option that would hand
+    // `window.innerWidth` to the page's markup — 980 on a page with no viewport meta tag,
+    // 390 with one. Measured; see `DeviceProfile`. Spread conditionally so an unset profile
+    // field means "Playwright's default" rather than an explicit false.
+    ...(options.hasTouch !== null ? { hasTouch: options.hasTouch } : {}),
+    ...(options.deviceScaleFactor !== null ? { deviceScaleFactor: options.deviceScaleFactor } : {}),
     ...(options.restoreStatePath ? { storageState: options.restoreStatePath } : {}),
     ...(harPath
       ? {

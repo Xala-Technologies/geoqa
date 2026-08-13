@@ -235,6 +235,8 @@ export function playwrightContextOptions(
     coordinates: { latitude, longitude },
     viewport: profile.device.viewport,
     userAgent: profile.device.userAgent ?? null,
+    hasTouch: profile.device.hasTouch ?? null,
+    deviceScaleFactor: profile.device.deviceScaleFactor ?? null,
     deviceName: profile.device.emulate ?? null,
     headed: spec.headed,
     identity: spec.runId,

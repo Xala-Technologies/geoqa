@@ -38,6 +38,29 @@ export interface DeviceProfile {
   /** agent-browser `set device` name, when one applies. */
   emulate?: string;
   userAgent?: string;
+  /**
+   * Touch support and pixel density, declared WITHOUT a device descriptor.
+   *
+   * These exist because the choice gaps C-8 framed — full emulation, or a hand-maintained user
+   * agent — turned out to be a false one. Playwright treats `isMobile`, `hasTouch`,
+   * `deviceScaleFactor` and `userAgent` as independent context options; only `isMobile`
+   * introduces the layout viewport that made emulation unacceptable, by handing
+   * `window.innerWidth` to the page's own markup.
+   *
+   * Measured against a page with no viewport meta tag:
+   *
+   * | context | innerWidth | touch | mobile UA |
+   * |---|---|---|---|
+   * | viewport only | 390 | 0 | no |
+   * | viewport + userAgent + hasTouch | **390** | 1 | yes |
+   * | full `Pixel 5` descriptor | **980** | 1 | yes |
+   *
+   * So a profile can present a mobile identity to UA and touch detection while
+   * `window.innerWidth` stays exactly what the profile declared — which is the engine's most
+   * safety-critical axis and the reason `emulate` was reverted from all eight mobile profiles.
+   */
+  hasTouch?: boolean;
+  deviceScaleFactor?: number;
 }
 
 export interface GeoProfile {

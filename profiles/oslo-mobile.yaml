@@ -27,7 +27,30 @@ device:
   # mobile profile once rendered at 1280px while every other check passed, so
   # trading it for a nicer user agent is the wrong way round.
   #
-  # The cost is real and recorded in docs/gaps.md: without a descriptor these runs
-  # advertise a headless user agent. Fix that by verifying the viewport on the
-  # TARGET page, then restoring `emulate` — not by restoring it first.
+  # The cost that used to be recorded here — "these runs advertise a headless user
+  # agent" — is now paid, and NOT by restoring `emulate`. Measured against a page
+  # with no viewport meta tag:
+  #
+  #   context                            innerWidth  touch  mobile UA
+  #   viewport only (the old state)      390         0      no
+  #   viewport + userAgent + hasTouch    390         1      yes
+  #   full `Pixel 5` descriptor          980         1      yes
+  #
+  # Playwright treats `isMobile`, `hasTouch`, `deviceScaleFactor` and `userAgent` as
+  # INDEPENDENT context options, and only `isMobile` introduces the layout viewport.
+  # So the choice gaps C-8 framed — emulation or a hand-maintained UA — was a false
+  # one: this presents a real mobile identity to UA and touch detection while
+  # `window.innerWidth` stays exactly what this profile declares.
+  #
+  # The user agent is written out rather than taken from Playwright's own descriptor,
+  # which is version-synced with the shipped browser and would never go stale. That is
+  # deliberate: a profile is a DECLARATION of a test subject, and one that changed
+  # under you with a dependency upgrade would make yesterday's run and today's run
+  # different subjects wearing the same name — the same reason a RunSpec carries its
+  # seed. A real Android device in the wild lags the newest Chrome anyway.
+  userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  hasTouch: true
+  # 3 is a Pixel-class ratio. It changes which `srcset` candidate a page picks, and
+  # nothing else — the viewport stays 390 because `isMobile` is not set.
+  deviceScaleFactor: 3
 visitorType: anonymous
