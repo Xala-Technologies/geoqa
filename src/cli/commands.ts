@@ -270,12 +270,20 @@ export function loadProfileOrThrow(deps: CommandDeps, id: string): GeoProfile {
 
 // ── list ─────────────────────────────────────────────────────────────────
 
-export function profileList(deps: CommandDeps): { profiles: { id: string; label: string; country: string; city: string; device: string }[] } {
+export function profileList(deps: CommandDeps): {
+  profiles: { id: string; label: string; country: string; city: string; device: string; visitorType: string }[];
+} {
   const profiles = yamlFiles(profilesDir(deps)).map((file) => {
     const loaded = loadGeoProfile(path.join(profilesDir(deps), file));
-    if (!loaded.ok) return { id: file.replace(/\.yaml$/, ""), label: `INVALID: ${loaded.errors[0]}`, country: "?", city: "?", device: "?" };
+    if (!loaded.ok) {
+      // An unreadable profile is listed rather than skipped — a profile that
+      // vanished from a listing is how a market silently stops being covered — and
+      // its visitorType is "?" rather than a guess, because a default here would
+      // make it selectable by place.
+      return { id: file.replace(/\.yaml$/, ""), label: `INVALID: ${loaded.errors[0]}`, country: "?", city: "?", device: "?", visitorType: "?" };
+    }
     const p = loaded.value;
-    return { id: p.id, label: p.label, country: p.market.country, city: p.market.city, device: p.device.id };
+    return { id: p.id, label: p.label, country: p.market.country, city: p.market.city, device: p.device.id, visitorType: p.visitorType };
   });
   return { profiles };
 }
@@ -289,6 +297,16 @@ export interface PlaceSelection {
   country?: string;
   city?: string;
   device?: string;
+  /**
+   * Which kind of visitor the place should resolve to. Defaults to `anonymous`.
+   *
+   * A first-time visitor is the neutral subject: it carries nothing in, keeps
+   * nothing out, and is what a place name means when nobody says otherwise. Without
+   * this the moment a second profile existed for one place — the returning-visitor
+   * one — every `--country NO --city Oslo` became ambiguous and refused, which is
+   * the refusal working correctly and the feature becoming useless.
+   */
+  visitor?: GeoProfile["visitorType"];
 }
 
 /**
@@ -319,10 +337,12 @@ export function resolveProfileId(
   if (!place) return { ok: true, id: selection.geo ?? DEFAULT_PROFILE_ID };
 
   const device = selection.device ?? DEFAULT_DEVICE;
+  const visitor = selection.visitor ?? "anonymous";
   const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
   const matches = profileList(deps).profiles.filter(
     (p) =>
       p.device === device &&
+      p.visitorType === visitor &&
       (selection.country === undefined || same(p.country, selection.country)) &&
       (selection.city === undefined || same(p.city, selection.city)),
   );
@@ -330,13 +350,19 @@ export function resolveProfileId(
   if (matches.length === 0) {
     // The available places, because "no profile for NO/Ålesund" without them
     // sends someone to read the directory, and the answer is a flag away.
-    const places = [...new Set(profileList(deps).profiles.filter((p) => p.device === device).map((p) => `${p.country}/${p.city}`))];
-    return { ok: false, errors: [`no ${device} profile for ${asked} — available: ${places.sort().join(", ")}`] };
+    const places = [
+      ...new Set(
+        profileList(deps)
+          .profiles.filter((p) => p.device === device && p.visitorType === visitor)
+          .map((p) => `${p.country}/${p.city}`),
+      ),
+    ];
+    return { ok: false, errors: [`no ${visitor} ${device} profile for ${asked} — available: ${places.sort().join(", ")}`] };
   }
   // Ambiguity refuses too: two profiles for one place would be a run whose
   // identity depends on directory order.
   if (matches.length > 1) {
-    return { ok: false, errors: [`${asked} on ${device} matches ${matches.length} profiles (${matches.map((p) => p.id).join(", ")}) — name one with --geo`] };
+    return { ok: false, errors: [`${asked} on ${device} as a ${visitor} visitor matches ${matches.length} profiles (${matches.map((p) => p.id).join(", ")}) — name one with --geo`] };
   }
   return { ok: true, id: (matches[0] as { id: string }).id };
 }

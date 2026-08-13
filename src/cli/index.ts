@@ -152,6 +152,7 @@ async function main(argv: string[]): Promise<number> {
     ...(args.flags.country !== undefined ? { country: flagString(args, "country", "") } : {}),
     ...(args.flags.city !== undefined ? { city: flagString(args, "city", "") } : {}),
     ...(args.flags.device !== undefined ? { device: flagString(args, "device", "") } : {}),
+    ...(args.flags.visitor !== undefined ? { visitor: flagString(args, "visitor", "") as "anonymous" | "returning" } : {}),
   });
   if (!selectedProfile.ok) {
     console.error(selectedProfile.errors.join("\n"));
@@ -166,7 +167,10 @@ async function main(argv: string[]): Promise<number> {
 
   if (group === "profile" && (action === "list" || action === undefined)) {
     const result = profileList(deps);
-    return emit(result, result.profiles.map((p) => `${p.id.padEnd(20)} ${p.country}/${p.city} ${p.device}`).join("\n"));
+    return emit(
+      result,
+      result.profiles.map((p) => `${p.id.padEnd(20)} ${p.country}/${p.city} ${p.device.padEnd(8)} ${p.visitorType}`).join("\n"),
+    );
   }
 
   if (group === "journey" && action === "list") {

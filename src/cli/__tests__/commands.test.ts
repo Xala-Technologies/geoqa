@@ -178,8 +178,28 @@ describe("list commands", () => {
     // one is visible at a glance. Counts are derived, not hardcoded: the literal
     // roster broke twice in a day as markets were added.
     expect(profiles.length).toBeGreaterThanOrEqual(16);
-    expect(profiles.length % 2).toBe(0);
-    expect(profiles.map((p) => p.id)).toEqual([...profiles.map((p) => p.id)].sort());
+    // The real invariant is R-67 — every market is declared on BOTH device kinds —
+    // and it is asserted directly rather than through an even count. `% 2 === 0`
+    // stood in for it until a third KIND of profile existed (the returning visitor),
+    // at which point an odd total was correct and the test was wrong. An assertion
+    // that only holds while a coincidence holds is a trap for whoever trips it.
+    const anonymous = profiles.filter((p) => p.visitorType === "anonymous");
+    const marketsWithDesktop = anonymous.filter((p) => p.device === "desktop").map((p) => `${p.country}/${p.city}`);
+    const marketsWithMobile = new Set(anonymous.filter((p) => p.device === "mobile").map((p) => `${p.country}/${p.city}`));
+    for (const market of marketsWithDesktop) expect([...marketsWithMobile], market).toContain(market);
+    // The claim in the comment above is ADJACENCY, so adjacency is what is asserted.
+    // "ids are sorted" stood in for it and held only by coincidence: filenames sort
+    // by `-` before `.`, so `oslo-desktop-returning` precedes `oslo-desktop` in the
+    // directory while sorting after it by id. The listing was right and the proxy
+    // assertion was wrong.
+    const positions = new Map<string, number[]>();
+    profiles.forEach((p, i) => {
+      const market = `${p.country}/${p.city}`;
+      positions.set(market, [...(positions.get(market) ?? []), i]);
+    });
+    for (const [market, seen] of positions) {
+      expect(Math.max(...seen) - Math.min(...seen), market).toBe(seen.length - 1);
+    }
     expect(profiles.find((p) => p.id === "oslo-mobile")).toMatchObject({ country: "NO", city: "Oslo", device: "mobile" });
     expect(profiles.find((p) => p.id === "london-desktop")).toMatchObject({ country: "GB", city: "London", device: "desktop" });
   });
@@ -1083,6 +1103,28 @@ describe("resolveProfileId", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected a refusal");
     expect(result.errors[0]).toContain("--geo");
+  });
+
+  it("resolves a place to the FIRST-TIME visitor by default, and to the returning one on request", () => {
+    // Oslo has both an anonymous and a returning desktop profile. Without a default
+    // every `--country NO --city Oslo` became ambiguous the moment the second one
+    // existed — the refusal working correctly and the feature becoming useless. A
+    // first-time visitor is the neutral subject: it carries nothing in and keeps
+    // nothing out.
+    expect(resolveProfileId(deps(), { country: "NO", city: "Oslo" })).toEqual({ ok: true, id: "oslo-desktop" });
+    expect(resolveProfileId(deps(), { country: "NO", city: "Oslo", visitor: "returning" })).toEqual({
+      ok: true,
+      id: "oslo-desktop-returning",
+    });
+  });
+
+  it("names the visitor kind when no profile matches, so the reason is not mysterious", () => {
+    const result = resolveProfileId(deps(), { country: "SE", city: "Stockholm", visitor: "returning" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.errors[0]).toContain("returning");
+    // And the list offered is the returning ones, not every profile.
+    expect(result.errors[0]).toContain("NO/Oslo");
   });
 });
 

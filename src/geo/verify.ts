@@ -76,6 +76,50 @@ export function compareViewport(
 }
 
 /**
+ * Did the device identity the profile DECLARED actually reach the page?
+ *
+ * The gap this closes: `navigator.userAgent` was observed on every run and written
+ * into the evidence, and compared to nothing. `verifyGeo` checked country, city,
+ * language, timezone and viewport WIDTH — and the profile's viewport is applied
+ * after any device descriptor and overrides it, so the width matched whether or not
+ * the descriptor took. A profile whose `emulate:` name was a typo produced a run
+ * with no mobile user agent, no touch, a perfectly matching viewport and a clean
+ * verification. A site doing server-side device detection would have served its
+ * desktop variant, and nothing in the evidence would say so.
+ *
+ * Asymmetric, like `compareCity` and for a sharper reason: this can only judge a
+ * claim that was made. A profile declaring no `userAgent` and no `emulate` has
+ * asserted nothing about the device beyond its viewport, and inventing an
+ * expectation from `device.kind` would report `mismatch` on every mobile profile in
+ * this repo — all of which deliberately carry no descriptor, because emulation makes
+ * the rendered viewport a property of the page's markup (gaps C-8). "Unverified"
+ * is the honest verdict for a claim nobody made.
+ *
+ * The comparison is CONTAINMENT rather than equality when the profile declares an
+ * `emulate` name: the expected marker is the descriptor's own name reduced to the
+ * token a user-agent string would carry ("Pixel 5" → "Android" is not derivable), so
+ * only an explicit `userAgent` can be matched exactly. That is a real limit and it is
+ * why an explicit `userAgent` is the stronger declaration of the two.
+ */
+export function compareDevice(
+  requested: { userAgent?: string | undefined; emulate?: string | undefined },
+  observed: string | null,
+): AxisResult {
+  const declared = requested.userAgent ?? null;
+  if (declared === null) {
+    return requested.emulate === undefined
+      ? unverified("the profile declares no user agent and no device descriptor, so there is no device claim to verify beyond the viewport")
+      : unverified(
+          `the profile emulates "${requested.emulate}" but declares no explicit userAgent, and a descriptor name is not a substring of the user-agent string it produces — the descriptor is applied and cannot be confirmed from the page`,
+        );
+  }
+  if (observed === null) return unverified("navigator.userAgent was never read");
+  return observed === declared
+    ? matched(`navigator.userAgent is the declared ${declared}`)
+    : mismatched(`profile declares userAgent ${declared}, page reports ${observed}`);
+}
+
+/**
  * Did one run hold one egress identity?
  *
  * Asymmetric on purpose, the same way `compareCity` is: a rotation can be
@@ -234,6 +278,10 @@ export function verifyGeo(
   const language = compareLanguage(profile.market.language, browser.language);
   const timezone = compareTimezone(profile.market.timezone, browser.timezone);
   const viewport = compareViewport(profile.device.viewport, browser.viewport);
+  const device = compareDevice(
+    { ...(profile.device.userAgent !== undefined ? { userAgent: profile.device.userAgent } : {}), ...(profile.device.emulate !== undefined ? { emulate: profile.device.emulate } : {}) },
+    browser.userAgent,
+  );
   const axes = [country, city, language, timezone];
   return {
     profileId: profile.id,
@@ -263,12 +311,18 @@ export function verifyGeo(
       language,
       timezone,
       viewport,
+      device,
     },
     confidence: geoConfidence(axes),
     // The viewport counts toward trustworthiness even though it is not in the
     // weighted geo score: a desktop render under a mobile profile is not a
     // trustworthy observation of that profile, whatever the geography said.
-    trustworthy: [...axes, viewport].every((a) => a.verdict === "match"),
+    //
+    // The DEVICE axis deliberately does not. It is `unverified` for every profile
+    // that declares no user agent — which is all of them today — so counting it
+    // would mark every run in the repo untrustworthy for a claim nobody made. A
+    // proven device MISMATCH is a different matter and is folded in below.
+    trustworthy: [...axes, viewport].every((a) => a.verdict === "match") && device.verdict !== "mismatch",
   };
 }
 

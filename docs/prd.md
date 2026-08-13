@@ -172,6 +172,29 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-114** `run.json` records what kind of visitor a run ACTUALLY was, not what its
+  profile declared. A profile saying `returning` and a run that restored nothing were
+  indistinguishable in the evidence, which is the same class of lie as an unmeasured
+  metric reported as fine. The declaration is an intention; `restored` is an
+  observation, and only one of them is evidence.
+- **R-115** An unknown device descriptor **refuses the launch**. The alternative fails
+  invisibly in every direction at once: no descriptor applied, so no mobile user
+  agent, no touch and no device scale factor; `setDevice` still answering `ok`, because
+  it compares the requested name against the name the context was built with; and the
+  profile's own viewport matching regardless. The run then reports a clean mobile
+  verification while presenting a desktop identity to any site doing UA detection.
+- **R-116** A DECLARED device identity is a **verified axis**. `navigator.userAgent`
+  was observed on every run and compared to nothing. A profile that declares no user
+  agent gets `unverified` rather than a pass — a claim nobody made cannot be verified,
+  and inventing an expectation from the device kind would report a mismatch on every
+  mobile profile that deliberately carries no descriptor.
+- **R-117** A responsiveness budget may only be asserted **after an interaction**, and
+  an unmeasurable INP is neither a pass nor the site's fault. INP does not exist until
+  something has been clicked, pressed, filled or scrolled — and even then a page whose
+  handler does nothing expensive responds faster than the browser reports, so `null` is
+  a fact about the page. A budget met by never touching anything is the emptiest green
+  tick available; blaming the site for the journey's step ordering is the opposite
+  error.
 - **R-113** `--engine` and the configured verify endpoint reach **every** command
   that opens a browser, experiments included. An experiment whose samples are taken
   through an engine nobody asked about answers a different question than the one

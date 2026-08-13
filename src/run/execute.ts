@@ -16,7 +16,7 @@ import { noteProviderOutcome } from "../network/provider.js";
 import { withEgressHeld } from "../geo/verify.js";
 import { mergeAttempts, withExtraStep, type JourneyResult } from "../journeys/engine.js";
 import type { GeoQaRunResult } from "../findings/types.js";
-import { buildRuntime, newRunId, writeInitScript, type RunSpec } from "./context.js";
+import { buildRuntime, newRunId, resolveVisitorState, writeInitScript, type RunSpec } from "./context.js";
 import {
   applyDeviceProfile,
   assembleResult,
@@ -112,6 +112,23 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
   if (!journey.ok) throw new StageError(journey.errors.join("; "), "load");
   const runtime = buildRuntime(options.spec, profile);
 
+  /**
+   * What kind of visitor this run will actually be — SAID OUT LOUD.
+   *
+   * Resolved a second time here rather than threaded out of `buildRuntime`, which
+   * is pure and returns a runtime rather than a report. It reads the same
+   * filesystem the context builder does, one line later, so the two agree; the
+   * alternative was widening `buildRuntime`'s return type across two engines and
+   * the Temporal path for a field only one of them can populate.
+   *
+   * The warning matters because a profile declaring `returning` and a run that
+   * restored nothing were previously indistinguishable — `run.json` recorded the
+   * DECLARATION either way. A first-time visitor measured as a returning one is
+   * the same class of lie as an unmeasured metric reported as fine.
+   */
+  const visitor = resolveVisitorState(options.spec, profile);
+  if (visitor.unmet !== null) log(`warning: ${visitor.unmet}`);
+
   try {
     // Before anything is observed: a profile that never applied its device
     // measures a different layout than the one it claims to.
@@ -198,6 +215,7 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
       geo: verifiedGeo,
       journey: result,
       createdAt: startedAt,
+      visitor: { declared: profile.visitorType, restored: visitor.restored, unmet: visitor.unmet },
     });
 
     return assembleResult({

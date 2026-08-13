@@ -4,6 +4,7 @@ import type { BrowserObservation, GeoProfile, NetworkObservation } from "../type
 import {
   compareCity,
   compareCountry,
+  compareDevice,
   compareEgressHeld,
   compareLanguage,
   compareSources,
@@ -399,3 +400,56 @@ describe("geoConfidence caps", () => {
     expect(geoConfidence(perfect, [axis("match")])).toBe(100);
   });
 });
+
+describe("compareDevice", () => {
+  it("MATCHES when the declared user agent is what the page reports", () => {
+    expect(compareDevice({ userAgent: "Mozilla/5.0 (Pixel 5)" }, "Mozilla/5.0 (Pixel 5)").verdict).toBe("match");
+  });
+
+  it("MISMATCHES when the page reports a different one — the desktop-under-mobile case", () => {
+    // The failure C-8 names: a profile whose emulate name was a typo produced a run
+    // with no mobile user agent, a perfectly matching viewport and a clean
+    // verification, and a site doing UA detection served its desktop variant.
+    const result = compareDevice({ userAgent: "Mozilla/5.0 (Pixel 5)" }, "Mozilla/5.0 (X11; Linux x86_64) HeadlessChrome");
+    expect(result.verdict).toBe("mismatch");
+    expect(result.reasons[0]).toContain("page reports");
+  });
+
+  it("is UNVERIFIED for a profile that declares nothing, not a match", () => {
+    // A claim nobody made cannot be verified. Inventing an expectation from
+    // device.kind would report a mismatch on every mobile profile in this repo — all
+    // of which deliberately carry no descriptor.
+    const result = compareDevice({}, "Mozilla/5.0 (X11; Linux x86_64)");
+    expect(result.verdict).toBe("unverified");
+    expect(result.reasons[0]).toContain("no device claim to verify");
+  });
+
+  it("is UNVERIFIED for an emulate name, and says why it cannot be confirmed", () => {
+    // A descriptor name is not a substring of the user-agent string it produces:
+    // "Pixel 5" does not appear in the Android UA Playwright builds from it.
+    const result = compareDevice({ emulate: "Pixel 5" }, "Mozilla/5.0 (Linux; Android 11; Pixel 5)");
+    expect(result.verdict).toBe("unverified");
+    expect(result.reasons[0]).toContain("not a substring");
+  });
+
+  it("is UNVERIFIED when the user agent was never read", () => {
+    expect(compareDevice({ userAgent: "x" }, null).verdict).toBe("unverified");
+  });
+
+  it("costs a run its trustworthiness on a proven mismatch, and not otherwise", () => {
+    const browser: BrowserObservation = {
+      language: "nb-NO", languages: ["nb-NO"], timezone: "Europe/Oslo",
+      userAgent: "Mozilla/5.0 (desktop)", viewport: { width: 390, height: 844 }, geolocation: null,
+    };
+    const norwegian: NetworkObservation = { ...UNKNOWN_NETWORK, ip: "1.2.3.4", country: "NO", city: "Oslo" };
+    // Declares nothing: unverified, and the run can still be trustworthy.
+    const silent = verifyGeo(OSLO_PROFILE, norwegian, browser);
+    expect(silent.browser.device.verdict).toBe("unverified");
+    expect(silent.trustworthy).toBe(true);
+    // Declares a UA it did not get: not trustworthy.
+    const declaring = { ...OSLO_PROFILE, device: { ...OSLO_PROFILE.device, userAgent: "Mozilla/5.0 (Pixel 5)" } };
+    const wrong = verifyGeo(declaring, norwegian, browser);
+    expect(wrong.browser.device.verdict).toBe("mismatch");
+    expect(wrong.trustworthy).toBe(false);
+  });
+})

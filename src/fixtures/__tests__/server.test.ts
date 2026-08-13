@@ -104,6 +104,23 @@ describe("fixtureBody", () => {
     });
   });
 
+  it("serves a page whose click handler BLOCKS, because INP is otherwise unmeasurable", () => {
+    // Measured: every other fixture produces `inp: null` even after a real click.
+    // Chromium reports event-timing entries only above a threshold, so a page with no
+    // expensive handler responds too fast to generate one — `inp: null` is a fact
+    // about the page, not a failed read. Proving `inp-below` therefore needs a page
+    // that genuinely blocks.
+    const html = fixtureBody("/slow-interaction")?.html ?? "";
+    expect(html).toContain('id="slow"');
+    // Blocking, not a timeout: INP measures the delay before the next paint, and an
+    // async wait would leave the frame free.
+    expect(html).toContain("while (performance.now()");
+    expect(html).toContain("+ 120");
+    // Not a defect fixture: a slow handler is the subject of a measurement here, not
+    // something a journey should report as broken.
+    expect(DEFECTS.some((d) => d.path === "/slow-interaction")).toBe(false);
+  });
+
   describe("the search flow", () => {
     it("submits to a DIFFERENT path, so the results page is a real navigation", () => {
       // In-place DOM mutation would let a journey "search" without the browser ever

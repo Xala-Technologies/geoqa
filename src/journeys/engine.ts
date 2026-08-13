@@ -82,6 +82,11 @@ export interface EngineOptions {
 const VITAL_FOR_CHECK: Record<string, keyof import("../browser/types.js").Vitals> = {
   "lcp-below": "lcp",
   "cls-below": "cls",
+  // INP gets the same confirm-the-null re-read. An interaction's entry is emitted
+  // asynchronously like LCP's, so a read taken immediately after a click can miss
+  // one that arrives a frame later — and "not measured" for a page that WAS
+  // interacted with is the same false blindness the LCP retry was added for.
+  "inp-below": "inp",
 };
 
 const labelFor = (step: Step, index: number): string => {

@@ -535,3 +535,46 @@ describe("a manual language override", () => {
     expect(await withoutCookie.text()).toContain("nb-NO");
   });
 });
+
+describe("inp-below, against a page that is actually slow to respond", () => {
+  /**
+   * The only honest way to prove this check.
+   *
+   * A fake runtime returning a number proves the comparison and never that an
+   * interaction was timed. And every other fixture produces `inp: null` even after a
+   * real click, because Chromium reports event-timing entries only above a threshold
+   * — a page with no expensive handler responds too fast to generate one. So the
+   * proof needs a page that genuinely blocks, and `/slow-interaction` blocks ~120ms.
+   */
+  const journeyPath = path.join(journeysDir, "..", "e2e", "fixtures", "inp.yaml");
+
+  it("MEASURES a real INP and compares it against the budget", async () => {
+    const result = await run({ runId: "e2e_inp", target: `${fixtures.origin}/slow-interaction`, journeyPath });
+    const inp = journeySteps("e2e_inp").find((step) => step.label === "responds within 200ms");
+    expect(inp?.outcome).toBe("passed");
+    // A real number, not an absence read as a pass.
+    const vitals = JSON.parse(readFileSync(evidenceFile("e2e_inp", "vitals.json"), "utf8")) as { inp: number | null };
+    expect(vitals.inp).not.toBeNull();
+    expect(vitals.inp).toBeGreaterThan(16);
+  });
+
+  it("produces a FINDING on the same page at a budget it genuinely misses", async () => {
+    // Without this the pass above could be a check that always passes.
+    //
+    // The verdict is PASS_WITH_WARNINGS rather than FAIL, and that is the severity
+    // model working: severity is declared per step, and this step declares `medium`.
+    // A responsiveness budget is a signal, not a gate — one interaction is a thin
+    // sample. Asserting FAIL here would have been asserting a severity the journey
+    // never asked for.
+    const strict = path.join(journeysDir, "..", "e2e", "fixtures", "inp-strict.yaml");
+    const result = await run({ runId: "e2e_inp_strict", target: `${fixtures.origin}/slow-interaction`, journeyPath: strict });
+    expect(result.verdict).toBe("PASS_WITH_WARNINGS");
+    const finding = result.findings.find((f) => f.stepLabel === "responds within 20ms");
+    expect(finding).toBeDefined();
+    expect(finding?.severity).toBe("medium");
+    // The site's slowness, not our failure to read it — an unread INP would have
+    // been `instrumentation` and would have made the whole run ERROR.
+    expect(finding?.category).not.toBe("instrumentation");
+    expect(finding?.observed).toMatch(/^\d+ms$/);
+  });
+});

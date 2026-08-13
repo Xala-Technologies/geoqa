@@ -387,6 +387,36 @@ export function fixtureBody(path: string, cookie = ""): FixtureResponse | null {
            <main><a href="/lang-deeper" id="deeper">Read more</a></main>`,
         ),
       };
+    /**
+     * A button whose handler blocks the main thread for ~120ms.
+     *
+     * Here because INP turned out to be unmeasurable on every other fixture, and
+     * that is not a bug in the engine. Chromium reports event-timing entries only
+     * above a threshold (the observer is armed at `durationThreshold: 16`), so a
+     * click on a page with no handler is genuinely too fast to produce an entry —
+     * `inp: null` is then a fact about the page, not a failed read.
+     *
+     * Which means an `inp-below` check could not be PROVEN end to end without a page
+     * that is actually slow to respond. 120ms is chosen to sit above the threshold
+     * and below Google's 200ms "good" bar, so one page can demonstrate both a
+     * measured pass and, at a tighter budget, a measured fail.
+     */
+    case "/slow-interaction":
+      return {
+        status: 200,
+        html: shell(
+          "Slow interaction",
+          `${HEADING}<button id="slow">Trykk</button><p id="out">—</p>${LINKS}<script>
+             document.getElementById('slow').addEventListener('click', () => {
+               // Deliberately blocking, not a timeout: INP measures the delay before
+               // the next paint, and an async wait would leave the frame free.
+               const until = performance.now() + 120;
+               while (performance.now() < until) { /* hold the main thread */ }
+               document.getElementById('out').textContent = 'trykket';
+             });
+           </script>`,
+        ),
+      };
     case "/no-links":
       return { status: 200, html: shell("No links", `${HEADING}<p>Ingen lenker.</p>`) };
     default:

@@ -466,7 +466,31 @@ The state file lives at `<evidenceRoot>/visitors/<profileId>.json`, outside any 
 directory, because it must outlive one run and because it holds live cookies — a
 credential, not evidence.
 
-**Still open: the honesty half.** `resolveVisitorState` computes an `unmet`
+**CLOSED: the honesty half.** `executeRun` resolves the visitor state, LOGS the
+`unmet` sentence, and `run.json` now carries
+`visitor: { declared, restored, unmet }` — purely additive, so no schema bump. A run
+that tested a first-time visitor and a run that tested a returning one are no longer
+indistinguishable in the evidence. The declaration is an intention; `restored` is an
+observation, and only one of them is evidence.
+
+**CLOSED: nothing exercised it.** `profiles/oslo-desktop-returning.yaml` is the first
+profile to declare `visitorType: returning`, so the restore branches are no longer
+dead in every real run. It is a separate profile rather than a flipped flag on
+`oslo-desktop` for two reasons: a returning visitor is a different test subject (a
+cookie banner, "welcome back" copy and a geo-redirect all behave differently on a
+second visit, and both cases need covering), and the state file is keyed by profile
+id, so a shared id would have the anonymous and returning runs fighting over one
+session file. Named `oslo-desktop-returning` rather than `oslo-returning` because the
+matrix builds ids as `<market>-<device>` and the shorter name reads as a device called
+"returning".
+
+Adding it immediately broke `--country NO --city Oslo`, which then matched two desktop
+profiles and refused — the ambiguity check working correctly and the feature becoming
+useless. `PlaceSelection` gained `visitor`, defaulting to `anonymous`: a first-time
+visitor is the neutral subject, and it is what a place name means when nobody says
+otherwise. `--visitor returning` asks for the other.
+
+The original diagnosis, kept because it was accurate: `resolveVisitorState` computes an `unmet`
 sentence for the two cases where the declaration was not met, and **nothing
 surfaces it** — **verified now**: `grep -rn "resolveVisitorState\|\.unmet" src`
 excluding tests returns two hits, both inside `run/context.ts` itself. Nothing
@@ -478,10 +502,11 @@ reported as fine. Two lines in `execute.ts` (log the warning) and one field in
 `collectEvidence`'s `run.json` (`visitor: { declared, restored, unmet }`, purely
 additive so no schema bump) close it.
 
-**And nothing exercises it: all 16 profiles declare `visitorType: anonymous`** —
-verified by grep. The path is implemented, tested against injected fakes, and has
-never restored a real cookie. One `*-returning` profile plus an e2e case (first run
-sets a cookie, second run sees it) is what would prove it.
+**Residual, and small: no e2e proves a real cookie survives.** The profile exists and
+the path is exercised, but the two-run sequence — first run sets a cookie, second run
+sees it — is not automated. It needs an e2e that runs the same profile twice against a
+fixture that sets a cookie, which is a test-harness shape this suite does not have yet
+(every existing case is a single run).
 
 Where: `browser/playwright.ts`, `run/context.ts` (`VISITOR_STATE_DIR`,
 `resolveVisitorState`), `profiles/*.yaml`.
@@ -668,10 +693,35 @@ understate INP by up to 104ms. Armed first, the residual error is bounded at one
 frame (16ms), and that bound is stated in the comment. Same doctrine as arming the
 trace and the console listeners before first load.
 
-Still true, and both are small:
+**CLOSED: a check asserts on it.** `inp-below` is in `CheckSchema`, needs only
+`vitals`, and has a `VITAL_FOR_CHECK` entry so it gets the same confirm-the-null
+re-read as LCP.
 
-- **No check asserts on it.** `CheckSchema` has no `inp-below`, so the number is
-  written to `vitals.json` and judged by nobody. Adding one means a
+**Proving it required a new fixture, and that is the finding.** `inp` was `null` on
+every existing fixture *even after a real click*. Chromium reports event-timing
+entries only above a threshold, so a click on a page whose handler does nothing
+expensive is genuinely too fast to produce an entry — `inp: null` is a fact about the
+page, not a failed read. `/slow-interaction` blocks the main thread for ~120ms, which
+sits above the threshold and below Google's 200ms bar, so one page demonstrates a
+measured pass and, at a tighter budget, a measured finding. Both are asserted in the
+e2e against real Chromium; a fake runtime returning a number proves the comparison and
+never that an interaction was timed.
+
+**And `inp-below` is deliberately NOT in any shipped journey.** An unreadable check is
+categorised `instrumentation` and `ERROR` outranks `FAIL`, so asserting INP in a
+general-purpose journey turns a clean run into "we could not verify" on most simple
+pages — the engine blaming itself for a page that had nothing to measure. The check's
+own `unread` reason therefore names BOTH causes, because they need different actions:
+move the check after an interaction, or accept that the page responds too fast to
+measure. Only the first is the journey's fault.
+
+**Residual design question, recorded not answered:** a null INP is a property of the
+page, and the verdict model treats any unread check as our defect. That is right for
+"we tried to read the title and could not" and wrong here. Fixing it means a way for a
+check to declare that its own null is a page fact rather than an instrumentation
+failure — a real change to the verdict model, and not one to make in passing.
+
+The original diagnosis, kept because it was accurate: adding a check means a
   `VITAL_FOR_CHECK` entry (`"inp-below": "inp"`) so the confirm-the-null re-read
   covers an interaction entry delivered a frame or two late — **verified**: that
   record currently holds `lcp-below` and `cls-below` only.
@@ -710,9 +760,44 @@ fixture we wrote cannot surprise us.
 
 ### C-8 · `emulate` is a Playwright descriptor name applied to two engines, and no axis checks it
 
-Unchanged. All eight mobile profiles carry `emulate: "Pixel 5"`, which is where
-the mobile user agent, `deviceScaleFactor`, `isMobile` and `hasTouch` come from —
-the profile's own `viewport` supplies only the box. But:
+**Partly closed, and the premise had gone stale.** No profile carries `emulate` any
+more — all eight mobile profiles had it reverted, with a measured comment, because
+emulation introduces a layout viewport and makes `window.innerWidth` a property of the
+page's markup (980 without a viewport meta tag, 390 with it), which put the engine's
+most safety-critical axis outside its own control.
+
+**CLOSED: an unknown descriptor name no longer passes silently.** `openContext` threw
+away the `?? {}` fallback and now REFUSES an unrecognised name. Same reasoning as an
+unknown `--engine`: a successful run of something nobody asked for is worse than no
+run. This was the bullet with teeth, because the old form failed invisibly in every
+direction at once — no descriptor applied, `setDevice` still answering `ok` (it
+compares the requested name against the name the context was built with, the same
+string), and the viewport matching anyway.
+
+**CLOSED: a verified axis exists.** `compareDevice` compares the profile's DECLARED
+`userAgent` against `navigator.userAgent`, which was observed on every run and
+compared to nothing. A proven mismatch costs the run its `trustworthy` flag. It is
+asymmetric on purpose: a profile declaring no `userAgent` gets `unverified`, because a
+claim nobody made cannot be verified — and inventing an expectation from `device.kind`
+would report a mismatch on every mobile profile in this repo, all of which
+deliberately carry no descriptor.
+
+**Still open, and it is the honest residual:** an `emulate` name cannot be confirmed
+from the page. A descriptor name is not a substring of the user-agent string it
+produces — "Pixel 5" does not appear in the Android UA Playwright builds from it — so
+`compareDevice` reports `unverified` with that reason rather than guessing at a marker.
+An explicit `userAgent` in the profile is the stronger declaration and is the one that
+can be verified.
+
+**Also still open, and worth saying plainly:** because no mobile profile carries a
+descriptor, geoqa's mobile profiles present a DESKTOP user agent. They are mobile by
+viewport only. A site doing server-side device detection off the UA serves them its
+desktop variant, and the new axis reports `unverified` rather than `mismatch` for
+exactly the reason above — the profile never claimed a mobile UA. Closing that means
+choosing between emulation (and losing viewport control) or an explicit `userAgent` per
+mobile profile (and maintaining UA strings by hand).
+
+The original diagnosis of the three failure modes, kept because it was accurate:
 
 - **On Playwright, an unknown name is silently ignored.** `openContext` does
   `devices[name] ?? {}`, and `setDevice` answers by comparing the requested name

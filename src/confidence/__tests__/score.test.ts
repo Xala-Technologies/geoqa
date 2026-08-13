@@ -14,7 +14,7 @@ import {
 const axis = (verdict: AxisResult["verdict"], why = "because"): AxisResult => ({ verdict, reasons: [why] });
 
 const geo = (
-  over: Partial<Record<"country" | "city" | "language" | "timezone" | "viewport" | "egressHeld" | "agreement", AxisResult>> = {},
+  over: Partial<Record<"country" | "city" | "language" | "timezone" | "viewport" | "egressHeld" | "agreement" | "device", AxisResult>> = {},
 ): GeoVerification => ({
   profileId: "oslo-mobile",
   network: {
@@ -35,6 +35,7 @@ const geo = (
     language: over.language ?? axis("match"),
     timezone: over.timezone ?? axis("match"),
     viewport: over.viewport ?? axis("match"),
+    device: over.device ?? axis("unverified"),
   },
   confidence: 100,
   trustworthy: true,

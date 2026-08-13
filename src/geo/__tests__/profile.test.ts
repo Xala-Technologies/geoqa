@@ -87,13 +87,22 @@ describe("the profiles that actually ship", () => {
     // Derived from the directory rather than a literal list. A hardcoded roster
     // is a maintenance tax that fires on every market added, and it fired twice
     // in one day — once at 4 markets, once at 8.
-    const cities = [...new Set(files.map((f) => f.replace(/-(mobile|desktop)\.yaml$/, "")))].sort();
+    // Derived from the files that ARE a market x device pair, rather than from every
+    // file. The previous form stripped `-(mobile|desktop).yaml` from every name and
+    // treated whatever was left as a market, so the first profile that was not a
+    // plain market x device pair — the returning-visitor one — became a "market"
+    // whose desktop file was then reported missing. The rule being tested is about
+    // pairs, so only pairs are enumerated.
+    const cities = [...new Set(files.filter((f) => /-(mobile|desktop)\.yaml$/.test(f)).map((f) => f.replace(/-(mobile|desktop)\.yaml$/, "")))].sort();
     expect(cities.length).toBeGreaterThanOrEqual(8);
     for (const city of cities) {
       expect(files, `${city} desktop`).toContain(`${city}-desktop.yaml`);
       expect(files, `${city} mobile`).toContain(`${city}-mobile.yaml`);
     }
-    expect(files).toHaveLength(cities.length * 2);
+    // Every pair is accounted for, and anything else is a deliberate extra rather
+    // than a market missing half its coverage.
+    const extras = files.filter((f) => !/-(mobile|desktop)\.yaml$/.test(f));
+    expect(files).toHaveLength(cities.length * 2 + extras.length);
   });
 
   it.each(files)("%s parses, and its id matches its filename", (file) => {

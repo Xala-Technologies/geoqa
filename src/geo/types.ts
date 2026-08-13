@@ -136,6 +136,15 @@ export interface GeoVerification {
      * passed.
      */
     viewport: AxisResult;
+    /**
+     * Did the DECLARED device identity reach the page?
+     *
+     * `unverified` when the profile declares no `userAgent` — which is every profile
+     * in this repo today, deliberately. A claim nobody made cannot be verified, and
+     * inventing an expectation from `device.kind` would report a mismatch on every
+     * mobile profile. Only a proven mismatch costs the run its `trustworthy` flag.
+     */
+    device: AxisResult;
   };
   /** 0..100, capped by the weaker axis. See confidence/geo.ts. */
   confidence: number;

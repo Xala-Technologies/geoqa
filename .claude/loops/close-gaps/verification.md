@@ -18,8 +18,8 @@ Current baseline, all green:
 |---|---|
 | `pnpm lint` | clean |
 | `pnpm boundaries` | no violations, 94 modules / 374 deps |
-| `pnpm test:coverage` | **1019 tests, 100%** lines/statements/functions |
-| `pnpm test:e2e` | **28/28** |
+| `pnpm test:coverage` | **1032 tests, 100%** lines/statements/functions |
+| `pnpm test:e2e` | **30/30** |
 
 Single file, while iterating:
 

@@ -1,0 +1,19 @@
+# An INP journey, used only by the e2e suite.
+#
+# Not in `journeys/` because it is not a journey anybody would run against a site:
+# it exists to prove `inp-below` measures a real interaction, which needs a page that
+# deliberately blocks its main thread. A shipped journey asserting INP would turn a
+# clean run into ERROR on every page that responds too fast to be measured — see
+# docs/gaps.md C-5.
+id: inp
+title: INP against a deliberately slow handler
+description: >
+  Click a button whose handler blocks ~120ms, then assert INP. The click has to come
+  first: INP does not exist until an interaction has been timed.
+writes: false
+steps:
+  - { action: open, url: "{target}", label: open the page }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: click, selector: "#slow", label: press the slow button }
+  - { action: assert, check: selector-visible, selector: "#out", severity: high, label: the handler ran }
+  - { action: assert, check: inp-below, value: 200, severity: medium, label: responds within 200ms }

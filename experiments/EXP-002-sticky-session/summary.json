@@ -4,8 +4,8 @@
   "samples": 1,
   "succeeded": 1,
   "failed": 0,
-  "startedAt": "2026-08-13T07:35:27.292Z",
-  "finishedAt": "2026-08-13T07:35:58.214Z",
+  "startedAt": "2026-08-13T07:36:09.462Z",
+  "finishedAt": "2026-08-13T07:46:10.660Z",
   "metrics": [
     {
       "key": "ip-stability",
@@ -20,6 +20,6 @@
   ],
   "verdict": "pass",
   "notes": [
-    "Each sample held ONE session for 30s across 3 reads (one every 15s). The PRD asks for a 10min window; that is NOT what this measured — pass `--stability-window 10m` to measure it. A short window can prove instability but cannot prove stability over a long journey."
+    "Each sample held ONE session for 10min across 5 reads (one every 2.5min). That covers the 10min window the PRD asks for. The reads are spaced, not continuous, so a rotation that healed between two of them is still invisible."
   ]
 }

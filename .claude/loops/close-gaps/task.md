@@ -120,7 +120,7 @@ against, 90% is likely unreachable and the threshold is wrong.
 - [x] **3 · D-1e: `proxy verify` honours `--engine`.** Already closed; the entry was stale. Runs on agent-browser
       regardless and hangs with no Chrome. Cost an hour during the Decodo work.
 - [x] **4 · D-1b: experiment samplers honour the engine.**
-- [ ] **5 · B-7 + C-8 + C-5.** Say when a returning visitor was NOT restored;
+- [x] **5 · B-7 + C-8 + C-5.** Say when a returning visitor was NOT restored;
       verify `emulate` actually applied (same class as the 1280px mobile bug);
       add `inp-below` with an interaction before the read.
 

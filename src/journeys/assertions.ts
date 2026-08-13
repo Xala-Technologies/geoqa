@@ -86,6 +86,7 @@ export function checkNeeds(check: Check): (keyof PageReading)[] {
       return ["requests"];
     case "lcp-below":
     case "cls-below":
+    case "inp-below":
       return ["vitals"];
     case "no-a11y-critical":
       return ["a11y"];
@@ -197,6 +198,26 @@ export function evaluateCheck(check: Check, reading: PageReading): CheckResult {
       const cls = reading.vitals?.cls ?? null;
       if (cls === null) return unread(`CLS below ${check.value}`, "CLS was not measured");
       return verdictOf(cls < check.value, `CLS below ${check.value}`, String(cls));
+    }
+    case "inp-below": {
+      const inp = reading.vitals?.inp ?? null;
+      /**
+       * A null INP is UNVERIFIED, and the reason it gives names the likely cause.
+       *
+       * Unlike LCP, a null here usually means the journey's fault rather than the
+       * page's: no interaction happened, so there was nothing to time. Reporting
+       * that as a pass would be the worst option — a responsiveness budget met by
+       * never touching anything — and reporting it as a failure would blame the site
+       * for the journey's ordering. So it is `unverified`, with the sentence that
+       * tells whoever reads it what to change.
+       */
+      if (inp === null) {
+        return unread(
+          `INP below ${check.value}ms`,
+          "INP was not measured — no interaction entry was reported. Either nothing was interacted with yet (this check belongs AFTER a click, press, fill or scroll), or the interaction was faster than the browser reports: Chromium emits event-timing entries only above a threshold, so a page that responds instantly produces no entry at all. The second case is a fact about the page, not a failed read",
+        );
+      }
+      return verdictOf(inp < check.value, `INP below ${check.value}ms`, `${Math.round(inp)}ms`);
     }
     case "no-a11y-critical": {
       if (reading.a11y === null) return unread("no critical accessibility violations", "axe did not run");

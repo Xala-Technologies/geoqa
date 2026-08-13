@@ -404,8 +404,12 @@ Configuration:
 Identity:
   --geo <profile>            a profile id, e.g. oslo-desktop
   --country <cc> --city <c>  the same thing by place, resolved against the
-                             profiles that exist. --device (default desktop)
-                             picks between them. Naming a place that has no
+                             profiles that exist. --device (default desktop) and
+                             --visitor anonymous|returning (default anonymous)
+                             pick between them. A first-time visitor is the
+                             neutral subject: it carries nothing in and keeps
+                             nothing out, which is what a place name means when
+                             nobody says otherwise. Naming a place that has no
                              profile REFUSES and lists the ones there are;
                              giving both --geo and --country/--city refuses,
                              because two identities have no correct answer.

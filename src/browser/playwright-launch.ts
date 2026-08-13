@@ -278,7 +278,31 @@ const asContext = (context: BrowserContext): PwContext => ({
  * have the page already rendered for an anonymous visitor.
  */
 export async function openContext(browser: Browser, options: PlaywrightContextOptions): Promise<PwSession> {
-  const device = options.deviceName === null ? {} : (devices[options.deviceName] ?? {});
+  /**
+   * An unknown device name REFUSES the launch instead of quietly meaning "no
+   * emulation".
+   *
+   * `devices[name] ?? {}` was the previous form, and it made a typo invisible in
+   * every direction: the context was built with no descriptor, so no mobile user
+   * agent, no `deviceScaleFactor`, no `isMobile` and no `hasTouch` — and then
+   * `setDevice` answered `ok`, because it compares the requested name against the
+   * name the context was built WITH, the same string. The profile's own `viewport`
+   * is applied regardless, so the viewport axis matched too. The result was a run
+   * that reported a clean mobile verification while presenting a desktop identity to
+   * any site doing UA or touch detection.
+   *
+   * Throwing is right rather than warning: a device name is a declaration in a
+   * profile, not a runtime condition, and the same reasoning refuses an unknown
+   * `--engine` (a successful run of something nobody asked for is worse than no
+   * run). The message lists nothing — Playwright ships over a hundred descriptors —
+   * but it names the one that was asked for, which is what a typo needs.
+   */
+  if (options.deviceName !== null && devices[options.deviceName] === undefined) {
+    throw new Error(
+      `unknown device descriptor "${options.deviceName}" — a profile's emulate: must name a Playwright device. An unrecognised name would silently mean "no emulation", and the run would then report a clean mobile verification while presenting a desktop user agent.`,
+    );
+  }
+  const device = options.deviceName === null ? {} : (devices[options.deviceName] as Record<string, unknown>);
   const harPath = options.harPath ?? null;
   // The HAR's directory is normally the run's evidence directory, made when the
   // init script was written — but a launch must not die because a caller created

@@ -210,6 +210,19 @@ export interface CollectInput {
   geo: GeoVerification;
   journey: JourneyResult;
   createdAt: string;
+  /**
+   * What kind of visitor this run ACTUALLY tested.
+   *
+   * `run.json` recorded `visitorType: returning` straight off the profile whether
+   * or not a session was restored, so a run that tested a first-time visitor and a
+   * run that tested a returning one were indistinguishable in the evidence — the
+   * same class of lie as an unmeasured metric reported as fine. The declaration is
+   * an intention; `restored` is an observation, and only one of them is evidence.
+   *
+   * Optional so a caller that has not resolved it records nothing rather than
+   * recording a default that would read as "not restored".
+   */
+  visitor?: { declared: GeoProfile["visitorType"]; restored: boolean; unmet: string | null };
 }
 
 /**
@@ -246,6 +259,10 @@ export async function collectEvidence(
         touchedForm: journey.touchedForm,
         steps: journey.steps,
       },
+      // Purely additive, so no schema bump: a consumer that does not know the field
+      // is unaffected, and one that does can tell a returning-visitor run from a
+      // run that merely asked to be one.
+      ...(input.visitor ? { visitor: input.visitor } : {}),
       createdAt: input.createdAt,
     }),
   );

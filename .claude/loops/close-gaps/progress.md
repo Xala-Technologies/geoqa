@@ -402,8 +402,110 @@ Docs: gaps **D-1b** and **D-1e** closed; PRD **R-113**.
 Gate: lint clean · boundaries clean (94 modules / 374 deps) · **1019 tests at 100%**
 lines/statements/functions · e2e **28/28**.
 
-## Next: slice 5
+## T04 · The PRD's ten-minute stickiness window — MEASURED
 
-B-7 + C-8 + C-5 — say when a returning visitor was NOT restored; verify `emulate`
-actually applied (same class as the 1280px mobile bug); add `inp-below` with an
-interaction before the read.
+Landed while slice 5 was in progress, and it closes the last of the owner's
+first-15 pack that was a flag away:
+
+```
+EXP-002-sticky-session — PASS
+  ✓ ip-stability   100.0% vs ≥ 95%
+  · Each sample held ONE session for 10min across 5 reads (one every 2.5min).
+    That covers the 10min window the PRD asks for.
+```
+
+One Decodo residential IP held for the full ten minutes. The note rendered its
+"covers the PRD window" branch for the first time — that branch had existed since
+the window became a parameter and had never been reachable.
+
+## Slice 5 · B-7 + C-5 + C-8 — DONE
+
+### B-7 · A returning visitor is now visible in the evidence, and exercised
+
+`executeRun` logs the `unmet` sentence and `run.json` carries
+`visitor: { declared, restored, unmet }` — additive, no schema bump. The declaration
+is an intention; `restored` is an observation, and only one of them is evidence.
+
+`profiles/oslo-desktop-returning.yaml` is the first profile to declare
+`visitorType: returning`, so the restore branches are no longer dead in every real
+run. Separate profile rather than a flipped flag: a returning visitor is a different
+test subject, and the state file is keyed by profile id, so a shared id would have
+the two kinds of run fighting over one session file.
+
+**Adding it immediately broke `--country NO --city Oslo`** — two desktop profiles for
+one place, so the ambiguity check refused. The check working correctly and the feature
+becoming useless. `PlaceSelection` gained `visitor`, defaulting to `anonymous`: a
+first-time visitor is the neutral subject and is what a place name means when nobody
+says otherwise.
+
+Residual: no e2e proves a real cookie survives two runs. It needs a two-run harness
+shape this suite does not have — every existing case is a single run.
+
+### C-5 · `inp-below` exists, and proving it took a new fixture
+
+The check itself was small. The finding was not: **`inp` was `null` on every existing
+fixture even after a real click.** Chromium reports event-timing entries only above a
+threshold, so a click on a page whose handler does nothing expensive is genuinely too
+fast to produce one — `inp: null` is a fact about the page, not a failed read.
+
+`/slow-interaction` blocks the main thread ~120ms, above the threshold and below
+Google's 200ms bar, so one page proves a measured pass AND a measured finding. Both
+asserted against real Chromium, because a fake runtime returning a number proves the
+comparison and never that an interaction was timed.
+
+**`inp-below` is deliberately in NO shipped journey.** An unreadable check is
+`instrumentation` and ERROR outranks FAIL, so asserting INP generally turns a clean run
+into "we could not verify" on most simple pages — the engine blaming itself for a page
+with nothing to measure.
+
+One of my assertions was wrong and the engine was right: I expected `FAIL` at a missed
+budget and got `PASS_WITH_WARNINGS`, because severity is declared per step and that
+step declares `medium`. A responsiveness budget is a signal, not a gate. Asserting
+FAIL would have been asserting a severity the journey never asked for.
+
+Residual, recorded not answered: a null INP is a page property, and the verdict model
+treats any unread check as our defect. Fixing that means letting a check declare that
+its own null is a page fact — a real change to the verdict model.
+
+### C-8 · An unknown descriptor now refuses, and a declared device is verified
+
+The premise had gone stale: **no profile carries `emulate` any more**, all eight
+mobile ones had it reverted for the measured viewport reason.
+
+The bullet with teeth is closed. `openContext` dropped its `?? {}` fallback and
+REFUSES an unrecognised name — the old form failed invisibly in every direction at
+once: no descriptor applied, `setDevice` still answering `ok` (it compares the
+requested name against the name the context was built with, the same string), and the
+viewport matching anyway.
+
+`compareDevice` is the missing axis: `navigator.userAgent` was observed on every run
+and compared to nothing. Asymmetric on purpose — a profile declaring no `userAgent`
+gets `unverified`, because a claim nobody made cannot be verified and inventing an
+expectation from `device.kind` would mark every mobile profile in the repo mismatched.
+
+**Still open and worth saying plainly: geoqa's mobile profiles present a DESKTOP user
+agent.** They are mobile by viewport only. A site doing server-side device detection
+serves them its desktop variant. Closing it means choosing between emulation (losing
+viewport control) or hand-maintained `userAgent` strings per profile.
+
+### Three more brittle tests rewritten
+
+Each broke on a correct change, and each proxy assertion was wrong rather than the code:
+
+- profile roster: `files.length % 2 === 0` stood in for "every market on both devices"
+  and held only while every profile was a market×device pair. Now asserts R-67 directly.
+- profile listing: "ids are sorted" stood in for adjacency and held only because
+  filenames sort `-` before `.`. Now asserts adjacency.
+- the `-(mobile|desktop)` filename split treated `oslo-desktop-returning` as a market
+  and demanded a desktop file for it. Now enumerates pairs only.
+
+Docs: gaps **B-7**, **C-5**, **C-8** closed with residuals named; PRD **R-114 … R-117**.
+
+Gate: lint clean · boundaries clean (94 modules / 374 deps) · **1032 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
+## Next: slice 6 — the multi-tenancy pivot
+
+`Tenant` as a first-class type, evidence root becomes `<root>/<tenantId>/<runId>`.
+**This is an approval gate:** the task list says the tenant model shape needs a
+human decision before anything is built on it.
