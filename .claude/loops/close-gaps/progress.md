@@ -504,8 +504,71 @@ Docs: gaps **B-7**, **C-5**, **C-8** closed with residuals named; PRD **R-114 �
 Gate: lint clean · boundaries clean (94 modules / 374 deps) · **1032 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
-## Next: slice 6 — the multi-tenancy pivot
+## Slice 6 · The tenant model — DONE (approval gate cleared)
 
-`Tenant` as a first-class type, evidence root becomes `<root>/<tenantId>/<runId>`.
-**This is an approval gate:** the task list says the tenant model shape needs a
-human decision before anything is built on it.
+Two decisions taken with the owner:
+
+- **YAML registry now** (`tenants/<id>.yaml`), database deferred to run persistence
+  where queries across runs are the actual requirement.
+- **A proxy sub-account per tenant**, so exhaustion is a 407 on that sub-user alone
+  rather than everyone's runs. Provisioning is slice 7.
+
+`Tenant` carries id, name, markets, targets, a credentials **reference**, quota and
+retention. Evidence moves to `<root>/<tenantId>/<runId>`.
+
+### Isolation demonstrated, not asserted
+
+Two tenants, two real runs through Playwright, two disjoint trees:
+
+```
+<root>/digilist/run_1786611417809_oslo-desktop
+<root>/acme/run_1786611421089_oslo-desktop
+```
+
+The security work is `containedPath`, extracted as a primitive rather than left
+inline — slice 8 needs the same rule for tenant-scoped profiles and journeys, and a
+containment check reimplemented per call site is one that is subtly different in one
+of them. Three escapes refused:
+
+- `..` climbing above the root;
+- an **absolute** segment, which discards the root entirely —
+  `path.resolve("/evidence", "/etc")` is `/etc`, the one most likely to surprise;
+- a segment resolving to the root itself, which would hand one tenant the shared tree.
+
+Containment is `path.relative`, never `startsWith`, because `/evidence/acme` starts
+with `/evidence/ac` — a prefix test places tenant `acme` inside tenant `ac`'s root and
+calls it contained.
+
+### Two rules that look like style and are not
+
+**A tenant id refuses uppercase.** macOS and Windows filesystems are case-insensitive
+while Linux is not, so `Acme` and `acme` would be two tenants in CI and one tenant on a
+developer's laptop — a cross-tenant read that reproduces only on the machine nobody
+tests on.
+
+**Target ownership is compared by ORIGIN, never by prefix.**
+`https://digilist.no.evil.test` starts with `https://digilist.no` as a string, so a
+prefix test would authorise an attacker's host. Exercised live: that URL is refused, as
+is a market the tenant never declared, and a mistyped `--tenant` refuses rather than
+creating a directory for a tenant that does not exist.
+
+### One coverage decision worth recording
+
+The resolved-path check was unreachable through the public API — the id pattern catches
+every traversing value first. Rather than exclude the file or delete the check, the
+containment logic became `containedPath`, which is independently testable and is the
+primitive the next slice needs. Defence in depth kept, and now proven.
+
+**Residual, named rather than left to be found:** quota is DECLARED and not enforced.
+`trafficMb` and `runsPerDay` are parsed and validated and nothing reads them — exactly
+the defect B-1 closed for the config file. Slice 7.
+
+Docs: gaps **A-6**; PRD **R-118 … R-122**.
+
+Gate: lint clean · boundaries clean (97 modules / 387 deps) · **1070 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
+## Next: slice 7
+
+Per-tenant proxy metering — read Decodo usage per sub-user, hold the budget, and
+REFUSE a run that would exceed it rather than discovering it as a 407 mid-sweep.

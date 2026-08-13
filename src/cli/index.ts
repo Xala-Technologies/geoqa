@@ -32,6 +32,9 @@ import {
   evidencePrune,
   experimentRun,
   loadUrlList,
+  resolveTenant,
+  tenantList,
+  checkTenantScope,
   journeyList,
   journeyRun,
   matrixRun,
@@ -115,6 +118,25 @@ async function main(argv: string[]): Promise<number> {
     evidenceRoot: resolveEvidenceRoot(repoRoot, config.evidence.root, flagString(args, "evidence-root", "")),
     browserTimeouts: config.browser,
   });
+  /**
+   * `--tenant`, resolved BEFORE anything else that touches the filesystem.
+   *
+   * It replaces `deps.evidenceRoot`, so every path below derives from the tenant's
+   * own directory rather than being nested by each caller — a caller that forgot
+   * would write one tenant's run into the shared tree, which is the cross-tenant
+   * read this whole slice exists to prevent.
+   */
+  const tenancy = resolveTenant(deps, args.flags.tenant === undefined ? undefined : flagString(args, "tenant", ""));
+  if (!tenancy.ok) {
+    console.error(tenancy.errors.join("\n"));
+    return 2;
+  }
+  const tenant = tenancy.tenant;
+  if (tenant !== null) {
+    deps.evidenceRoot = tenancy.evidenceRoot;
+    console.error(`tenant: ${tenant.id} (${tenant.name}) — evidence under ${tenancy.evidenceRoot}`);
+  }
+
   const providerName = flagString(args, "provider", config.network.provider);
   const verifyEndpoint = config.network.verifyEndpoint;
 
@@ -173,6 +195,14 @@ async function main(argv: string[]): Promise<number> {
     );
   }
 
+  if (group === "tenant" && (action === "list" || action === undefined)) {
+    const result = tenantList(deps);
+    return emit(
+      result,
+      result.tenants.map((t) => `${t.id.padEnd(16)} ${t.name.padEnd(24)} ${t.markets} market(s)  ${t.targets} target(s)  ${t.trafficMb}MB`).join("\n"),
+    );
+  }
+
   if (group === "journey" && action === "list") {
     const result = journeyList(deps);
     return emit(result, result.journeys.map((j) => `${j.id.padEnd(20)} ${j.steps} steps  ${j.title}`).join("\n"));
@@ -220,6 +250,14 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (group === "journey" && action === "run") {
+    // Refused before anything launches. A run against a site the tenant does not own
+    // is either a mistake or this engine aimed at somebody else's product from
+    // residential IPs.
+    const scope = tenant === null ? [] : checkTenantScope(tenant, { url: flagString(args, "url", "") });
+    if (scope.length > 0) {
+      console.error(scope.join("\n"));
+      return 2;
+    }
     const result = await journeyRun(deps, {
       url: flagString(args, "url", ""),
       profileId,
@@ -243,6 +281,12 @@ async function main(argv: string[]): Promise<number> {
     const urls = args.flags["urls-file"] === undefined ? null : loadUrlList(flagString(args, "urls-file", ""));
     if (urls !== null && !urls.ok) {
       console.error(urls.errors.join("\n"));
+      return 2;
+    }
+    const scope =
+      tenant === null ? [] : checkTenantScope(tenant, { url: flagString(args, "url", ""), markets: flagList(argv, "market") });
+    if (scope.length > 0) {
+      console.error(scope.join("\n"));
       return 2;
     }
     const result = await matrixRun(deps, {

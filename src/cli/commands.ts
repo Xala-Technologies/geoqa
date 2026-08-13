@@ -51,6 +51,8 @@ import { loadJourney } from "../journeys/spec.js";
 import { seedFrom } from "../journeys/random.js";
 import { redactProxyUrl, selectProvider, type TcpProbe } from "../network/provider.js";
 import { buildRuntime, newRunId, type RunEngine, type RunSpec } from "../run/context.js";
+import { loadTenant, tenantEvidenceRoot, tenantOwnsTarget } from "../tenant/registry.js";
+import type { Tenant } from "../tenant/types.js";
 import { executeRun, prepareRun } from "../run/execute.js";
 import {
   expandMatrix,
@@ -247,6 +249,74 @@ export function defaultDeps(repoRoot: string, overrides: Partial<CommandDeps> = 
 export function resolveEvidenceRoot(repoRoot: string, configuredRoot: string, flagValue?: string): string {
   if (flagValue !== undefined && flagValue !== "") return path.resolve(flagValue);
   return path.isAbsolute(configuredRoot) ? configuredRoot : path.resolve(repoRoot, configuredRoot);
+}
+
+export const tenantsDir = (deps: CommandDeps): string => path.join(deps.repoRoot, "tenants");
+
+export function tenantPath(deps: CommandDeps, id: string): string {
+  return path.join(tenantsDir(deps), id.endsWith(".yaml") ? id : `${id}.yaml`);
+}
+
+export function tenantList(deps: CommandDeps): { tenants: { id: string; name: string; markets: number; targets: number; trafficMb: number }[] } {
+  const tenants = yamlFiles(tenantsDir(deps)).map((file) => {
+    const loaded = loadTenant(path.join(tenantsDir(deps), file));
+    if (!loaded.ok) return { id: file.replace(/\.yaml$/, ""), name: `INVALID: ${loaded.errors[0]}`, markets: 0, targets: 0, trafficMb: 0 };
+    const t = loaded.value;
+    return { id: t.id, name: t.name, markets: t.markets.length, targets: t.targets.length, trafficMb: t.quota.trafficMb };
+  });
+  return { tenants };
+}
+
+/**
+ * Resolve `--tenant` into the tenant and the evidence root its runs must use.
+ *
+ * Two things happen here and neither is optional. The tenant is LOADED, so a
+ * mistyped id refuses instead of creating a directory for a tenant that does not
+ * exist — a run whose evidence lands under `evidence/digilst/` is lost, and lost
+ * quietly. And the evidence root is REPLACED rather than appended to by a caller,
+ * because every path below this point derives from it: a caller that forgot to nest
+ * would write one tenant's run into the shared tree.
+ *
+ * No `--tenant` is not an error. Single-target use is still the common case and the
+ * shared root is still correct for it — but then no tenant rule applies either, which
+ * is why the tenant is returned as null rather than a default one.
+ */
+export function resolveTenant(
+  deps: CommandDeps,
+  tenantId: string | undefined,
+): { ok: true; tenant: Tenant | null; evidenceRoot: string } | { ok: false; errors: string[] } {
+  if (tenantId === undefined || tenantId === "") return { ok: true, tenant: null, evidenceRoot: deps.evidenceRoot };
+  const loaded = loadTenant(tenantPath(deps, tenantId));
+  if (!loaded.ok) return { ok: false, errors: loaded.errors };
+  const root = tenantEvidenceRoot(deps.evidenceRoot, loaded.value.id);
+  if (!root.ok) return { ok: false, errors: root.errors };
+  return { ok: true, tenant: loaded.value, evidenceRoot: root.value };
+}
+
+/**
+ * Is this run allowed, for this tenant?
+ *
+ * Target ownership and market scope, checked BEFORE anything launches. Both are
+ * refusals rather than warnings: a run against a site the tenant does not own is
+ * either a mistake or this engine being aimed at somebody else's product from
+ * residential IPs, and a market nobody asked about is a bill.
+ *
+ * Returns every problem at once, like the matrix's validation, because fixing one
+ * refusal per invocation is how a tool stops being used.
+ */
+export function checkTenantScope(tenant: Tenant, options: { url?: string; markets?: string[] }): string[] {
+  const errors: string[] = [];
+  if (options.url !== undefined && options.url !== "" && !tenantOwnsTarget(tenant, options.url)) {
+    errors.push(
+      `tenant "${tenant.id}" does not own ${options.url} — declared targets are ${tenant.targets.join(", ")}. Add it to tenants/${tenant.id}.yaml if it is theirs.`,
+    );
+  }
+  for (const market of options.markets ?? []) {
+    if (!tenant.markets.includes(market)) {
+      errors.push(`tenant "${tenant.id}" has not asked for market "${market}" — declared markets are ${tenant.markets.join(", ")}`);
+    }
+  }
+  return errors;
 }
 
 export const profilesDir = (deps: CommandDeps): string => path.join(deps.repoRoot, "profiles");

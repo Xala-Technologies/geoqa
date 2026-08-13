@@ -172,6 +172,32 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-118** A tenant is **data**, in `tenants/<id>.yaml`, with the same reasoning as a
+  profile: it cannot reach the browser, a non-engineer can edit it, and it diffs in a
+  review. Unknown keys are an error — a misspelled `retentionDay` that silently became
+  the default is a retention policy somebody set on purpose and never got.
+- **R-119** A tenant file holds the **NAME** of an environment variable for its proxy
+  credentials, never a credential. A registry holding secrets is the `.env` mistake
+  moved somewhere with worse odds.
+- **R-120** Evidence is written under `<root>/<tenantId>/<runId>`, and **a path that
+  can escape its tenant's root is a security defect, not a bug.** The id is
+  constrained by pattern AND the resolved path is re-checked, because one line of
+  defence against traversal is a line somebody eventually finds a way round.
+  Containment is tested by `path.relative`, never by `startsWith`: `/evidence/acme`
+  starts with `/evidence/ac`, so a prefix test places tenant `acme` inside tenant
+  `ac`'s root and calls it contained. An absolute segment is refused too — 
+  `path.resolve("/evidence", "/etc")` is `/etc`, which discards the root entirely.
+- **R-121** A tenant id is lowercase, because macOS and Windows filesystems are
+  case-INSENSITIVE while Linux is not. `Acme` and `acme` would be two tenants in CI
+  and one tenant on a developer's laptop — a cross-tenant read that only reproduces on
+  the machine nobody tests on.
+- **R-122** A tenant declares the sites it **owns** and the markets it asked for, and
+  both are refused before anything launches. Ownership is compared by **origin**, never
+  by prefix: `https://acme.no.evil.test` starts with `https://acme.no` as a string, and
+  a prefix test would authorise an attacker's host. This is not bureaucracy — the
+  engine drives a real browser from residential IPs on a schedule, so a target
+  allowlist is the difference between a QA runner and something that looks like
+  distributed traffic aimed at whoever the URL names.
 - **R-114** `run.json` records what kind of visitor a run ACTUALLY was, not what its
   profile declared. A profile saying `returning` and a run that restored nothing were
   indistinguishable in the evidence, which is the same class of lie as an unmeasured

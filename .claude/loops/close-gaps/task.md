@@ -126,7 +126,7 @@ against, 90% is likely unreachable and the threshold is wrong.
 
 ### Multi-tenancy — the pivot
 
-- [ ] **6 · The tenant model.** `Tenant` as a first-class type: id, markets,
+- [x] **6 · The tenant model.** `Tenant` as a first-class type: id, markets,
       targets, credentials reference, quota. Evidence root becomes
       `<root>/<tenantId>/<runId>`. **A path that can escape its tenant's root is
       a security defect, not a bug** — test it explicitly.

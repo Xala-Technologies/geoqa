@@ -28,8 +28,11 @@ import {
   renderMatrixResult,
   renderPruneResult,
   renderRunResult,
+  checkTenantScope,
   resolveEvidenceRoot,
   resolveProfileId,
+  resolveTenant,
+  tenantList,
   runtimeOptions,
   scenarioSeed,
   verificationSpec,
@@ -1276,3 +1279,69 @@ describe("proxyVerify corroboration", () => {
     expect(result.verification.trustworthy).toBe(false);
   });
 });
+
+describe("tenant scoping", () => {
+  it("lists the tenants that ship", () => {
+    const { tenants } = tenantList(deps());
+    expect(tenants.map((t) => t.id)).toContain("digilist");
+    const zero = tenants.find((t) => t.id === "digilist");
+    expect(zero?.markets).toBeGreaterThan(0);
+    expect(zero?.targets).toBeGreaterThan(0);
+  });
+
+  it("REPLACES the evidence root with the tenant's own, rather than leaving it to callers", () => {
+    // Every path below this derives from the root. A caller that forgot to nest would
+    // write one tenant's run into the shared tree, which is the cross-tenant read the
+    // whole slice exists to prevent.
+    const resolved = resolveTenant(deps(), "digilist");
+    if (!resolved.ok) throw new Error(resolved.errors.join("\n"));
+    expect(resolved.tenant?.id).toBe("digilist");
+    expect(resolved.evidenceRoot).toBe(path.join(evidenceRoot, "digilist"));
+  });
+
+  it("leaves the shared root alone and returns a NULL tenant when none was named", () => {
+    // Not an error and not a default tenant: single-target use is still the common
+    // case, and no tenant rule applies then — which is the honest consequence.
+    const resolved = resolveTenant(deps(), undefined);
+    if (!resolved.ok) throw new Error(resolved.errors.join("\n"));
+    expect(resolved.tenant).toBeNull();
+    expect(resolved.evidenceRoot).toBe(evidenceRoot);
+  });
+
+  it("refuses a mistyped tenant rather than creating a directory for one that does not exist", () => {
+    // A run whose evidence lands under `evidence/digilst/` is lost, and lost quietly.
+    const resolved = resolveTenant(deps(), "digilst");
+    expect(resolved.ok).toBe(false);
+  });
+
+  it("refuses a target the tenant does not own, and names the declared ones", () => {
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    const errors = checkTenantScope(loaded.tenant, { url: "https://example.com" });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("does not own");
+    expect(errors[0]).toContain("https://digilist.no");
+  });
+
+  it("refuses a LOOKALIKE host, which a prefix test would have authorised", () => {
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    expect(checkTenantScope(loaded.tenant, { url: "https://digilist.no.evil.test/" })).toHaveLength(1);
+    expect(checkTenantScope(loaded.tenant, { url: "https://digilist.no/faq" })).toEqual([]);
+  });
+
+  it("refuses a market the tenant never asked for, and reports EVERY problem at once", () => {
+    // Fixing one refusal per invocation is how a tool stops being used.
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    const errors = checkTenantScope(loaded.tenant, { url: "https://example.com", markets: ["oslo", "berlin", "tokyo"] });
+    expect(errors).toHaveLength(3);
+    expect(errors.filter((e) => e.includes("has not asked for market"))).toHaveLength(2);
+  });
+
+  it("says nothing about an empty url, so a matrix using --urls-file is not refused for it", () => {
+    const loaded = resolveTenant(deps(), "digilist");
+    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
+    expect(checkTenantScope(loaded.tenant, { url: "" })).toEqual([]);
+  });
+})

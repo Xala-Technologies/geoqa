@@ -252,6 +252,31 @@ Usage:
 
   geoqa profile list [--json]
   geoqa journey list [--json]
+  geoqa tenant list [--json]
+
+Multi-tenancy:
+  --tenant <id>    scope the whole invocation to one tenant, from
+                   tenants/<id>.yaml
+
+      Evidence moves to <evidence-root>/<tenantId>/<runId>. A tenant id becomes a
+      directory name, so it is constrained to lowercase letters, digits and inner
+      hyphens, and the RESOLVED path is re-checked to be inside the root — a path
+      that escapes its tenant's root is a cross-tenant read, which is a security
+      defect and not a bug.
+
+      A tenant declares the sites it OWNS and the markets it asked for, and both
+      are refused before anything launches. A run against a site the tenant does
+      not own is either a mistake or this engine being aimed at somebody else's
+      product from residential IPs; a market nobody asked for is a bill. Ownership
+      is compared by ORIGIN, never by prefix: https://acme.no.evil.test starts with
+      https://acme.no as a string.
+
+      A tenant file holds the NAME of an environment variable for its proxy
+      credentials, never a credential. Credentials come from the environment only.
+
+      Omitting --tenant is not an error: single-target use is still the common case
+      and the shared evidence root is still correct for it. No tenant rule applies
+      then either, which is the honest consequence rather than a silent default.
 
   geoqa journey run --url <url> --geo <profile> --journey <id>
                     [--provider direct|http-proxy]

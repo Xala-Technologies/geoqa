@@ -208,6 +208,42 @@ Three things remain true, and the first is the one that matters:
 Where: `experiments/definitions.ts` (`EXP_007`), `cli/samplers.ts`
 (`sampleConcurrency`, `concurrencyProfiles`), `experiments/EXP-007-concurrency/`.
 
+### A-6 · CLOSED — tenants are a first-class type, and isolation is demonstrated
+
+`tenants/<id>.yaml` → `Tenant`, evidence at `<root>/<tenantId>/<runId>`, and both
+scope rules refused before anything launches. Decided with the owner: a YAML registry
+now, a database at run persistence where queries across runs are the actual
+requirement; and a proxy sub-account per tenant, so exhaustion is a 407 on that
+sub-user alone rather than everyone's runs (slice 7 provisions them).
+
+Isolation is DEMONSTRATED rather than asserted. Two tenants, two real runs, two
+disjoint trees:
+
+```
+<root>/digilist/run_1786611417809_oslo-desktop
+<root>/acme/run_1786611421089_oslo-desktop
+```
+
+The security work is `containedPath`, extracted as a primitive because slice 8 needs
+the same rule for tenant-scoped profiles and journeys, and a containment check
+reimplemented per call site is one that is subtly different in one of them. Three
+escapes refused: `..` above the root, an ABSOLUTE segment (which discards the root
+entirely — `path.resolve("/evidence", "/etc")` is `/etc`), and a segment resolving to
+the root itself, which would hand one tenant the shared tree. Containment is
+`path.relative`, never `startsWith`, because `/evidence/acme` starts with
+`/evidence/ac`.
+
+Two decisions worth keeping visible. The tenant id refuses UPPERCASE, and not on
+style: macOS and Windows filesystems are case-insensitive while Linux is not, so
+`Acme` and `acme` would be two tenants in CI and one on a laptop — a cross-tenant
+read reproducing only on the machine nobody tests on. And target ownership is compared
+by ORIGIN: `https://digilist.no.evil.test` starts with `https://digilist.no` as a
+string, so a prefix test would authorise an attacker's host.
+
+**Residual:** quota is DECLARED and not yet enforced. `trafficMb` and `runsPerDay` are
+parsed and validated and nothing reads them — which is precisely the defect B-1 closed
+for the config file, so it is named here rather than left to be discovered. Slice 7.
+
 ### A-4 · Findings have nowhere to go
 
 Read-only by design: no Linear, no Convex, no repo write, no dashboard, no
