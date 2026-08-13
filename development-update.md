@@ -19,6 +19,65 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-13 — A language marker read where it lives, and a claim of mine withdrawn
+
+### The localization journey can finally detect what it is named for (C-15)
+
+Its central check read `innerText` and looked for a marker living in `<html lang>`.
+`innerText` never returns attributes, so **the check could not pass on any site**,
+correctly localised or not.
+
+The gap listed two options — an attribute check, or a marker in visible copy — and they
+turned out not to be alternatives. Declaring a language is not writing it, so the
+journey now asserts **both**:
+
+| Fixture | `<html lang>` | Prose | Old journey | New journey |
+|---|---|---|---|---|
+| `/wrong-lang-attr` | `en` | Norwegian | passed | **fails** on the declaration |
+| `/wrong-copy` | `nb-NO` | English | passed | **fails** on the copy and the currency |
+
+Plus a control that passes on a page getting both right — without one, a journey that
+failed everything would look like it worked.
+
+Read through `evaluate` rather than a new seam primitive: both engines have it, so this
+needs no `BrowserRuntime` method and no refusal on the engine that lacks one. `""` is an
+*absent* attribute, `null` is *we could not look*, and only the second refuses.
+
+### A claim of mine, withdrawn (C-18)
+
+While building that check I asserted — in `gaps.md`, a journey comment, a schema comment
+and two test comments — that **digilist.no serves `<html lang="en">` over Norwegian
+prose**. A concrete, named, checkable claim about somebody's live site.
+
+**It is false.** The probe that produced it created a browser context with no `locale`,
+so it asked in `en-US`. digilist serves `lang` by `Accept-Language`, and English is the
+correct answer to an English request:
+
+| Context locale | `<html lang>` |
+|---|---|
+| default (`en-US`) | `en` |
+| `nb-NO` | `nb-NO` |
+
+Run under the `oslo-desktop` profile, which sets the locale the market implies, the
+journey passes. The site is not defective; the measurement was.
+
+**This is the third time this exact mistake has been made** — a localization defect
+filed from `curl` output and withdrawn; an `innerText` hypothesis from a read taken
+before hydration; now a language claim from a browser that never said what language it
+wanted. Every one is the same error: *a measurement taken under conditions that do not
+match the claim is not a weaker version of the right answer, it is a confident wrong
+one.*
+
+The engine already knows this — it is why profiles carry a locale, why absence is
+confirmed before it is reported, and why this project exists rather than trusting a
+datacentre crawler. **The instrument built to avoid this mistake does not protect an
+investigator who steps outside it.**
+
+The C-15 defect itself was real and independently verified, and the fixtures that prove
+it are constructed rather than copied from a real site — and say so.
+
+---
+
 ## 2026-08-13 — A real cookie proven to survive, and the last code-closable gap closed
 
 **B-7 is closed, and with it there is no code-closable item left in `docs/gaps.md`.**

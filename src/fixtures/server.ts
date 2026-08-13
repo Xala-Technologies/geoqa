@@ -328,6 +328,43 @@ export function fixtureBody(path: string, cookie = ""): FixtureResponse | null {
         ),
       };
     /**
+     * A page that DECLARES the wrong language while its copy is right.
+     *
+     * `<html lang="en">` on a site whose prose is Norwegian, which `innerText` cannot see:
+     * attributes are not text, so the old `text-contains selector: html` check read the
+     * rendered copy, found Norwegian, and said nothing was wrong (gaps C-15).
+     *
+     * Constructed rather than copied from a real site. An earlier version of this comment
+     * attributed the shape to digilist.no on the strength of a probe that set NO locale — so
+     * the browser asked in `en-US` and got English, which is correct behaviour, not a defect.
+     * See C-18.
+     *
+     * The two claims are deliberately split across two fixtures. Here the ATTRIBUTE is wrong
+     * and the copy is right; `/wrong-copy` is the reverse. A journey asserting only one would
+     * pass a site that got the other wrong, which is what this pair pins.
+     */
+    case "/wrong-lang-attr":
+      return {
+        status: 200,
+        html:
+          `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+          `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+          `<title>Feil språkmerke</title></head><body>` +
+          `<h1>Vi bygger saksbehandlingssystemer</h1><p>Priser fra kr 1 200 per måned.</p>${LINKS}</body></html>`,
+      };
+    /**
+     * The reverse: the declaration is right and the PROSE is English.
+     *
+     * Declaring a language is not writing it. A site that ships `lang="nb-NO"` over an
+     * untranslated page is a real and common failure — a half-finished localization — and the
+     * attribute check alone would call it correct.
+     */
+    case "/wrong-copy":
+      return {
+        status: 200,
+        html: shell("Riktig merke, feil tekst", `<h1>We build case management systems</h1><p>From USD 120 per month.</p>${LINKS}`),
+      };
+    /**
      * A visitor the site RECOGNISES, or does not.
      *
      * The one fixture that cannot be proven inside a single run, which is why B-7 sat open with

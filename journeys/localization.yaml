@@ -4,11 +4,42 @@ description: >
   The market-specific journey, and the reason this project exists. Everything
   here is a claim about what a visitor in ONE market should see. Run it against
   a second market and the failures are the localization bugs.
+
+  Requires three variables, and a run that omits any of them is REFUSED by name
+  rather than reported as a site defect (gaps C-14):
+
+    --var expectLanguageMarker=nb   the DOCUMENT's declared language, matched
+                                    against <html lang>. A prefix is enough, so
+                                    `nb` accepts both `nb` and `nb-NO`.
+    --var expectCopyMarker=kr       a word or symbol that appears in the visible
+                                    COPY of a correctly localised page. Declaring
+                                    a language is not writing it.
+    --var forbiddenCurrency=USD     a currency that must NOT leak into this
+                                    market's page.
+
+  Run it under a profile whose locale matches the market. A site that serves
+  `lang` by Accept-Language is behaving correctly and will look broken to a
+  profile that asks in the wrong language — that mistake has been made, and it
+  is recorded as gaps C-18.
 steps:
   - { action: open, url: "{target}", label: open target }
   - { action: assert, check: title-exists, severity: critical }
   - { action: assert, check: no-http-5xx, severity: critical }
   - { action: screenshot, label: as-seen, fullPage: true }
-  - { action: assert, check: text-contains, selector: html, value: "{expectLanguageMarker}", severity: high, category: localization, label: page carries the market's language marker }
+  # The DOCUMENT's declared language, read from the attribute where it lives.
+  #
+  # This was `text-contains selector: html`, which reads `innerText` — and `innerText` never
+  # returns attributes, so the check could not detect the marker it is named for on any site,
+  # correctly localised or not (gaps C-15). It is worth being precise about what this asserts
+  # and what it does not: `navigator.language` is what the visitor's browser ASKED for and
+  # `compareLanguage` already verifies it on the geo axis. This is what the site SERVED. A
+  # Norwegian browser receiving a page marked `lang="en"` is the localization bug this journey
+  # exists for. Note that a site serving `lang` BY locale is behaving correctly — verify with a
+  # profile whose locale matches the market, or the check tests the wrong visitor (gaps C-18).
+  - { action: assert, check: attribute-contains, selector: html, attribute: lang, value: "{expectLanguageMarker}", severity: high, category: localization, label: page declares the market's language }
+  # And the visible COPY, which is a separate claim. A page can declare `lang="nb-NO"` and serve
+  # English prose; declaring the language is not writing it. Both are asserted because a
+  # localization journey that checked only one would pass a site that got the other wrong.
+  - { action: assert, check: text-contains, selector: body, value: "{expectCopyMarker}", severity: high, category: localization, label: the copy is in the market's language }
   - { action: assert, check: text-absent, selector: body, value: "{forbiddenCurrency}", severity: high, category: localization, label: no foreign currency leaked in }
   - { action: assert, check: no-page-errors, severity: high }

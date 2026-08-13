@@ -270,3 +270,54 @@ describe("a page that rendered no text at all", () => {
     expect(evaluateCheck({ check: "text-contains", selector: "body", value: "nb-NO" }, reading({ text: "hello" })).verdict).toBe("failed");
   });
 });
+
+describe("attribute checks", () => {
+  // `text-contains` reads innerText, and innerText NEVER returns attributes — so the
+  // localization journey's central check could not detect the marker it was named for, on any
+  // site, correctly localised or not.
+
+  it("reads the DOCUMENT's declared language, which text checks cannot see", () => {
+    const result = evaluateCheck(
+      { check: "attribute-contains", selector: "html", attribute: "lang", value: "nb-NO" },
+      reading({ attribute: "nb-NO" }),
+    );
+    expect(result.verdict).toBe("passed");
+  });
+
+  it("FAILS a page that declares the wrong language, however Norwegian its prose", () => {
+    // `<html lang="en">` over Norwegian copy. A text check reads the copy, finds Norwegian,
+    // and says nothing is wrong.
+    const result = evaluateCheck(
+      { check: "attribute-contains", selector: "html", attribute: "lang", value: "nb-NO" },
+      reading({ attribute: "en" }),
+    );
+    expect(result.verdict).toBe("failed");
+    expect(result.observed).toBe('"en"');
+  });
+
+  it("QUOTES the observed value, so an absent attribute is not blank space in a report", () => {
+    // "observed:" followed by nothing is indistinguishable from a bug in whatever renders it.
+    const result = evaluateCheck(
+      { check: "attribute-contains", selector: "html", attribute: "lang", value: "nb-NO" },
+      reading({ attribute: "" }),
+    );
+    expect(result.verdict).toBe("failed");
+    expect(result.observed).toBe('""');
+  });
+
+  it("REFUSES rather than guessing when the attribute could not be read at all", () => {
+    // A missing element is not a reading. `null` means we could not look; `""` means we looked
+    // and the attribute was absent, which is a real fact about the page.
+    expect(evaluateCheck({ check: "attribute-contains", selector: "html", attribute: "lang", value: "nb" }, reading({ attribute: null })).verdict).toBe("unreadable");
+    expect(evaluateCheck({ check: "attribute-absent", selector: "img", attribute: "alt" }, reading({ attribute: null })).verdict).toBe("unreadable");
+  });
+
+  it("passes attribute-absent only on an attribute that is genuinely absent", () => {
+    expect(evaluateCheck({ check: "attribute-absent", selector: "img", attribute: "alt" }, reading({ attribute: "" })).verdict).toBe("passed");
+    expect(evaluateCheck({ check: "attribute-absent", selector: "img", attribute: "alt" }, reading({ attribute: "a cat" })).verdict).toBe("failed");
+  });
+
+  it("asks for the attribute reading and nothing else", () => {
+    expect(checkNeeds({ check: "attribute-contains", selector: "html", attribute: "lang", value: "nb" })).toEqual(["attribute"]);
+  });
+});

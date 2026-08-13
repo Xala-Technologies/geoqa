@@ -28,6 +28,15 @@ export interface PageReading {
   title: string | null;
   url: string | null;
   text: string | null;
+  /**
+   * A markup attribute's value: `null` when not read, `""` when the attribute is ABSENT.
+   *
+   * The two are different facts and the check depends on telling them apart — an absent
+   * attribute is a real, verifiable reading of the page, while "we could not look" is ours.
+   * Empty string does double duty for absent and for `lang=""`, which is deliberate: a page
+   * declaring an empty language has declared nothing, and no check should treat those apart.
+   */
+  attribute: string | null;
   visible: boolean | null;
   count: number | null;
   console: ConsoleMessage[] | null;
@@ -41,6 +50,7 @@ export const EMPTY_READING: PageReading = {
   title: null,
   url: null,
   text: null,
+  attribute: null,
   visible: null,
   count: null,
   console: null,
@@ -95,6 +105,9 @@ export function checkNeeds(check: Check): (keyof PageReading)[] {
     case "text-contains":
     case "text-absent":
       return ["text"];
+    case "attribute-contains":
+    case "attribute-absent":
+      return ["attribute"];
     case "no-console-errors":
       return ["console"];
     case "no-page-errors":
@@ -210,6 +223,21 @@ export function evaluateCheck(check: Check, reading: PageReading): CheckResult {
         `${check.selector} lacks "${check.value}"`,
         `${reading.text.length} chars read`,
       );
+    }
+    case "attribute-contains": {
+      if (reading.attribute === null) return unread(`${check.selector}[${check.attribute}] contains "${check.value}"`, "the attribute was not read");
+      return verdictOf(
+        reading.attribute.toLowerCase().includes(check.value.toLowerCase()),
+        `${check.selector}[${check.attribute}] contains "${check.value}"`,
+        // The attribute is QUOTED, so an absent one reads as `""` rather than as blank space
+        // in a report — "observed:" followed by nothing is indistinguishable from a rendering
+        // bug in whatever is displaying it.
+        JSON.stringify(reading.attribute),
+      );
+    }
+    case "attribute-absent": {
+      if (reading.attribute === null) return unread(`${check.selector} has no ${check.attribute}`, "the attribute was not read");
+      return verdictOf(reading.attribute === "", `${check.selector} has no ${check.attribute}`, JSON.stringify(reading.attribute));
     }
     case "no-console-errors": {
       if (reading.console === null) return unread("no console errors", "the console was not read");

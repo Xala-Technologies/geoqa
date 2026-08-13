@@ -1604,7 +1604,7 @@ green PASS to two named refusals telling the operator exactly what to pass.
 
 Where: `journeys/assertions.ts` (`UNFILLED_PLACEHOLDER`).
 
-### C-15 · The localization journey looks for a markup ATTRIBUTE in rendered TEXT
+### C-15 · CLOSED — the language marker is read from the attribute where it lives
 
 `localization.yaml` asserts
 `text-contains selector: html value: "{expectLanguageMarker}"`, and its own
@@ -1618,13 +1618,37 @@ Confirmed rather than reasoned: `digilist.no` renders 11,542 characters of
 `innerText` and carries `lang="en"`; the string `en` as a *marker* is not findable in
 that text in any meaningful way, and `nb-NO` would not be either.
 
-The check needs to read the attribute — `evaluate` already exists and
-`observeBrowser` already reads `navigator.language` — or the journey needs to name a
-marker that genuinely appears in visible copy (a Norwegian word, a `kr` price). The
-first is the honest one, because a visible-copy marker tests the copy, not the
-document's declared language.
+**CLOSED, and the two options turned out not to be alternatives.** `attribute-contains`
+and `attribute-absent` read a markup attribute; the journey now asserts **both** the
+document's declaration and a marker in the visible copy, because they are different
+claims and a journey checking one passes a site that got the other wrong:
 
-Where: `journeys/localization.yaml`, `journeys/assertions.ts`.
+| Fixture | `<html lang>` | Prose | Old journey | New journey |
+|---|---|---|---|---|
+| `/wrong-lang-attr` | `en` | Norwegian | passed | **fails** on the declaration |
+| `/wrong-copy` | `nb-NO` | English | passed | **fails** on the copy and the currency |
+
+Declaring a language is not writing it, and a half-finished translation ships
+`lang="nb-NO"` over an untranslated page. Both are e2e-proven, with a control that
+passes on a page getting both right — without one, a journey that failed everything
+would look like it worked.
+
+Read through `evaluate` rather than a new `BrowserRuntime` method. Both engines already
+implement it, so this needs neither a seam primitive nor a refusal on the engine that
+lacks one, and an attribute read has none of the timing subtlety that earned `getText`
+and `isVisible` their own methods. Selector and attribute both cross as
+`JSON.stringify`, so a selector carrying a quote cannot break out of the expression —
+asserted against `JSON.stringify` itself rather than a hand-escaped literal, because
+hand-written escaping in a test gets it wrong in the same direction as hand-written
+escaping in the code.
+
+`""` is an ABSENT attribute and `null` is "we could not look". Only the second refuses:
+an absent attribute is a real reading of the page, and `attribute-absent` is entitled
+to pass on it.
+
+Where: `journeys/spec.ts` (`CheckSchema`), `journeys/assertions.ts`,
+`journeys/engine.ts` (`readAttribute`), `journeys/localization.yaml`,
+`fixtures/server.ts` (`/wrong-lang-attr`, `/wrong-copy`).
 
 ### C-16 · xala.no, the second live target: what the journeys found
 
@@ -1684,6 +1708,46 @@ category **derived from its check kind**. `instrumentation` is derived from the
 OUTCOME, and no journey author can know in advance that a step will be unreadable.
 
 Where: `findings/classify.ts` (`categoryFor`).
+
+### C-18 · WITHDRAWN CLAIM — digilist.no does NOT serve the wrong language marker
+
+Recorded because the claim reached four files before it was checked, and because it is
+the third time this exact mistake has been made.
+
+While building [C-15](#c-15--closed--the-language-marker-is-read-from-the-attribute-where-it-lives)
+I asserted, in `gaps.md`, a journey comment, a schema comment and two test comments,
+that **digilist.no serves `<html lang="en">` over Norwegian prose** — a concrete,
+named, checkable claim about somebody's live site.
+
+It is false. The probe that produced it created a Playwright context with **no
+`locale`**, so the browser asked in `en-US`. digilist serves `lang` by
+`Accept-Language`, and English is the correct answer to an English request:
+
+| Context locale | `<html lang>` |
+|---|---|
+| default (`en-US`) | `en` |
+| `nb-NO` | `nb-NO` |
+
+Run under the `oslo-desktop` profile — which sets the locale the market implies — the
+journey passes, correctly. The site is not defective; the measurement was.
+
+**The pattern, three times now.** [C-12](#c-12--j06-does-not-complete-on-digilistno-and-the-reason-is-not-established)
+was a localization defect filed against digilist from `curl` output, withdrawn once a
+real browser was used. Then an `innerText` hypothesis from a read taken before
+hydration, killed by comparing against a second site. Now a language claim from a
+browser that never said what language it wanted. Every one of them is the same error:
+**a measurement taken under conditions that do not match the claim is not a weaker
+version of the right answer, it is a confident wrong one.**
+
+The engine already knows this — it is why profiles carry a locale, why absence is
+confirmed before it is reported, and why the whole project exists rather than trusting
+a datacentre crawler. The instrument built to avoid this mistake does not protect an
+investigator who steps outside it.
+
+**What survives.** The C-15 defect was real and independently verified: `innerText`
+never returns attributes, so the old check could not detect a language marker on any
+site. The fixtures that prove it are constructed, not copied from a real site, and say
+so.
 
 ## D. Tooling and process gaps
 
@@ -1954,13 +2018,12 @@ The first is not a priority call — it is a red suite. After that the order is
    mutation-checked so it is sensitive to the restore branch it names. **With this,
    no code-closable item remains in this document** — everything below needs a
    decision, a live environment, or a Temporal worker.
-8. **C-8 and C-15 both need a DECISION, not an implementation.** C-8: mobile
-   profiles are mobile by viewport only and present a desktop UA — closing it means
-   choosing emulation (and losing `window.innerWidth` control, measured at 980 vs
-   390) or hand-maintained `userAgent` strings. C-15: the localization check reads
-   rendered text and the language marker lives in an attribute — closing it means
-   either a new attribute-reading check or a journey that names a marker appearing
-   in visible copy, and only the first tests the document's declared language.
+8. **C-8 needs a DECISION, not an implementation.** Mobile profiles are mobile by
+   viewport only and present a desktop UA — closing it means choosing emulation (and
+   losing `window.innerWidth` control, measured at 980 vs 390) or hand-maintained
+   `userAgent` strings. ~~C-15~~ is DONE: the two options were not alternatives, and
+   the journey now asserts the declaration and the copy as the separate claims they
+   are.
 9. **B-4's residue** — the attempt count is in `run.json` now and occurrences are
    keyed per step; what is left is giving the durable path the same repeat wiring the
    CLI has, which waits on D-2.

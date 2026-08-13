@@ -26,6 +26,30 @@ export const CheckSchema = z.discriminatedUnion("check", [
   z.object({ check: z.literal("selector-count-min"), selector: z.string().min(1), value: z.number().int().min(0) }),
   z.object({ check: z.literal("text-contains"), selector: z.string().min(1), value: z.string().min(1) }),
   z.object({ check: z.literal("text-absent"), selector: z.string().min(1), value: z.string().min(1) }),
+  /**
+   * A markup ATTRIBUTE, which is a different claim from rendered text.
+   *
+   * `text-contains` reads `innerText`, and `innerText` never returns attributes — so the
+   * `localization` journey's central check could not detect the language marker it was named
+   * for, on any site, correctly localised or not (gaps C-15).
+   *
+   * The distinction matters beyond `lang`. `navigator.language` is what the visitor's browser
+   * ASKED for, and `compareLanguage` already verifies it; `<html lang>` is what the site
+   * SERVED. A Norwegian browser asking for `nb-NO` and receiving a page marked `lang="en"` is
+   * precisely the localization bug this project exists to find, and verifying the request side
+   * tells you nothing about the response side.
+   *
+   * Which is also why the check must run under the market's own locale: a site that serves
+   * `lang` correctly by `Accept-Language` looks broken to a probe that forgot to ask in the
+   * market's language. That mistake was made while building this check — see gaps C-18.
+   */
+  z.object({
+    check: z.literal("attribute-contains"),
+    selector: z.string().min(1),
+    attribute: z.string().min(1),
+    value: z.string().min(1),
+  }),
+  z.object({ check: z.literal("attribute-absent"), selector: z.string().min(1), attribute: z.string().min(1) }),
   z.object({ check: z.literal("no-console-errors") }),
   z.object({ check: z.literal("no-page-errors") }),
   z.object({ check: z.literal("no-http-5xx") }),

@@ -335,7 +335,9 @@ describe("a client-rendered page whose body is EMPTY at load", () => {
       runId: "e2e_hydrates_late",
       target: `${fixtures.origin}/hydrates-late`,
       journeyPath: path.join(journeysDir, "localization.yaml"),
-      vars: { expectLanguageMarker: "saksbehandlingssystemer", forbiddenCurrency: "USD" },
+      // The language marker is the DOCUMENT's declaration; the copy marker is the prose. They
+      // were one variable while the check read `innerText` and looked for an attribute in it.
+      vars: { expectLanguageMarker: "nb", expectCopyMarker: "saksbehandlingssystemer", forbiddenCurrency: "USD" },
     });
     expect(result.verdict).toBe("PASS");
     expect(result.findings).toEqual([]);
@@ -350,7 +352,11 @@ describe("a client-rendered page whose body is EMPTY at load", () => {
       runId: "e2e_no_text",
       target: `${fixtures.origin}/empty-body`,
       journeyPath: path.join(journeysDir, "localization.yaml"),
-      vars: { expectLanguageMarker: "kr", forbiddenCurrency: "USD" },
+      // The attribute check PASSES here — the shell carries `lang="nb-NO"` whether or not the
+      // body rendered — so only the copy check is unreadable, which is exactly the split being
+      // asserted: a page that rendered nothing is our defect on the reads that need text and
+      // nobody's defect on the read that does not.
+      vars: { expectLanguageMarker: "nb", expectCopyMarker: "kr", forbiddenCurrency: "USD" },
     });
     expect(result.verdict).toBe("ERROR");
     // Filed against US, never against the page — and this assertion caught a second defect
@@ -359,6 +365,57 @@ describe("a client-rendered page whose body is EMPTY at load", () => {
     // unreadable step was filed as a localization defect titled "Could not verify: …".
     expect(result.findings.every((f) => f.category === "instrumentation")).toBe(true);
     expect(result.findings.every((f) => f.title.startsWith("Could not verify"))).toBe(true);
+  });
+});
+
+describe("a localization failure, in each of its two halves", () => {
+  /**
+   * The check the `localization` journey is named for could not detect the thing it was named
+   * for. It read `innerText` and looked for a marker living in `<html lang>` — and `innerText`
+   * never returns attributes, so it could not pass on ANY site, correctly localised or not.
+   *
+   * Both halves are exercised because a journey asserting only one passes a site that got the
+   * other wrong, and both failures are real: `lang="en"` over Norwegian prose is digilist.no,
+   * and `lang="nb-NO"` over English prose is a half-finished translation.
+   */
+  const localizationRun = (runId: string, page: string): Promise<GeoQaRunResult> =>
+    run({
+      runId,
+      target: `${fixtures.origin}${page}`,
+      journeyPath: path.join(journeysDir, "localization.yaml"),
+      vars: { expectLanguageMarker: "nb", expectCopyMarker: "kr", forbiddenCurrency: "USD" },
+    });
+
+  it("catches a page that DECLARES the wrong language, however Norwegian its prose", async () => {
+    const result = await localizationRun("e2e_wrong_lang_attr", "/wrong-lang-attr");
+    expect(result.verdict).toBe("FAIL");
+    const finding = result.findings.find((f) => f.title === "page declares the market's language");
+    expect(finding?.observed).toBe('"en"');
+    // A real site finding, not our defect — the engine read the page correctly and the page is
+    // wrong. That distinction is the one this whole system is built on.
+    expect(finding?.category).toBe("localization");
+    // And the copy check passes on the same page, which is what makes the pair necessary: the
+    // old single check read this prose, found Norwegian, and reported nothing.
+    const steps = journeySteps("e2e_wrong_lang_attr");
+    expect(steps.find((s) => s.label === "the copy is in the market's language")?.outcome).toBe("passed");
+  });
+
+  it("catches a page that declares Norwegian and serves English COPY", async () => {
+    // Declaring a language is not writing it. The attribute check alone would call this correct.
+    const result = await localizationRun("e2e_wrong_copy", "/wrong-copy");
+    expect(result.verdict).toBe("FAIL");
+    const steps = journeySteps("e2e_wrong_copy");
+    expect(steps.find((s) => s.label === "page declares the market's language")?.outcome).toBe("passed");
+    expect(steps.find((s) => s.label === "the copy is in the market's language")?.outcome).toBe("failed");
+    // The forbidden-currency check earns its place here too: this page prices in USD.
+    expect(steps.find((s) => s.label === "no foreign currency leaked in")?.outcome).toBe("failed");
+  });
+
+  it("passes a page that gets BOTH right", async () => {
+    // The control. Without it, a journey that failed everything would look like it worked.
+    const result = await localizationRun("e2e_localized_ok", "/hydrates-late");
+    expect(result.verdict).toBe("PASS");
+    expect(result.findings).toEqual([]);
   });
 });
 

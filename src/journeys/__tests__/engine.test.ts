@@ -176,6 +176,60 @@ describe("gatherReading", () => {
     expect(out.text).toBeNull();
   });
 });
+describe("gatherReading: the attribute read", () => {
+  // Through `evaluate`, not a new seam primitive. Both engines already implement it, so this
+  // needs neither a `BrowserRuntime` method nor a refusal on the engine that lacks one — and
+  // an attribute read has none of the timing subtlety that earned `getText` its own method.
+
+  const check = { check: "attribute-contains" as const, selector: "html", attribute: "lang", value: "nb-NO" };
+
+  it("returns the attribute's value", async () => {
+    const r = runtime({ evaluate: <T,>() => Promise.resolve(ok(JSON.stringify({ found: true, value: "nb-NO" }) as unknown as T)) });
+    expect((await gatherReading(r, check, "html")).attribute).toBe("nb-NO");
+  });
+
+  it("returns an EMPTY STRING when the element exists without the attribute", async () => {
+    // A real reading of the page: `attribute-absent` is entitled to pass on it.
+    const r = runtime({ evaluate: <T,>() => Promise.resolve(ok(JSON.stringify({ found: true, value: "" }) as unknown as T)) });
+    expect((await gatherReading(r, check, "html")).attribute).toBe("");
+  });
+
+  it("returns NULL when the element is not there — that is not a reading", async () => {
+    const r = runtime({ evaluate: <T,>() => Promise.resolve(ok(JSON.stringify({ found: false }) as unknown as T)) });
+    expect((await gatherReading(r, check, "html")).attribute).toBeNull();
+  });
+
+  it("returns null rather than throwing when the expression fails or returns nonsense", async () => {
+    const failed = runtime({ evaluate: <T,>() => Promise.resolve(bad<T>()) });
+    expect((await gatherReading(failed, check, "html")).attribute).toBeNull();
+    const garbage = runtime({ evaluate: <T,>() => Promise.resolve(ok("not json" as unknown as T)) });
+    expect((await gatherReading(garbage, check, "html")).attribute).toBeNull();
+    const wrongShape = runtime({ evaluate: <T,>() => Promise.resolve(ok(42 as unknown as T)) });
+    expect((await gatherReading(wrongShape, check, "html")).attribute).toBeNull();
+  });
+
+  it("names BOTH the selector and the attribute in the expression it sends", async () => {
+    // Serialised with JSON.stringify on both, so a selector carrying a quote cannot break out
+    // of the expression — the same reason `CONTENT_EXPRESSION` returns a JSON string.
+    let sent = "";
+    const r = runtime({
+      evaluate: <T,>(expr: string) => {
+        sent = expr;
+        return Promise.resolve(ok(JSON.stringify({ found: true, value: "x" }) as unknown as T));
+      },
+    });
+    const tricky = 'a[title="hi"]';
+    await gatherReading(r, { ...check, selector: tricky }, tricky);
+    // Compared against JSON.stringify itself rather than a hand-escaped literal — the escaping
+    // is the thing under test, and a hand-written expectation gets it wrong in the same
+    // direction as a hand-written implementation would.
+    expect(sent).toContain(JSON.stringify(tricky));
+    expect(sent).toContain(JSON.stringify("lang"));
+    // And the raw selector must NOT appear unescaped, or the quote closed the string early.
+    expect(sent).not.toContain(`("${tricky}")`);
+  });
+});
+
 
 describe("runJourney", () => {
   it("passes a healthy page", async () => {

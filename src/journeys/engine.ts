@@ -110,6 +110,10 @@ export async function gatherReading(
 ): Promise<PageReading> {
   const reading: PageReading = { ...EMPTY_READING };
   const take = <T,>(out: BrowserResult<T>): T | null => (out.ok ? out.data : null);
+  // Derived from the check rather than added to the signature: `selector` is a parameter for
+  // historical reasons and growing that list makes every call site and fake carry a field only
+  // two checks use.
+  const attribute = attributeOf(check);
 
   /**
    * Read Core Web Vitals, and re-read once if the metric this check needs came
@@ -150,6 +154,9 @@ export async function gatherReading(
       case "count":
         reading.count = selector === null ? null : take(await runtime.count(selector));
         break;
+      case "attribute":
+        reading.attribute = selector === null || attribute === null ? null : await readAttribute(runtime, selector, attribute);
+        break;
       case "console":
         reading.console = take(await runtime.console());
         break;
@@ -171,6 +178,45 @@ export async function gatherReading(
 }
 
 const selectorOf = (check: Check): string | null => ("selector" in check ? check.selector : null);
+const attributeOf = (check: Check): string | null => ("attribute" in check ? check.attribute : null);
+
+/**
+ * Read a markup attribute, through `evaluate` rather than a new seam primitive.
+ *
+ * Both engines already implement `evaluate`, so this needs neither a `BrowserRuntime` method
+ * nor a refusal on the engine that lacks one — and an attribute read has none of the timing
+ * subtlety that earned `getText` and `isVisible` their own methods. Adding a primitive to the
+ * seam is a cost paid by both adapters and every test fake, and it buys nothing here.
+ *
+ * Returns `""` for an element that exists without the attribute, and `null` for "we could not
+ * look" — a missing element, or an expression that threw. The distinction is the whole point:
+ * an absent attribute is a real reading of the page and `attribute-absent` is entitled to pass
+ * on it, while a missing element is not something a check may build a verdict on.
+ */
+async function readAttribute(runtime: BrowserRuntime, selector: string, attribute: string): Promise<string | null> {
+  // Serialised through the same JSON-string convention `CONTENT_EXPRESSION` uses, so the value
+  // crosses both engines identically rather than depending on how each marshals a bare string.
+  const expression = `(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (el === null) return JSON.stringify({ found: false });
+    return JSON.stringify({ found: true, value: el.getAttribute(${JSON.stringify(attribute)}) ?? "" });
+  })()`;
+  const out = await runtime.evaluate<unknown>(expression);
+  if (!out.ok) return null;
+  const raw = typeof out.data === "string" ? safeJson(out.data) : out.data;
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as { found?: unknown; value?: unknown };
+  if (r.found !== true) return null;
+  return typeof r.value === "string" ? r.value : null;
+}
+
+const safeJson = (raw: string): unknown => {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
 
 /** Verdicts map straight onto step outcomes, except `unreadable` → errored. */
 const outcomeOf = (result: CheckResult): StepOutcome =>
