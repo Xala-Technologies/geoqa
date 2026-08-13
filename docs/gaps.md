@@ -1291,6 +1291,68 @@ run, which is now clearly the right call rather than a cautious one.
 
 Where: `network/provider.ts` (`defaultSessionId`, `substituteProxyPlaceholders`).
 
+### A-9 · Content-level SEO signals cannot be computed — the evidence carries no page text
+
+Checked rather than assumed. The slice named thin pages, orphan pages, soft 404s and
+near-duplicate cannibalisation. **Every one of them needs page TEXT or the internal LINK
+GRAPH, and a run records neither.** A run stores verdicts, findings, vitals, geography and
+confidence; the journey's `getText` result is compared by a check and then discarded, and
+`selector-count-min` counts links without recording their targets.
+
+So they are not computed. Approximating them would mean inventing the inputs, and a
+thin-page report built on a guess about page length is worse than no thin-page report,
+because somebody would rewrite a page over it.
+
+**What would close it**, and it is a small, additive evidence change rather than a new
+subsystem:
+
+| Signal | Needs | Where |
+|---|---|---|
+| thin pages | rendered text length per page | a `content.json` artifact, or a field on `run.json` |
+| orphans, internal link graph | `href` targets of internal links | the same, from a `document.querySelectorAll` read |
+| near-duplicate cannibalisation | text per page, then similarity | as above, plus an offline comparison |
+| soft 404 | text + status, which is already half there | a `text-absent` check on "not found" wording gets most of it today |
+
+Note the last row: a soft 404 is largely expressible with existing checks, and that is how
+`/en/blog` was caught. It is the other three that need the artifact.
+
+**What IS built** is the half no other tool has, because no other tool measures from inside
+the market — see `analysis/site.ts` and
+[A-10](#a-10--closed--the-same-page-compared-across-markets).
+
+### A-10 · CLOSED — the same page, compared across markets
+
+`geoqa site analyse` reads the run history and answers the question a crawler running from
+one datacentre cannot: **does this page behave differently depending on where the visitor
+is?** Verified live over a real 2-page × 3-market matrix through Decodo:
+
+```
+2 page(s) across 3 market(s): berlin, bodo, oslo
+  widest latency gaps between markets — a crawler from one datacentre sees none of this:
+    https://digilist.no/faq:    TTFB 467ms in berlin vs 596ms in bodo — 1.3x
+    https://digilist.no/priser: TTFB 541ms in oslo   vs 662ms in bodo — 1.2x
+```
+
+Three outputs, and each has a specific reason for existing:
+
+- **Verdict divergence** — one URL, one set of HTML, different outcomes by market. This is
+  the finding the whole engine exists to produce, and `site analyse` exits 1 when there is
+  one so a scheduled check does not have to read the output.
+- **Latency spread**, with the factor between fastest and slowest market. The sentence a
+  "our local numbers look fine" argument dies on.
+- **Coverage gaps** — a page measured in some markets and not others. A page nobody
+  measured in Bodø is not a page that works in Bodø, and omitting it would read as full
+  coverage.
+
+`ERROR` runs are excluded from every comparison and counted in a warning instead. Including
+them would make our own instrumentation failure look like a market where the site behaves
+differently, which is the exact false geographic finding this project exists to avoid.
+
+Two smaller honesty properties: a spread is `null` rather than `0` with fewer than two
+readings, because "one market measured" and "every market identical" are different facts;
+and a market's reading is the MEDIAN across its repeats rather than the latest, because a
+single slow run is noise and "latest" means whichever finished last.
+
 ## D. Tooling and process gaps
 
 ### D-1 · The layer map is enforced by a tool now, and it has already earned it

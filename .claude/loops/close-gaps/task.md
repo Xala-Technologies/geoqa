@@ -161,7 +161,8 @@ against, 90% is likely unreachable and the threshold is wrong.
       config. Serper is the data source.
 - [x] **14 · The publish GATE (generation stays in agent-fleet — see progress.md).** Tenant product and voice as inputs.
       **Publish gated on a geoqa verdict** — the producer never grades itself.
-- [ ] **15 · AEO/GEO/SEO analysis.** Reuse what the sweep already detects: thin
+- [x] **15 · Cross-market site analysis.** Content-level signals need page text the evidence
+      does not carry — see gaps A-9. Reuse what the sweep already detects: thin
       pages, orphans, soft 404s, near-duplicate cannibalisation, and (with
       Serper) whether a page ranks in the market it was written for.
 

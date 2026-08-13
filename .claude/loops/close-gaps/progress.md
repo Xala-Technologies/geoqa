@@ -1009,10 +1009,56 @@ Docs: PRD **R-141 … R-143**.
 Gate: lint clean · boundaries clean (113 modules / 447 deps) · **1248 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
+## Slice 15 · Site analysis across markets — DONE, with an honest hole named
+
+The slice named thin pages, orphans, soft 404s and near-duplicate cannibalisation. I checked
+what the evidence actually carries before writing anything: **a run stores verdicts,
+findings, vitals, geography and confidence, and nothing else.** The journey's `getText`
+result is compared by a check and discarded; `selector-count-min` counts links without
+recording their targets.
+
+So three of those four **cannot be computed**, and they are not approximated. A thin-page
+report built on a guess about page length is worse than no thin-page report, because somebody
+would rewrite a page over it. Recorded as **A-9** with the exact evidence change that would
+close each one — a small additive artifact, not a new subsystem. (Soft 404s are largely
+expressible with existing checks, which is how `/en/blog` was caught.)
+
+**What IS built is the half no other tool has**, because no other tool measures from inside
+the market. Verified live over a real 2-page × 3-market matrix through Decodo:
+
+```
+2 page(s) across 3 market(s): berlin, bodo, oslo
+  widest latency gaps between markets — a crawler from one datacentre sees none of this:
+    https://digilist.no/faq:    TTFB 467ms in berlin vs 596ms in bodo — 1.3x
+    https://digilist.no/priser: TTFB 541ms in oslo   vs 662ms in bodo — 1.2x
+```
+
+Three outputs: **verdict divergence** (one URL, one set of HTML, different outcomes — exits
+1 so a scheduled check need not read the output), **latency spread** with the factor, and
+**coverage gaps**, because a page nobody measured in Bodø is not a page that works in Bodø.
+
+`ERROR` runs are excluded from every comparison and counted in a warning instead — including
+them would make our own instrumentation failure look like a market where the site behaves
+differently.
+
+Two smaller properties worth keeping: a spread is `null` rather than `0` with fewer than two
+readings, and a market's figure is the MEDIAN across repeats rather than the latest, because
+a single slow run is noise and "latest" means whichever finished last.
+
+Also fixed: TTFB printed as `467.19999998807907ms`. Sub-millisecond precision in a network
+measurement is noise dressed as rigour, and it makes a report look like nobody read it.
+
+Docs: gaps **A-9** opened with its closing conditions, **A-10** closed; PRD **R-144 … R-146**.
+
+Gate: lint clean · boundaries clean (115 modules / 452 deps) · **1269 tests at 100%**
+lines/statements/functions · e2e **30/30**.
+
 ## Next
 
-Slice 15 (AEO/GEO/SEO analysis, reusing what the sweep already detects), then 16–19
-(frontend). The milestone is unblocked and
+Slices 16–19, the frontend. Slice 16 was an approval gate on React vs Electron; the criterion
+recorded in `task.md` is whether it needs filesystem access beyond a served directory, and it
+does not — evidence is files under a root, and a static app can read them over HTTP. React,
+and the reasoning goes in the commit. The milestone is unblocked and
 worth running now that per-session identity actually works. Then slices 13–15 (the agents, generalised) and
 16–19 (frontend), neither of which depends on it.
 
