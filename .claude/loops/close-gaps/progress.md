@@ -876,9 +876,43 @@ Docs: gaps **A-3** concurrency bullet closed, **B-12** opened.
 Gate: lint clean · boundaries clean (107 modules / 418 deps) · **1203 tests at 100%**
 lines/statements/functions · e2e **30/30**.
 
+## B-12 · FIXED — and it was the most consequential defect yet
+
+Not a concurrency bug. A residential vendor's username is a `-`-delimited parameter list, so
+**a hyphenated session id is silently truncated at its first hyphen.** geoqa's id was
+`<market>-<epochMs>`, so the effective sticky key was just `<market>`:
+
+```
+session-oslo-1 → 188.92.250.221     session-oslo1 → 84.210.158.133
+session-oslo-2 → 188.92.250.221     session-oslo2 → 84.209.67.194
+session-oslo-3 → 188.92.250.221     session-oslo3 → 212.89.117.129
+session-oslo   → 188.92.250.221  ← the truncated value
+```
+
+**Every run in a market had always used the same exit IP** — sequential as well as
+concurrent, across separate processes. The engine claimed a per-session network identity it
+never had, and nothing contradicted it: `egressHeld` compares a run's opening and closing IP,
+which genuinely matched, because it was the same address every time.
+
+Fixed with a base-36 alphanumeric id plus hyphen-stripping in the substitution itself, so an
+injected id or a hyphenated market id cannot reintroduce it. Verified: three concurrent Oslo
+sessions → three distinct Oslo IPs.
+
+The step that broke it open was noticing **every market has exactly two profiles**, so "same
+market shares" and "adjacent launches share" were indistinguishable in my data. Four
+concurrent runs across four different markets (4 distinct IPs) versus three across one market
+(1 IP) separated them; three SEQUENTIAL same-market runs also sharing then removed concurrency
+entirely.
+
+**Invalidates** any earlier claim about per-session rotation *within* a market, including the
+"5 sessions → 5 IPs" note, unless that used a hyphen-free key. Between-market rotation was
+never affected. Not having run the 100-session milestone is now clearly right rather than
+cautious.
+
 ## Next
 
-**B-12 first** — it gates the milestone. Then slices 13–15 (the agents, generalised) and
+Slices 13–15 (the agents, generalised) and 16–19 (frontend). The milestone is unblocked and
+worth running now that per-session identity actually works. Then slices 13–15 (the agents, generalised) and
 16–19 (frontend), neither of which depends on it.
 
 ## Earlier plan for slices 10–12 (search intelligence)

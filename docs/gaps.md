@@ -1235,55 +1235,61 @@ Two engine improvements came out of the attempt and are already landed:
 Where: `journeys/language-override.yaml`, `browser/playwright-launch.ts`,
 [C-11](#c-11--a-comma-union-selector-is-safe-in-an-assertion-and-a-hazard-in-a-click).
 
-### B-12 · Two concurrent runs in the SAME market share one egress IP — cause unresolved
+### B-12 · FIXED — every run in a market shared one egress IP, because a hyphen truncated the sticky key
 
-Reproduced three times, at concurrency 3 and 4, through Decodo residential:
+**The most consequential defect found so far.** It was not about concurrency at all.
+
+A residential vendor's username is a `-`-delimited parameter list:
+`user-<account>-country-no-city-oslo-session-<id>`. So the vendor parses a value up to the
+next hyphen, and **a hyphenated session id is silently truncated at its first one.**
+geoqa's id was `<market>-<epochMs>`, so the effective sticky key was just `<market>`.
+
+Measured, and unambiguous:
 
 ```
-oslo-desktop           193.69.169.75
-oslo-mobile            193.69.169.75      ← same market, same IP
-porsgrunn-desktop      51.174.196.164
-porsgrunn-mobile       51.174.196.164     ← same market, same IP
+session-oslo-1  → 188.92.250.221
+session-oslo-2  → 188.92.250.221     identical
+session-oslo-3  → 188.92.250.221
+session-oslo    → 188.92.250.221     ← the truncated value
+session-oslo1   → 84.210.158.133
+session-oslo2   → 84.209.67.194      distinct
+session-oslo3   → 212.89.117.129
 ```
 
-Profiles that share a MARKET share an exit; different markets get different exits. Each
-session reports `egressHeld: match`, because holding an IP you share with somebody else
-still looks like holding it — so nothing in a run contradicts this.
+**Consequence: every run in a market had always used the same exit IP.** Not just
+concurrent runs — sequential ones too, across separate browser launches and separate
+processes. The engine claimed a per-session network identity it had never had.
 
-**Why it matters.** Invariant 16 is ONE JOURNEY = ONE NETWORK SESSION. Two concurrent
-journeys on one IP are two journeys on one session, which is less authentic than the design
-claims and, worse, means a matrix at concurrency N within a market is exercising fewer
-distinct exits than it reports.
+And nothing contradicted it. `egressHeld` compares a run's opening and closing IP, and they
+genuinely did match — it was the same address every time. A guard that asks "did this run
+hold its IP" cannot see "this run holds the IP every other run also holds".
 
-**What was established, so the next person does not repeat it:**
+Fixed: the id is now base-36 and alphanumeric (`oslors1`-shaped), and
+`substituteProxyPlaceholders` strips hyphens as well, so an injected `newSessionId`, a
+market id containing a hyphen, or a caller passing its own id cannot reintroduce it. Verified
+— three concurrent Oslo sessions now return three distinct Oslo IPs.
 
-- The VENDOR is fine. Four concurrent requests with four distinct session keys, same city,
-  returned four distinct IPs; the same keys re-used sequentially returned the same IPs, so
-  stickiness works as documented.
-- `sessionduration` is not the cause. Distinct keys give distinct IPs with and without it.
-- geoqa mints DISTINCT session ids and sends DISTINCT usernames. Verified through the real
-  run path: `oslo-…-1-sessionduration-30` and `oslo-…-2-sessionduration-30` on two
-  same-market sessions, and the two resolved proxy URLs differ.
+**How three wrong hypotheses were eliminated first**, because the path matters more than the
+answer:
 
-So the vendor honours distinct keys, geoqa sends distinct keys, and two same-market runs
-still land on one IP. **The mechanism is not known.** Recording it unresolved rather than
-guessing — three plausible-sounding explanations were tested and all three were wrong,
-which is exactly the point at which a fourth guess should not be written into a comment.
+1. *Session-id collision in the same millisecond.* Real, and fixed — but the IPs still
+   shared afterwards, so it was a separate latent bug.
+2. *The vendor collapses same-city keys.* No: four concurrent distinct keys in one city
+   returned four distinct IPs.
+3. *`sessionduration` changes the key's scope.* No: distinct keys work with and without it.
 
-**One fix landed on the way, correct on its own terms and not the cause.** The session id
-was `<market>-<epochMs>`, so two sessions minted in the same millisecond for one market
-genuinely collided. It is now `<market>-<epochMs>-<n>` with a per-process sequence. That
-was a real latent bug — it just is not this one.
+The step that broke it open was noticing that **every market has exactly two profiles**, so
+"same market shares an exit" and "adjacent launches share an exit" were indistinguishable in
+the data. Testing four concurrent runs across four DIFFERENT markets (four distinct IPs) and
+three across ONE market (one IP) separated them — and then three SEQUENTIAL same-market runs
+also sharing removed concurrency from the picture entirely.
 
-**This blocks the 100-session milestone**, and that is why the milestone was not run. The
-milestone measures country and city match across 100 sessions; if same-market concurrent
-sessions share an exit, a run at any concurrency inside a market measures fewer distinct
-exits than it claims, and the resulting percentages would describe the wrong denominator.
-Sequential runs are unaffected, so the milestone is runnable at concurrency 1 — at roughly
-100× the wall clock — or after this is understood.
+**What this invalidates.** Any earlier claim in this repo about per-session rotation *within*
+a market, including the "5 sessions → 5 IPs" note, unless that measurement used a hyphen-free
+key. Rotation *between* markets was never affected. The 100-session milestone had not been
+run, which is now clearly the right call rather than a cautious one.
 
-Where: `network/provider.ts` (`defaultSessionId`, `substituteProxyPlaceholders`),
-`run/execute.ts` (`prepareRun`), `experiments/EXP-007-concurrency/results.jsonl`.
+Where: `network/provider.ts` (`defaultSessionId`, `substituteProxyPlaceholders`).
 
 ## D. Tooling and process gaps
 

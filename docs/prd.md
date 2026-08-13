@@ -172,6 +172,12 @@ unmeasured guess until EXP-007 runs.
   instrumentation failure standing where a real reading should be. The same applies
   to `fill`, `select` and `check`, which additionally raised a strict-mode violation
   on any selector matching more than one element.
+- **R-136** A session key placed inside a vendor's username contains **no separator the
+  vendor parses**. A residential proxy username is a `-`-delimited parameter list, so a
+  hyphenated session value is silently truncated at its first hyphen — which collapsed every
+  run in a market onto one sticky exit while `egressHeld` reported `match`, because the IP
+  genuinely did hold: it was the same one every time. A guard that asks "did this run hold
+  its IP" cannot see "this run holds the IP every other run also holds".
 - **R-132** A search source's `health()` is a **real probe** distinguishing bad
   credentials from an exhausted account. Valid credentials with no quota left is
   `unusable`, not usable: a search source that cannot answer is worse than an absent one,

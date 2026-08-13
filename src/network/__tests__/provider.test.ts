@@ -159,7 +159,11 @@ describe("directProvider", () => {
     // The id carries a per-process sequence number, so it is matched by SHAPE rather
     // than by value — see the next test for why the sequence has to be there.
     if (!out.ok) throw new Error("expected a session");
-    expect(out.session.id).toMatch(/^oslo-1000-\d+$/);
+    // Alphanumeric, NO hyphens: the id goes into a `-`-delimited vendor username, so a
+    // hyphen inside it is silently truncated at the first one and every session in a
+    // market collapses onto one sticky key. Measured — see `defaultSessionId`.
+    expect(out.session.id).toMatch(/^oslo[a-z0-9]+$/);
+    expect(out.session.id).not.toContain("-");
   });
 
   it("gives two sessions in the SAME market and millisecond DIFFERENT ids", async () => {
@@ -313,10 +317,12 @@ describe("httpProxyProvider sessions", () => {
   it("substitutes {session} in a per-market vendor URL as well as in the template", async () => {
     const out = await httpProxyProvider({
       env: { GEOQA_PROXY_OSLO: "http://u-sessid-{session}:pw@gw.vendor.net:7777" },
+      // An INJECTED id with hyphens, deliberately: the substitution strips them itself, so
+      // a caller supplying its own id cannot reintroduce the silent truncation.
       newSessionId: () => "oslo-session-9",
     }).createSession(OSLO, 5);
     if (!out.ok) throw new Error("expected ok");
-    expect(out.session.proxyUrl).toBe("http://u-sessid-oslo-session-9:pw@gw.vendor.net:7777");
+    expect(out.session.proxyUrl).toBe("http://u-sessid-oslosession9:pw@gw.vendor.net:7777");
   });
 
   it("gives two sessions for the SAME market different session keys, so neither pins the other's exit IP", async () => {
@@ -452,7 +458,8 @@ describe("exit pools", () => {
       { GEOQA_PROXY_TEMPLATE: "http://u-{countryLower}-{session}:p@a:1,http://u-{countryLower}-{session}:p@b:2" },
       "sess-9",
     );
-    expect(pool).toEqual(["http://u-de-sess-9:p@a:1", "http://u-de-sess-9:p@b:2"]);
+    // Hyphens stripped in every member, for the reason on `substituteProxyPlaceholders`.
+    expect(pool).toEqual(["http://u-de-sess9:p@a:1", "http://u-de-sess9:p@b:2"]);
   });
 
   it("picks the SAME exit for the same session id — a run must be replayable", () => {
