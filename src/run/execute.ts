@@ -138,8 +138,8 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
   const startedMs = now();
   const startedAt = new Date(startedMs).toISOString();
 
+  // `loadInputs` throws on an invalid profile or journey, so both are proven here.
   const { profile, journey } = loadInputs(options.spec);
-  if (!journey.ok) throw new StageError(journey.errors.join("; "), "load");
   const runtime = buildRuntime(options.spec, profile);
 
   /**
@@ -213,17 +213,17 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
     // it happens, not discovered in the evidence afterwards — and with --repeat
     // it happens once PER ATTEMPT, which is the number a human needs before
     // sending three contact forms to measure whether one of them flakes.
-    if (journey.value.writes) {
+    if (journey.writes) {
       const times = repeat > 1 ? ` ${repeat} TIMES` : "";
-      log(`journey: ${journey.value.id} DECLARES WRITES — this run will change state on ${options.spec.target}${times}`);
+      log(`journey: ${journey.id} DECLARES WRITES — this run will change state on ${options.spec.target}${times}`);
     }
-    log(`journey: ${journey.value.id} (seed ${options.spec.seed})`);
+    log(`journey: ${journey.id} (seed ${options.spec.seed})`);
     if (repeat > 1) log(`journey: ${repeat} attempts in ONE session — repeats MEASURE flakiness, they never mask it`);
 
     // The SHARED implementation, which `runJourneyActivity` also calls. It used to live here and
     // was hand-mirrored on the durable side — badly, which is how that path came to run one
     // attempt per scenario while this one ran N (gaps B-4, and gaps D-5 for the pattern).
-    const ran = await repeatJourney(runtime, options.spec, journey.value, repeat, log);
+    const ran = await repeatJourney(runtime, options.spec, journey, repeat, log);
 
     // One journey must be one network session. Confirm that it was, before the verdict is used
     // to pick a retention tier — and through the same shared function the durable path calls,

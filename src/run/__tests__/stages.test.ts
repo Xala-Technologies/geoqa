@@ -66,7 +66,9 @@ describe("loadInputs", () => {
   it("loads the shipped profile and journey", () => {
     const { profile: p, journey } = loadInputs(spec());
     expect(p.id).toBe("oslo-mobile");
-    expect(journey.ok).toBe(true);
+    // The VALUE, not a result wrapper: `loadInputs` throws on an invalid journey, so a caller
+    // re-checking `.ok` was re-asking a question this function had already answered.
+    expect(journey.id).toBe("landing-page");
   });
 
   it("throws a named StageError for a bad profile or journey", () => {

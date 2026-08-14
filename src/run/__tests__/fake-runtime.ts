@@ -27,7 +27,14 @@ export const BROWSER_ENV_OSLO = JSON.stringify({
   language: "nb-NO",
   languages: ["nb-NO", "nb"],
   timezone: "Europe/Oslo",
-  userAgent: "HeadlessChrome/151",
+  // The user agent `oslo-mobile.yaml` DECLARES, not a headless default.
+  //
+  // It was `HeadlessChrome/151` until the mobile profiles gained a real identity (gaps C-8), at
+  // which point every run through this fake carried a device MISMATCH — so `trustworthy` was
+  // false in every test in the suite, and the arm where a run is fully verified became
+  // unreachable. A fake that disagrees with the profiles it stands in for makes every test a
+  // test of the disagreement.
+  userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
   viewport: { width: 390, height: 844 },
   geolocation: { latitude: 59.9139, longitude: 10.7522 },
 });
