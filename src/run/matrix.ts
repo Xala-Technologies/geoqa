@@ -25,6 +25,7 @@
 import type { GeoQaRunResult } from "../findings/types.js";
 import { boundedPool, resolveConcurrency } from "./pool.js";
 import { executeRun, type ExecuteOptions } from "./execute.js";
+import { describeThrown } from "../errors.js";
 
 /**
  * The concurrency bound and the pool that enforces it live in `run/pool.ts`.
@@ -218,7 +219,7 @@ export function matrixVerdict(counts: MatrixCounts): MatrixVerdict {
 }
 
 function errorMessage(thrown: unknown): string {
-  return thrown instanceof Error ? thrown.message : String(thrown);
+  return describeThrown(thrown);
 }
 
 /** The whole matrix. Never throws for a scenario's sake. */

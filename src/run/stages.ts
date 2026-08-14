@@ -28,6 +28,7 @@ import type { GeoQaRunResult } from "../findings/types.js";
 import { scoreRun } from "../confidence/score.js";
 import { newEvidenceId, runEvidenceDir, type RunEngine, type RunSpec } from "./context.js";
 import { RETENTION } from "../evidence/manifest.js";
+import { describeThrown } from "../errors.js";
 
 export class StageError extends Error {
   constructor(
@@ -438,7 +439,7 @@ export function pruneUnlistedHar(spec: Pick<RunSpec, "evidenceRoot" | "runId">, 
     return `removed an unlisted network.har — the ${manifest === null ? "run produced no manifest" : `${manifest.tier} tier`} does not retain one`;
   } catch (error) {
     // A failed delete is a retention problem, not a run problem. The run verified the site.
-    return `could not remove the unlisted network.har at ${file}: ${error instanceof Error ? error.message : String(error)}`;
+    return `could not remove the unlisted network.har at ${file}: ${describeThrown(error)}`;
   }
 }
 

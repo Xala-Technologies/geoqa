@@ -23,6 +23,7 @@
  */
 import { DEFAULT_ADDRESS, DEFAULT_NAMESPACE, TASK_QUEUE } from "./constants.js";
 import type { GeoQaRunInput, GeoQaWorkflowResult, MatrixInput } from "./workflows.js";
+import { describeThrown } from "../errors.js";
 
 /**
  * The slice of `@temporalio/client` this module uses.
@@ -111,7 +112,7 @@ export async function durableMatrix(runs: GeoQaRunInput[], options: DurableMatri
   try {
     opened = await options.connector.connect({ address, namespace });
   } catch (thrown) {
-    throw new Error(unreachable(address, thrown instanceof Error ? thrown.message : String(thrown)));
+    throw new Error(unreachable(address, describeThrown(thrown)));
   }
 
   try {

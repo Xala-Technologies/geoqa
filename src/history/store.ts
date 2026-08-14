@@ -19,6 +19,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseRunRecord, type RunRecord } from "./records.js";
+import { describeThrown } from "../errors.js";
 
 export const HISTORY_FILE = "runs.jsonl";
 
@@ -57,7 +58,7 @@ export function appendRun(evidenceRoot: string, record: RunRecord, fs: HistoryFs
   } catch (e) {
     // Reported, never thrown. A run that verified a site correctly and then could not
     // write a cache line has not failed at anything a user cares about.
-    return `could not append to the run index: ${e instanceof Error ? e.message : String(e)}`;
+    return `could not append to the run index: ${describeThrown(e)}`;
   }
 }
 
@@ -136,7 +137,7 @@ export function rebuildHistory(
       if (record === null) unreadable.push(`${dir}: run.json did not describe a run`);
       else records.push(record);
     } catch (e) {
-      unreadable.push(`${dir}: ${e instanceof Error ? e.message : String(e)}`);
+      unreadable.push(`${dir}: ${describeThrown(e)}`);
     }
   }
   fs.mkdir(evidenceRoot);

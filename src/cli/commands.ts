@@ -109,6 +109,7 @@ import {
 import { applyDeviceProfile } from "../run/stages.js";
 import type { Finding, GeoQaRunResult } from "../findings/types.js";
 import { describeConfidence } from "../confidence/score.js";
+import { describeThrown } from "../errors.js";
 
 /** The profile a command falls back to when nothing names one. */
 /**
@@ -157,6 +158,16 @@ export interface RuntimeRequest {
    */
   profile: GeoProfile;
 }
+
+/**
+ * The history filesystem a command should use.
+ *
+ * Spelled once rather than at each of the five call sites that need it. Five copies of
+ * `deps.historyFs ?? nodeHistoryFs` is five chances for one command to be given a different
+ * default from the others — and the failure that produces is a `runs` subcommand reading a
+ * different tree from the `runs rebuild` that populated it, which looks like data loss.
+ */
+const historyFsOf = (deps: Pick<CommandDeps, "historyFs">): HistoryFs => deps.historyFs ?? nodeHistoryFs;
 
 export interface CommandDeps {
   repoRoot: string;
@@ -243,6 +254,7 @@ export interface CommandDeps {
   tenantId?: string;
   /** Injectable so history tests never touch a real tree. Same reason `pruneFs` exists. */
   historyFs?: HistoryFs;
+
   /**
    * Injectable so the unit suite never calls a SERP API. Same reason `probe` and
    * `usageProbe` exist, with an extra edge: a search costs real money, so a test that
@@ -774,7 +786,7 @@ export async function browserVerify(
       const { ok, detail } = await fn();
       primitives.push({ name, ok, detail });
     } catch (e) {
-      primitives.push({ name, ok: false, detail: e instanceof Error ? e.message : String(e) });
+      primitives.push({ name, ok: false, detail: describeThrown(e) });
     }
   };
 
@@ -1030,7 +1042,7 @@ export function loadUrlList(file: string): { ok: true; urls: string[] } | { ok: 
   try {
     text = readFileSync(file, "utf8");
   } catch (e: unknown) {
-    return { ok: false, errors: [`--urls-file ${file}: ${e instanceof Error ? e.message : String(e)}`] };
+    return { ok: false, errors: [`--urls-file ${file}: ${describeThrown(e)}`] };
   }
   const parsed = parseUrlList(text);
   return parsed.ok ? parsed : { ok: false, errors: parsed.errors.map((line) => `--urls-file ${file}: ${line}`) };
@@ -1625,11 +1637,11 @@ export function renderPruneResult(result: EvidencePruneResult): string {
  * limitation.
  */
 export function dashboardBuild(deps: CommandDeps, filter: HistoryFilter = {}): { path: string; view: DashboardView } {
-  const { records, skipped } = readHistory(deps.evidenceRoot, deps.historyFs ?? nodeHistoryFs);
+  const { records, skipped } = readHistory(deps.evidenceRoot, historyFsOf(deps));
   const warnings = skipped > 0 ? [`${skipped} unparseable index line(s) skipped — "geoqa runs rebuild" reconstructs the index`] : [];
   const view = toDashboardView(filterHistory(records, filter), new Date(deps.now()).toISOString(), warnings);
   const file = path.join(deps.evidenceRoot, DASHBOARD_FILE);
-  const fs = deps.historyFs ?? nodeHistoryFs;
+  const fs = historyFsOf(deps);
   fs.mkdir(deps.evidenceRoot);
   fs.write(file, JSON.stringify(view, null, 2));
   return { path: file, view };
@@ -1667,7 +1679,7 @@ export interface SiteAnalysisResult {
  * disagree with the run records. A sweep produces the data; this interprets it.
  */
 export function siteAnalyse(deps: CommandDeps, filter: HistoryFilter = {}): SiteAnalysisResult {
-  const { records, skipped } = readHistory(deps.evidenceRoot, deps.historyFs ?? nodeHistoryFs);
+  const { records, skipped } = readHistory(deps.evidenceRoot, historyFsOf(deps));
   const report = analyseSite(filterHistory(records, filter));
   const warnings = [...report.warnings];
   if (skipped > 0) warnings.push(`${skipped} unparseable index line(s) skipped — "geoqa runs rebuild" reconstructs the index from the evidence`);
@@ -1825,7 +1837,7 @@ export async function gateCheck(deps: CommandDeps, options: GateCheckOptions): P
     });
   } catch (e) {
     return {
-      gate: gateWithoutRun(e instanceof Error ? e.message : String(e)),
+      gate: gateWithoutRun(describeThrown(e)),
       actionable: [],
       warnings: [],
     };
@@ -1963,7 +1975,7 @@ export function runsList(
   deps: CommandDeps,
   options: HistoryFilter & { limit?: number } = {},
 ): RunsListResult {
-  const { records, skipped } = readHistory(deps.evidenceRoot, deps.historyFs ?? nodeHistoryFs);
+  const { records, skipped } = readHistory(deps.evidenceRoot, historyFsOf(deps));
   const matching = filterHistory(records, options);
   const warnings: string[] = [];
   if (skipped > 0) {
@@ -2032,7 +2044,7 @@ export function runsRebuild(deps: CommandDeps): { written: number; unreadable: s
         vitals: { lcp: null, cls: null, ttfb: null, inp: null },
       };
     },
-    deps.historyFs ?? nodeHistoryFs,
+    historyFsOf(deps),
   );
 }
 

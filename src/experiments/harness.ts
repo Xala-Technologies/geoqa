@@ -17,6 +17,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { redactDeep } from "../evidence/redact.js";
+import { describeThrown } from "../errors.js";
 
 export interface ExperimentSample {
   index: number;
@@ -141,7 +142,7 @@ export async function runSamples(
         ok: false,
         durationMs: now() - startedAt,
         data: {},
-        error: e instanceof Error ? e.message : String(e),
+        error: describeThrown(e),
       };
     }
     samples.push(sample);

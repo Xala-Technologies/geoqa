@@ -34,6 +34,7 @@
  * own blindness as a site defect, which is the one thing this project exists not
  * to do.
  */
+import { describeThrown } from "../errors.js";
 import { toVitals } from "./map.js";
 import type { ExecFailureKind, ExecOutcome } from "./exec.js";
 import type {
@@ -202,7 +203,11 @@ const GONE = /closed|crashed|disconnected|target page/i;
  * is.
  */
 export function classifyPlaywrightError(error: unknown): { kind: ExecFailureKind; detail: string } {
-  const detail = error instanceof Error ? error.message.split("\n")[0] ?? error.message : String(error);
+  // First line only: a Playwright error carries a full stack and a call log, and the whole of
+  // it in a finding's `detail` buries the one sentence that says what happened. `split(…, 1)`
+  // rather than `[0]` because an index needs a fallback that can never be taken, and a
+  // fallback that can never be taken is a claim nobody can check.
+  const detail = describeThrown(error).split("\n", 1).join("");
   const name = error instanceof Error ? error.name : "";
   if (name === "TimeoutError" || TIMEOUT.test(detail)) return { kind: "timeout", detail };
   if (GONE.test(detail)) return { kind: "exit", detail };

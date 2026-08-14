@@ -25,6 +25,7 @@ import {
 import type { BrowserRuntime, BrowserSessionConfig } from "../browser/types.js";
 import type { GeoProfile } from "../geo/types.js";
 import { parseDurationMs, type ParsedArgs } from "./args.js";
+import { describeThrown } from "../errors.js";
 
 const metric = (specs: MetricSpec[], key: string): MetricSpec => {
   const found = specs.find((m) => m.key === key);
@@ -673,7 +674,7 @@ async function runConcurrentSession(
       egressHeld: null,
       egressIp: null,
       evidenceId: null,
-      error: e instanceof Error ? e.message : String(e),
+      error: describeThrown(e),
     };
   }
 }
