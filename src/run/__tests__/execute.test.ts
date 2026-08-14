@@ -488,6 +488,33 @@ describe("the things executeRun says OUT LOUD", () => {
     expect(out.all.some((l) => l.startsWith("egress:"))).toBe(true);
   });
 
+  it("says nothing extra when EVERY axis verified — the arm nothing exercised", async () => {
+    /**
+     * The suite had no fully-trustworthy run, and the coverage gate is what noticed.
+     *
+     * `IPINFO_OSLO` reports the city as "Lysaker" with no coordinates, which is faithful — that
+     * is the real observed city for a Norwegian exit, and it is the case that motivated
+     * `compareCity` measuring DISTANCE rather than comparing names. Without coordinates the
+     * fallback name comparison keeps its asymmetry and returns `unverified`, so every existing
+     * test ran with one unproven axis and `trustworthy` false.
+     *
+     * Faithful for the default, but it left the healthy path untested: nothing asserted that a
+     * run which verified everything says so plainly, without a qualifier trailing the number.
+     */
+    await withFakeBrowser({
+      getText: () =>
+        Promise.resolve(
+          ok(JSON.stringify({ ip: "213.52.15.251", city: "Oslo", country: "NO", loc: "59.9139,10.7522", timezone: "Europe/Oslo" })),
+        ),
+    });
+    const out = lines();
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    await executeRun({ spec: prepared.spec, provider: directProvider(), log: out.log });
+    const geoLine = out.all.find((l) => l.startsWith("geo: confidence"));
+    expect(geoLine).toBeDefined();
+    expect(geoLine).not.toContain("not fully verified");
+  });
+
   it("marks the geo line NOT FULLY VERIFIED when the BROWSER axis could not be read", async () => {
     // Distinct from the egress case: `trustworthy` is folded down again later by the
     // egress-held and corroboration axes, so a rotation flips it AFTER this line is logged.
