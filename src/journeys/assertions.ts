@@ -158,7 +158,9 @@ export function evaluateCheck(check: Check, reading: PageReading): CheckResult {
     if (unfilled !== null) {
       return unread(
         `${check.check} "${check.value}"`,
-        `the journey variable {${unfilled[1] ?? ""}} was never supplied, so this check would compare against the placeholder itself — pass --var ${unfilled[1] ?? ""}=<value>`,
+        // Group 1 exists whenever the pattern matched — `\{(\w+)\}` cannot match without it — so the
+        // `?? ""` these carried was a branch nothing could reach.
+        `the journey variable {${unfilled[1] as string}} was never supplied, so this check would compare against the placeholder itself — pass --var ${unfilled[1] as string}=<value>`,
       );
     }
   }

@@ -231,3 +231,14 @@ describe("runsStartedToday", () => {
     expect(runsStartedToday([`run_${justAfterMidnight}_x`, `run_${justBefore}_x`], noon)).toBe(1);
   });
 });
+
+describe("a vendor row whose status is not a string", () => {
+  it("reads as \"unknown\" rather than propagating whatever the vendor sent", () => {
+    // The vendor's schema is theirs to change. A null, a number or an object landing in a
+    // field the UI renders would print "[object Object]" as an account status — and the
+    // honest answer to "what state is this sub-account in?" when the field is unusable is
+    // that we do not know.
+    const [user] = parseSubUsers([{ username: "acme-sub", traffic: 1, status: null }]);
+    expect(user?.status).toBe("unknown");
+  });
+});

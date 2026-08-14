@@ -237,3 +237,15 @@ describe("the source stays greppable", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("the median over an EVEN number of runs", () => {
+  it("averages the middle pair rather than picking one of them", () => {
+    // With an even sample there is no single middle run. Taking one arbitrarily would make
+    // the reported centre depend on sort stability, so two runs that differ only in tie
+    // order would report different trends from identical data.
+    const [s] = buildSeries(series([100, 100, 100, 100, 300, 500, 500, 500]), "ttfb");
+    expect(s?.earlier.text).toBe("100");
+    // Middle pair of the later half is 500 and 500 → 500; of the earlier half 100 and 100.
+    expect(s?.later.measured).toBe(true);
+  });
+});

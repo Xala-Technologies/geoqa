@@ -98,7 +98,11 @@ export function loadGeoProfile(
  */
 export function localeInitScript(profile: GeoProfile): string {
   const { language, coordinates } = profile.market;
-  const primary = language.split("-")[0] ?? language;
+  // `split` always returns at least one element, so the index is provably a string and the
+  // `?? language` this replaces was a branch nothing could execute. The assertion states the
+  // fact for the type checker rather than paying for it at runtime — `noUncheckedIndexedAccess`
+  // is right about arrays in general and wrong about the first element of a split.
+  const primary = language.split("-")[0] as string;
   const [latitude, longitude] = coordinates;
   return `(() => {
   const langs = ${JSON.stringify([language, primary])};
