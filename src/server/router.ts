@@ -10,10 +10,24 @@
  * click-through never reaches: an expired session, a token signed with the previous secret, a
  * path with `..` in it, a POST without a session. Each is one call here.
  *
- * **Default deny.** Every route is authenticated unless it appears in `PUBLIC`, rather than
- * every route being open unless it opts in. The two spellings look equivalent and are not: the
- * second leaks a new endpoint the day somebody forgets a decorator, and the person who forgets
- * is the person adding the endpoint that needed it most.
+ * **Default deny, applied to DATA.** Every route that carries a reading is authenticated
+ * unless it opts out, rather than open unless it opts in. The two spellings look equivalent
+ * and are not: the second leaks a new endpoint the day somebody forgets a decorator, and the
+ * person who forgets is the person adding the endpoint that needed it most.
+ *
+ * **The app shell is not data, and putting it behind the session was a bug.** The first
+ * version of this file authenticated *every* path, including `/assets/index-*.js`. That is
+ * circular: the login form lives inside the bundle, so the bundle must load before anyone
+ * can sign in, and the bundle could not load without a session. Served through `geoqa
+ * server` the console was a blank white page — the JS request followed the redirect to
+ * `/login`, received `index.html`, and failed to execute as a module. Every router test
+ * passed, because each asserted on a path and none asserted that the app could boot.
+ *
+ * So the line is drawn where it actually matters: **the UI root is public, and everything
+ * that carries a measurement is not.** The bundle is the same bytes for every visitor and
+ * names no tenant, no run and no credential. The consequence is a rule about the directory
+ * rather than about this file — nothing may be placed in the UI root that is not intended
+ * for every browser that asks. It is build output; that is already true of it.
  */
 import { clearedCookie, cookieValue, readSession, sessionCookie, signSession, verifyPassword, SESSION_MS, type AuthConfig } from "./auth.js";
 
@@ -41,10 +55,16 @@ export interface RouterDeps {
   readAsset: (path: string) => { body: string; type: string } | null;
   /** Everything the settings page shows. Injected so the router does no filesystem work. */
   settings: () => unknown;
+  /**
+   * The built dashboard, as JSON text, or null when none has been built yet.
+   *
+   * Text rather than a parsed object because it is passed straight through: re-serialising a
+   * hundred kilobytes to hand back the same bytes is work that can only introduce a
+   * difference. It lives in the EVIDENCE tree, not the UI root, which is why it needs a route
+   * of its own — the asset reader is rooted at the bundle and would never find it.
+   */
+  dashboard: () => string | null;
 }
-
-/** Routes reachable without a session. Deliberately short, and deliberately a whitelist. */
-const PUBLIC = new Set(["/api/session", "/login", "/health"]);
 
 const json = (status: number, value: unknown, headers: Record<string, string> = {}): ServerResponse => ({
   status,
@@ -75,12 +95,21 @@ export function route(request: ServerRequest, deps: RouterDeps): ServerResponse 
     return json(404, { error: `no such endpoint: ${method} ${path}` });
   }
 
-  if (!PUBLIC.has(path) && session === null) {
-    // A redirect rather than a 401 for a document request: a browser asked for a page, and the
-    // useful answer is the page it can actually use.
-    return { status: 302, headers: { location: "/login" }, body: "" };
+  // The one reading served outside `/api/`, and it is protected exactly like the ones inside.
+  // 401 rather than a redirect: this is fetched by script, and a 302 to a page would hand the
+  // caller HTML with a 200 attached — which is what a `.json()` call chokes on, several frames
+  // away from the thing that actually went wrong.
+  if (path === "/dashboard.json") {
+    if (session === null) return json(401, { error: "not signed in" });
+    const built = deps.dashboard();
+    if (built === null) {
+      return json(404, { error: "no dashboard has been built yet — run `geoqa dashboard build`" });
+    }
+    return { status: 200, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }, body: built };
   }
 
+  // The shell and its bundle, for anyone who asks. See the note at the top of this file: the
+  // login form cannot be behind the session it exists to obtain.
   return asset(path, deps);
 }
 

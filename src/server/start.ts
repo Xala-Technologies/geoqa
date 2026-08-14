@@ -63,6 +63,14 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
     now: Date.now,
     secure: options.secure,
     readAsset: assetReader(options.uiRoot),
+    // Read per request, not once at boot: `geoqa dashboard build` writes this file while the
+    // server is running, and a console showing yesterday's runs while claiming to be live is
+    // the one failure a monitoring tool cannot have. Returns null rather than throwing when
+    // it does not exist — "no dashboard built yet" is a state to report, not a crash.
+    dashboard: () => {
+      const file = path.join(options.evidenceRoot, "dashboard.json");
+      return existsSync(file) ? readFileSync(file, "utf8") : null;
+    },
     settings: () =>
       buildSettings({
         tenants: tenantsOnDisk(options.repoRoot),

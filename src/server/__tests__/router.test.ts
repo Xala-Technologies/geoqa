@@ -11,6 +11,7 @@ const deps = (over: Partial<RouterDeps> = {}): RouterDeps => ({
   secure: false,
   readAsset: (p) => (p === "/index.html" ? { body: "<html>app</html>", type: "text/html" } : null),
   settings: () => ({ tenants: [] }),
+  dashboard: () => JSON.stringify({ summary: { total: 3 } }),
   ...over,
 });
 
@@ -67,6 +68,41 @@ describe("authentication", () => {
   });
 });
 
+describe("the dashboard's data is protected like every other reading", () => {
+  it("401s without a session — a status a fetch can act on", () => {
+    // NOT a redirect. This is fetched by script, and a 302 to a page hands the caller HTML
+    // with a 200 attached, which fails inside `.json()` several frames from the cause. That
+    // is precisely how the blank page presented before this fix.
+    const out = route(req({ path: "/dashboard.json" }), deps());
+    expect(out.status).toBe(401);
+    expect(out.headers["content-type"]).toContain("application/json");
+  });
+
+  it("serves the built dashboard byte-for-byte with a session", () => {
+    // Passed through as text rather than re-serialised: re-encoding a hundred kilobytes to
+    // hand back the same bytes can only introduce a difference.
+    const body = JSON.stringify({ summary: { total: 3 }, runs: [] });
+    const d = deps({ dashboard: () => body });
+    const out = route(req({ path: "/dashboard.json", headers: withSession(d) }), d);
+    expect(out.status).toBe(200);
+    expect(out.body).toBe(body);
+  });
+
+  it("must never be cached — a console showing yesterday's runs is the one failure it cannot have", () => {
+    const d = deps();
+    expect(route(req({ path: "/dashboard.json", headers: withSession(d) }), d).headers["cache-control"]).toBe("no-store");
+  });
+
+  it("says no dashboard has been BUILT, rather than 404ing like a missing file", () => {
+    // Different problems, different fixes: "you have not run `dashboard build`" is a thing
+    // the reader can do something about; a bare 404 reads as a broken install.
+    const d = deps({ dashboard: () => null });
+    const out = route(req({ path: "/dashboard.json", headers: withSession(d) }), d);
+    expect(out.status).toBe(404);
+    expect(JSON.parse(out.body).error).toContain("dashboard build");
+  });
+});
+
 describe("default deny", () => {
   it("REFUSES every API route without a session", () => {
     const d = deps();
@@ -92,15 +128,26 @@ describe("default deny", () => {
     expect(out.headers["content-type"]).toContain("application/json");
   });
 
-  it("REDIRECTS a document request without a session, rather than 401ing it", () => {
-    // A browser asked for a page; the useful answer is the page it can use.
-    const out = route(req({ path: "/runs" }), deps());
-    expect(out.status).toBe(302);
-    expect(out.headers["location"]).toBe("/login");
+  it("SERVES the app shell without a session, because the login form is inside it", () => {
+    // This replaces a test that asserted the opposite. Redirecting a document request to
+    // /login looked right and was circular: /login serves the same shell, the shell asks for
+    // its bundle, and the bundle was behind the session the form exists to obtain. The
+    // console was a blank white page through `geoqa server` while every router test passed.
+    for (const path of ["/", "/runs", "/login", "/settings"]) {
+      const out = route(req({ path }), deps());
+      expect(out.status, path).toBe(200);
+      expect(out.body, path).toContain("app");
+    }
   });
 
-  it("serves /login and /health without a session", () => {
-    expect(route(req({ path: "/login" }), deps()).status).toBe(200);
+  it("SERVES the bundle without a session — the specific thing that was broken", () => {
+    const d = deps({ readAsset: (p) => (p.startsWith("/assets/") ? { body: "export{}", type: "text/javascript" } : null) });
+    const js = route(req({ path: "/assets/index-abc123.js" }), d);
+    expect(js.status).toBe(200);
+    expect(js.headers["content-type"]).toContain("javascript");
+  });
+
+  it("serves /health without a session", () => {
     expect(route(req({ path: "/health" }), deps()).status).toBe(200);
   });
 

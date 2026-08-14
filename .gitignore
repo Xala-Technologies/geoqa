@@ -41,3 +41,6 @@ secrets/
 # that door; measurements worth keeping belong in docs/gaps.md, not in a temp file.
 /probe-*.ts
 /*-tmp.ts
+
+# Coverage output from the console package, same reason the engine ignores its own.
+ui/coverage/
