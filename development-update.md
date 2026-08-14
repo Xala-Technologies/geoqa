@@ -19,6 +19,78 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-14 — The console could not load through the server it ships with
+
+[PR #38](https://github.com/Xala-Technologies/geoqa/pull/38). Served through `geoqa server`,
+the dashboard was a **blank white page** — not a missing feature, the app could not boot, and
+had not been able to since the server was added. Found by opening it in a browser. Every
+router test passed the whole time.
+
+### What was wrong
+
+The router authenticated **every** path, so `/assets/index-*.js` and the stylesheet redirected
+to `/login` like any other document. The JS request followed the redirect, received
+`index.html`, reported **200**, and failed to execute as a module. Nothing was logged: from
+the browser's point of view every request had succeeded.
+
+Underneath sat a circle nobody could have clicked out of — `/login` serves the app shell, the
+login form lives inside the bundle, and the bundle was behind the session the form exists to
+obtain. **Adding a login screen alone would not have fixed it.**
+
+And `/dashboard.json` had no route at all. The asset reader is rooted at the UI bundle; the
+dashboard is written into the evidence tree. Even with a valid session it would have 404ed.
+
+### Why the tests did not see it
+
+Each router test asserted on a path in isolation. None asserted that the application could
+*start*. `router.ts` was at 100% coverage before the fix and is at 100% after it — the number
+was never the problem. The test this change replaced asserted the redirect, with a comment
+explaining why redirecting was friendlier than a 401. The reasoning was sound and the
+conclusion was wrong, because it never accounted for what `/login` would then need to load.
+
+### The line that moved
+
+**The UI root is public; everything carrying a reading is not.** The bundle is the same bytes
+for every visitor and names no tenant, run or credential. That makes it a rule about the
+directory rather than about the router — nothing may be placed in the UI root that is not
+meant for every browser that asks — and it is build output, so that was already true.
+
+`/dashboard.json` now has a route: evidence tree, behind the session, `no-store`, read per
+request because `dashboard build` runs while the server does. **401 rather than a redirect** —
+it is fetched by script, and a 302 to a page hands the caller HTML with a 200 attached, which
+is precisely the failure above.
+
+### What the console gained
+
+A sign-in screen. An `api.ts` whose result type has **three** cases — a value, a sign-in
+prompt, a real failure — because "not signed in" is the ordinary state of a freshly opened
+browser and rendering it as an error would be both wrong and alarming. That is the same
+three-valued discipline the engine applies to every reading. A settings view over the existing
+`/api/settings`: tenants, domains, quotas, journeys, and credentials as **set** or **not set**,
+with no credential value sent because none is ever read (R-26).
+
+Static hosting still works unchanged — the app makes one request and lets the answer tell it
+which mode it is in.
+
+The console now has its own gate: 14 tests at 100% on `api.ts`, the module that makes
+decisions, rather than a percentage over a directory of markup. CI runs it and the console
+build, because a UI that does not compile is a server serving a stale bundle — which is how a
+fixed bug appears to still be there, and a stale bundle is what started this investigation.
+
+### One I got wrong on the way
+
+That gate first reported 95% branches, blaming a phantom on a bare
+`export async function getJson<T>(` line. I called it a source-map artifact, wrote a comment
+explaining that, and lowered the threshold to match. It was not: `@vitest/coverage-v8` was a
+major version behind the `vitest` running it, which prints a quiet "make sure the versions
+match" and then miscounts. I had read past that line. Matching the versions gave a true 100%.
+
+**I wrote a plausible explanation for an inconvenient measurement and then changed the gate to
+agree with it.** The comment made it look considered. Recorded here because the next phantom
+branch should send someone to check versions, not to write prose.
+
+---
+
 ## 2026-08-14 — Branch coverage found dead code, and one comment that argued for it
 
 Two merged PRs ([#33](https://github.com/Xala-Technologies/geoqa/pull/33),
