@@ -21,7 +21,8 @@
     "browser:install": "agent-browser install",
     "playwright:install": "playwright install chromium",
     "ui:dev": "pnpm --filter geoqa-ui dev",
-    "ui:build": "pnpm --filter geoqa-ui build"
+    "ui:build": "pnpm --filter geoqa-ui build",
+    "test:ui": "pnpm --filter geoqa-ui test:coverage"
   },
   "dependencies": {
     "@temporalio/activity": "^1.21.1",

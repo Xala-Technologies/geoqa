@@ -766,3 +766,141 @@ th[aria-sort="descending"] {
     display: none;
   }
 }
+
+/* ── Sign-in ────────────────────────────────────────────────────────────── */
+
+/*
+ * The one screen that is not the chassis. It replaces the whole app rather than sitting
+ * inside it, because a sidebar full of views nobody can open is furniture that lies about
+ * what is available.
+ */
+.signin {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--s-6);
+  /* The same faint machine grid the readout uses, so the door and the room are the same
+     building. */
+  background:
+    radial-gradient(circle at 50% 0%, var(--signal-wash) 0%, transparent 60%),
+    var(--black);
+}
+
+.signin-card {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-8);
+  background: var(--machine);
+  border: 1px solid var(--grid);
+  border-radius: var(--r);
+}
+
+.signin-brand {
+  font-size: var(--t-2xl);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--readout);
+}
+.signin-brand b {
+  color: var(--signal);
+  font-weight: 700;
+}
+
+.signin-lede {
+  margin: 0;
+  color: var(--label);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.field-label {
+  font-size: var(--t-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.input {
+  font-family: var(--mono);
+  font-size: var(--t-base);
+  color: var(--readout);
+  background: var(--black);
+  border: 1px solid var(--grid);
+  border-radius: var(--r);
+  padding: var(--s-3) var(--s-4);
+}
+.input:focus {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+  border-color: var(--signal-deep);
+}
+
+.btn {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: var(--s-3) var(--s-5);
+  border-radius: var(--r);
+  border: 1px solid var(--grid);
+  background: var(--machine-2);
+  color: var(--readout);
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--signal-deep);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+}
+.btn:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  border-color: var(--signal-deep);
+  color: var(--signal);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--signal-wash);
+  border-color: var(--signal);
+}
+
+/* Quiet enough to live in the header bar without competing with the readings beside it. */
+.btn-quiet {
+  padding: var(--s-2) var(--s-3);
+  font-size: var(--t-xs);
+  background: transparent;
+  color: var(--label);
+}
+
+/* `--fail` and not `--void`: a rejected password is a definite answer, not an absence. */
+.signin-error {
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  font-size: var(--t-sm);
+  color: var(--fail);
+  background: var(--machine-2);
+  border-left: 3px solid var(--fail);
+}
+
+.signin-hint {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--faint);
+  line-height: 1.7;
+}
+.signin-hint code {
+  color: var(--label);
+}

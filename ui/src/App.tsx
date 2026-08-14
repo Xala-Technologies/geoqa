@@ -9,8 +9,10 @@
  * The nav counts come from the data rather than being decoration, and a count of zero is not
  * rendered: a badge reading 0 competes for attention with the badges that mean something.
  */
-import { useEffect, useState, type JSX } from "react";
+import { useCallback, useEffect, useState, type JSX } from "react";
 import type { DashboardView } from "./types.ts";
+import { getJson, signOut } from "./api.ts";
+import { Login } from "./Login.tsx";
 import { Overview } from "./views/Overview.tsx";
 import { Runs } from "./views/Runs.tsx";
 import { Geography } from "./views/Geography.tsx";
@@ -18,8 +20,9 @@ import { Coverage } from "./views/Coverage.tsx";
 import { Trends } from "./views/Trends.tsx";
 import { Findings } from "./views/Findings.tsx";
 import { RunDetail } from "./views/RunDetail.tsx";
+import { Settings } from "./views/Settings.tsx";
 
-type ViewId = "overview" | "runs" | "findings" | "geography" | "coverage" | "trends";
+type ViewId = "overview" | "runs" | "findings" | "geography" | "coverage" | "trends" | "settings";
 
 /** A route is a view, or a drill-down into one run. */
 type Route = { view: ViewId; runId?: string };
@@ -31,6 +34,7 @@ const VIEWS: { id: ViewId; label: string; group: string }[] = [
   { id: "geography", label: "Geography", group: "Analyse" },
   { id: "coverage", label: "Coverage", group: "Analyse" },
   { id: "trends", label: "Trends", group: "Analyse" },
+  { id: "settings", label: "Settings", group: "Configure" },
 ];
 
 /**
@@ -50,6 +54,18 @@ const routeFromHash = (): Route => {
 export function App(): JSX.Element {
   const [view, setView] = useState<DashboardView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [needsSignIn, setNeedsSignIn] = useState(false);
+  /**
+   * Whether there is a session to end.
+   *
+   * The app cannot infer this from a successful load: a static build and a server with a
+   * valid cookie both just work. So it asks — once, after the data is already on screen, so
+   * the answer costs nobody a wait. In a static build the request fails and the control stays
+   * hidden, which is the correct outcome and the only cost is one 404 in a console nobody is
+   * reading. Guessing instead would mean either a returning visitor with a live cookie having
+   * no way to sign out, or a static reader being offered a button that cannot work.
+   */
+  const [servedWithSession, setServedWithSession] = useState(false);
   const [route, setRoute] = useState<Route>(routeFromHash);
 
   useEffect(() => {
@@ -66,15 +82,40 @@ export function App(): JSX.Element {
       : `geoqa — ${VIEWS.find((v) => v.id === route.view)?.label.toLowerCase() ?? "runs"}`;
   }, [route]);
 
-  useEffect(() => {
-    fetch("./dashboard.json", { cache: "no-store" })
-      .then((response) => {
-        if (!response.ok) throw new Error(`dashboard.json responded ${response.status}`);
-        return response.json() as Promise<DashboardView>;
-      })
-      .then(setView)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  /**
+   * Load the dashboard, and let its answer tell us which mode we are in.
+   *
+   * One request, not two. Asking `/api/whoami` first would be a round trip whose only purpose
+   * is to decide whether to make the request we were going to make anyway — and it would
+   * break the static case outright, because a plain file server has no `/api`.
+   *
+   * The three outcomes map exactly onto the three states this app can be in: served with a
+   * session (or opened as static files, where there is no session to have), served without
+   * one, or genuinely broken. That is why `getJson` returns three things rather than throwing
+   * on two of them.
+   */
+  const load = useCallback((): void => {
+    void getJson<DashboardView>("./dashboard.json").then((result) => {
+      if (result.ok) {
+        setView(result.value);
+        setNeedsSignIn(false);
+        setError(null);
+        void getJson<{ user: string }>("/api/whoami").then((who) => setServedWithSession(who.ok));
+        return;
+      }
+      if (result.signedOut) {
+        setNeedsSignIn(true);
+        return;
+      }
+      setError(result.error);
+    });
   }, []);
+
+  useEffect(load, [load]);
+
+  // Checked before the error and before the data: being signed out is not a failure, and a
+  // reader who needs to sign in is not helped by being told something went wrong first.
+  if (needsSignIn) return <Login onSignedIn={load} />;
 
   if (error !== null) {
     return (
@@ -98,6 +139,8 @@ export function App(): JSX.Element {
     geography: view.site.geographicallyDivergent.length,
     coverage: view.site.coverageGaps.length,
     trends: view.trends.length,
+    // No badge: a settings page has nothing a number could usefully say about it.
+    settings: 0,
   };
   const alerts: Record<string, boolean> = {
     findings: view.runs.some((r) => r.findings.total > 0),
@@ -124,6 +167,20 @@ export function App(): JSX.Element {
           <Stat k="confidence" v={view.summary.meanConfidence.text} />
           <Stat k="markets" v={String(view.site.markets.length)} />
           <Stat k="built" v={new Date(view.generatedAt).toISOString().slice(0, 16).replace("T", " ")} />
+          {/* Only when there is a session to end. A static build has none, and a sign-out
+              control that cannot sign anything out is a button that reports a bug when
+              pressed. */}
+          {servedWithSession && (
+            <button
+              className="btn btn-quiet"
+              type="button"
+              onClick={() => {
+                void signOut().then(() => setNeedsSignIn(true));
+              }}
+            >
+              Sign out
+            </button>
+          )}
         </div>
       </header>
 
@@ -156,6 +213,7 @@ export function App(): JSX.Element {
         {route.runId === undefined && route.view === "geography" && <Geography view={view} />}
         {route.runId === undefined && route.view === "coverage" && <Coverage view={view} />}
         {route.runId === undefined && route.view === "trends" && <Trends view={view} />}
+        {route.runId === undefined && route.view === "settings" && <Settings />}
       </main>
     </div>
   );
