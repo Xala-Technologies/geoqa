@@ -25,6 +25,7 @@ import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { RETENTION, type EvidenceManifest, type RetentionTier } from "./manifest.js";
 import { readManifest } from "./store.js";
+import { describeThrown } from "../errors.js";
 
 const DAY_MS = 86_400_000;
 
@@ -409,7 +410,7 @@ export function executePrune(
       deletedRunIds.push(entry.runId);
       reclaimedBytes += entry.bytes;
     } catch (error) {
-      failed.push({ runId: entry.runId, error: error instanceof Error ? error.message : String(error) });
+      failed.push({ runId: entry.runId, error: describeThrown(error) });
     }
   }
 

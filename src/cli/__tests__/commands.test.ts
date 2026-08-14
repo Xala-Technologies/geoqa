@@ -2261,3 +2261,67 @@ describe("contentAnalyse", () => {
     expect(empty).toContain("no page content was captured");
   });
 })
+
+describe("output for the cases a happy-path run never produces", () => {
+  it("prints \"?\" for a gap with no competitor, rather than an empty column", () => {
+    // Reachable: a search that succeeded and returned nothing has a score (absent) but no
+    // first result to name. An empty column there reads as a rendering bug; "?" reads as
+    // "there was nobody", which is the actual finding and a notable one.
+    const rendered = renderKeywordReport({
+      tenantId: "acme",
+      queried: 1,
+      measured: 1,
+      meanScore: 2,
+      warnings: [],
+      observations: [
+        { term: "empty market", intent: "local", audience: null, marketId: "oslo", score: 2, position: null, examined: 0, reason: "", topCompetitor: null },
+      ],
+    });
+    expect(rendered).toContain("top: ?");
+  });
+
+  it("names the evidence bundle beside the run when the gate produced one", () => {
+    const withEvidence = renderGateResult({
+      gate: { decision: "allow", reason: "all checks held", blockers: [], warnings: ["one soft note"], runId: "run_1_a", evidenceId: "ev_9" },
+      actionable: [],
+      warnings: [],
+    });
+    expect(withEvidence).toContain("run run_1_a · evidence ev_9");
+    expect(withEvidence).toContain("! one soft note");
+  });
+
+  it("names the run alone when there is no bundle to point at", () => {
+    // `--no-evidence` and a gate that never got as far as writing one both land here. The
+    // run id is still worth printing: it is what a person greps for.
+    const bare = renderGateResult({
+      gate: { decision: "block", reason: "a check did not hold", blockers: ["heading missing"], warnings: [], runId: "run_1_a", evidenceId: null },
+      actionable: [],
+      warnings: [],
+    });
+    expect(bare).toContain("run run_1_a");
+    expect(bare).not.toContain("evidence");
+    expect(bare).toContain("✗ heading missing");
+  });
+});
+
+describe("things thrown that are not Errors, at the CLI boundary", () => {
+  // The formatting itself is `describeThrown`, tested directly in `src/__tests__/errors.ts`.
+  // What is worth asserting HERE is that the CLI actually routes a non-Error through it and
+  // still reaches the right decision — the message is secondary to what the command does.
+
+  it("blocks publication, naming the cause, when the run throws a bare string", async () => {
+    // The important half is the DECISION, not the message: a gate that cannot run has not
+    // learnt that the page is fine. Default deny, and say why in the same breath.
+    const result = await gateCheck(
+      deps({
+        runOnce: () => {
+          throw "browser did not start";
+        },
+      }),
+      { url: "https://digilist.no/faq", profileId: "oslo-desktop", journeyId: "landing-page" },
+    );
+    expect(result.gate.decision).toBe("unknown");
+    expect(result.gate.reason).toContain("browser did not start");
+    expect(result.gate.runId).toBeNull();
+  });
+});

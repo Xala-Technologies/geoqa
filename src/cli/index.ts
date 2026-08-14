@@ -70,6 +70,7 @@ import { findExperiment } from "../experiments/definitions.js";
 import { DEFAULT_MATRIX_CONCURRENCY } from "../run/matrix.js";
 import { gateExitCode } from "../gate/publish.js";
 import { experimentKnobs, SAMPLERS } from "./samplers.js";
+import { describeThrown } from "../errors.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -627,7 +628,7 @@ async function main(argv: string[]): Promise<number> {
 main(process.argv.slice(2)).then(
   (code) => exitWhenFlushed(code),
   (e: unknown) => {
-    console.error(e instanceof Error ? e.message : String(e));
+    console.error(describeThrown(e));
     exitWhenFlushed(1);
   },
 );
