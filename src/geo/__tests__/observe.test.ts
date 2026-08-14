@@ -11,6 +11,7 @@ import {
   observeNetworkVia,
   parseBrowserObservation,
   parseGeoJsObservation,
+  parseLoc,
   parseNetworkObservation,
 } from "../observe.js";
 
@@ -286,5 +287,54 @@ describe("observeNetworkVia", () => {
     // addresses — permanently `unverified`. A real Playwright run reported
     // 88.88.18.137 from ipinfo and 2001:4656:e2f2:... from the dual-stack candidate.
     expect(new URL(GEOJS_SOURCE.endpoint).hostname.startsWith("ipv4.")).toBe(true);
+  });
+});
+
+describe("parseLoc rejects what a third party might send", () => {
+  /**
+   * Every guard here, because these coordinates decide a CITY VERDICT by distance.
+   *
+   * `loc` arrives from an IP-geo vendor, so malformed input is not hypothetical — and the
+   * failure mode is the worst kind: `Number("")` is 0, so a blank field parses to the Gulf of
+   * Guinea at 0,0. That is 5,000km from Oslo, which would report a correctly-routed Norwegian
+   * exit as a proven city MISMATCH — a confident wrong answer about somebody's vendor.
+   */
+  it("accepts a well-formed pair", () => {
+    expect(parseLoc("59.9139,10.7522")).toEqual([59.9139, 10.7522]);
+    expect(parseLoc("-33.87,151.21")).toEqual([-33.87, 151.21]);
+  });
+
+  it("rejects anything that is not a string", () => {
+    for (const value of [undefined, null, 59.9139, {}, ["59", "10"]]) expect(parseLoc(value)).toBeNull();
+  });
+
+  it("rejects a wrong number of parts, rather than reading the first two", () => {
+    // "59.9139" alone would otherwise become [59.9139, NaN]; a three-part value is a format
+    // this code does not understand, and guessing which two to keep is how a silent wrong
+    // answer starts.
+    expect(parseLoc("59.9139")).toBeNull();
+    expect(parseLoc("59.9139,10.7522,100")).toBeNull();
+    expect(parseLoc("")).toBeNull();
+  });
+
+  it("rejects non-numeric parts INCLUDING the empty string", () => {
+    // The one that matters most: `Number("")` is 0, not NaN. Without `Number.isFinite` a blank
+    // half would place the exit on the equator or the prime meridian.
+    expect(parseLoc("59.9139,")).toBeNull();
+    expect(parseLoc(",10.7522")).toBeNull();
+    expect(parseLoc("north,east")).toBeNull();
+    expect(parseLoc("Infinity,10")).toBeNull();
+  });
+
+  it("rejects coordinates outside the earth", () => {
+    // A latitude of 91 parses fine and cannot exist. Passing it on would compute a distance to
+    // a place that is not anywhere.
+    expect(parseLoc("91,10")).toBeNull();
+    expect(parseLoc("-91,10")).toBeNull();
+    expect(parseLoc("59,181")).toBeNull();
+    expect(parseLoc("59,-181")).toBeNull();
+    // The boundaries themselves are valid — the poles and the antimeridian are real places.
+    expect(parseLoc("90,180")).toEqual([90, 180]);
+    expect(parseLoc("-90,-180")).toEqual([-90, -180]);
   });
 });

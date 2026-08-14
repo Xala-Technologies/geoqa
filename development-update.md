@@ -19,6 +19,47 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-14 — The coverage sweep found a live geographic bug
+
+Branch coverage was never enforced — the gate had lines, statements and functions at 100 and
+no `branches` entry at all, so "100% coverage" was true of three metrics and quietly untrue
+of the fourth: **95.25% across 167 sites, none of which ever failed a build.**
+
+Closing them is producing findings rather than tests, which is why it is worth doing by hand.
+
+### A truncated coordinate placed an exit on the prime meridian (C-20)
+
+`Number("")` is **0**, not `NaN`. So `parseLoc("59.9139,")` — a latitude with the longitude
+truncated — passed every guard: 0 is finite, and `|0| <= 180`. It returned `[59.9139, 0]`, a
+point in the North Sea about 600km west of Oslo.
+
+Those coordinates decide the **city verdict by distance**, so a vendor sending a truncated
+field would have produced a proven city MISMATCH against a correctly-routed exit.
+
+The function's own comment described this exact hazard — *"`Number("")` is 0 … the prime
+meridian, which is a confident wrong answer of exactly the kind a distance check must not
+produce"* — and the guard was never added. Reading the code agreed with itself; writing a
+case per guard did not.
+
+### What else the sweep turned up
+
+- a **duplicate guard** in `executeRun`, unreachable because `loadInputs` already threw
+- a **fixture drifted from the profiles**: every test in the suite carried a device mismatch
+  after the mobile profiles gained a real user agent, so `trustworthy` was false everywhere
+- **no test of a fully-verified run**, because the default fixture is faithful to a case where
+  one axis is genuinely unprovable
+- **`browser verify` never tested for reporting a failure** — the command's entire purpose
+- a `?? 0` that would have **scored a confidence axis at zero**, producing a figure computed
+  from part of its evidence
+
+Roughly half the branches are being **deleted** rather than tested, which is what this
+codebase's own doctrine predicts: a guard with no reachable failure is a claim that the check
+above it might not hold.
+
+**95.25% → 96.62%**, ratcheted so it can only improve.
+
+---
+
 ## 2026-08-13 — The console answers "what should I fix" now
 
 The dashboard could count problems and could not name one. `RunRecord` has always kept the
