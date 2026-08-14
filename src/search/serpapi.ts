@@ -172,7 +172,10 @@ export const GOOGLE_INTERFACE_LANGUAGE: Record<string, string> = {
 };
 
 export function googleLanguage(tag: string): string {
-  const primary = tag.toLowerCase().split("-")[0] ?? tag.toLowerCase();
+  // `split("-", 1).join("")` rather than `[0] ?? tag` — `split` always returns at least one
+  // element, so the fallback could never be taken, and a fallback nobody can reach is a
+  // claim nobody can check.
+  const primary = tag.toLowerCase().split("-", 1).join("");
   return GOOGLE_INTERFACE_LANGUAGE[primary] ?? primary;
 }
 
