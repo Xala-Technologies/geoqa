@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useState, type JSX } from "react";
 import type { DashboardView } from "./types.ts";
-import { getJson, signOut } from "./api.ts";
+import { getJson, postJson, signOut } from "./api.ts";
 import { Login } from "./Login.tsx";
 import { Overview } from "./views/Overview.tsx";
 import { Runs } from "./views/Runs.tsx";
@@ -66,6 +66,8 @@ export function App(): JSX.Element {
    * no way to sign out, or a static reader being offered a button that cannot work.
    */
   const [servedWithSession, setServedWithSession] = useState(false);
+  /** Null when idle; a message while a rebuild is in flight or has just finished. */
+  const [rebuilding, setRebuilding] = useState<string | null>(null);
   const [route, setRoute] = useState<Route>(routeFromHash);
 
   useEffect(() => {
@@ -112,6 +114,38 @@ export function App(): JSX.Element {
   }, []);
 
   useEffect(load, [load]);
+
+  /**
+   * Rebuild, then re-read.
+   *
+   * The console showed whatever `geoqa dashboard build` last wrote, so the `built` stamp in
+   * the header was the only clue that a reader was looking at a snapshot — and a stamp is a
+   * clue, not an answer. This makes the stamp actionable: press it and it becomes true.
+   *
+   * It reloads afterwards rather than trusting the response, because the response says what
+   * the builder wrote and the view must show what the server will actually serve. Those are
+   * the same file, and the way to be sure is to read it.
+   */
+  const rebuild = useCallback((): void => {
+    setRebuilding("Rebuilding…");
+    void postJson<{ total: number; warnings: string[] }>("/api/dashboard/rebuild").then((result) => {
+      if (result.ok) {
+        // Warnings first when there are any: "rebuilt, 32 runs" beside a skipped-lines warning
+        // reads as success, and the count is the part that is not the whole story.
+        setRebuilding(result.value.warnings[0] ?? `Rebuilt · ${result.value.total} run(s)`);
+        load();
+        return;
+      }
+      // A session that lapsed while the page sat open is the realistic failure here, and the
+      // useful answer to it is the sign-in screen rather than an error about rebuilding.
+      if (result.signedOut) {
+        setRebuilding(null);
+        setNeedsSignIn(true);
+        return;
+      }
+      setRebuilding(result.error);
+    });
+  }, [load]);
 
   // Checked before the error and before the data: being signed out is not a failure, and a
   // reader who needs to sign in is not helped by being told something went wrong first.
@@ -170,6 +204,11 @@ export function App(): JSX.Element {
           {/* Only when there is a session to end. A static build has none, and a sign-out
               control that cannot sign anything out is a button that reports a bug when
               pressed. */}
+          {servedWithSession && (
+            <button className="btn btn-quiet" type="button" onClick={rebuild} disabled={rebuilding === "Rebuilding…"}>
+              {rebuilding ?? "Rebuild"}
+            </button>
+          )}
           {servedWithSession && (
             <button
               className="btn btn-quiet"

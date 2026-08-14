@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getJson, signIn, signOut } from "./api.ts";
+import { getJson, postJson, signIn, signOut } from "./api.ts";
 
 /** A `Response` with only the parts this module touches. */
 const response = (init: { status: number; body?: unknown; text?: string }): Response =>
@@ -136,5 +136,50 @@ describe("signOut", () => {
     // one action that is supposed to be the calm one.
     stubFetch(() => Promise.reject(new TypeError("Failed to fetch")));
     await expect(signOut()).resolves.toBeUndefined();
+  });
+});
+
+describe("postJson — the verb is the safety property", () => {
+  it("uses POST, because the endpoints it calls DO something", async () => {
+    // A browser will GET a URL nobody clicked: prefetch, link preview, a crawler walking the
+    // DOM. The rebuild endpoint writes a file, so the method is not a detail.
+    const calls: { url: string; init: RequestInit }[] = [];
+    stubFetch((url, init) => {
+      calls.push({ url, init: init ?? {} });
+      return Promise.resolve(response({ status: 200, body: { total: 3 } }));
+    });
+    await postJson("/api/dashboard/rebuild");
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(calls[0]?.init.credentials).toBe("same-origin");
+  });
+
+  it("returns the value on success", async () => {
+    stubFetch(() => Promise.resolve(response({ status: 200, body: { total: 7 } })));
+    expect(await postJson<{ total: number }>("/api/dashboard/rebuild")).toEqual({ ok: true, value: { total: 7 } });
+  });
+
+  it("reports a session that expired while the page was open as SIGNED OUT", async () => {
+    // The realistic case: the console was left open overnight and the cookie lapsed. The
+    // reader should get the sign-in screen, not an error about rebuilding.
+    stubFetch(() => Promise.resolve(response({ status: 401, body: { error: "not signed in" } })));
+    expect(await postJson("/api/dashboard/rebuild")).toEqual({ ok: false, signedOut: true });
+  });
+
+  it("carries the server's own reason for a refusal", async () => {
+    stubFetch(() => Promise.resolve(response({ status: 500, body: { error: "evidence root is not writable" } })));
+    const result = await postJson("/api/dashboard/rebuild");
+    expect(result.ok === false && result.signedOut === false && result.error).toBe("evidence root is not writable");
+  });
+
+  it("names a non-JSON answer rather than throwing", async () => {
+    stubFetch(() => Promise.resolve(response({ status: 200, text: "<!doctype html>" })));
+    const result = await postJson("/api/dashboard/rebuild");
+    expect(result.ok === false && result.signedOut === false && result.error).toContain("not JSON");
+  });
+
+  it("reports an unreachable server", async () => {
+    stubFetch(() => Promise.reject(new TypeError("Failed to fetch")));
+    const result = await postJson("/api/dashboard/rebuild");
+    expect(result.ok === false && result.signedOut === false && result.error).toContain("could not reach the server");
   });
 });

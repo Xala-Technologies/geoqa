@@ -17,6 +17,8 @@ import { buildSettings } from "./settings.js";
 import { loadTenant } from "../tenant/registry.js";
 import { loadJourney } from "../journeys/spec.js";
 import { loadConfig, configPath } from "../config/load.js";
+import { dashboardBuild } from "../cli/commands.js";
+import { nodeHistoryFs } from "../history/store.js";
 
 export interface StartOptions {
   repoRoot: string;
@@ -70,6 +72,13 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
     dashboard: () => {
       const file = path.join(options.evidenceRoot, "dashboard.json");
       return existsSync(file) ? readFileSync(file, "utf8") : null;
+    },
+    // The composition root wires the same function `geoqa dashboard build` runs. Not a second
+    // implementation: two dashboard builders would be two answers to "what does the console
+    // show", and the one nobody ran would be the one that was wrong.
+    rebuild: () => {
+      const { view } = dashboardBuild({ evidenceRoot: options.evidenceRoot, historyFs: nodeHistoryFs, now: Date.now });
+      return { generatedAt: view.generatedAt, total: view.summary.total, warnings: view.warnings };
     },
     settings: () =>
       buildSettings({

@@ -64,6 +64,20 @@ export interface RouterDeps {
    * of its own — the asset reader is rooted at the bundle and would never find it.
    */
   dashboard: () => string | null;
+  /**
+   * Rebuild the dashboard from the evidence on disk, returning what it now says.
+   *
+   * The console previously showed whatever `geoqa dashboard build` last wrote, so a reader
+   * looking at it had no way to tell a quiet week from a stale file — and the honest answer
+   * to "are these the current runs?" was "go to a terminal and find out". This is that
+   * terminal command, reachable from the thing that displays its output.
+   *
+   * Safe to expose because of what it is NOT: it reads the evidence tree and writes one
+   * derived file. No browser opens, no site is contacted, no proxy traffic is spent, and
+   * nothing it writes is a source of truth — `runs rebuild` reconstructs the index from the
+   * evidence either way. The worst outcome of calling it twice is that it runs twice.
+   */
+  rebuild: () => { generatedAt: string; total: number; warnings: string[] };
 }
 
 const json = (status: number, value: unknown, headers: Record<string, string> = {}): ServerResponse => ({
@@ -91,6 +105,9 @@ export function route(request: ServerRequest, deps: RouterDeps): ServerResponse 
   if (path.startsWith("/api/")) {
     if (session === null) return json(401, { error: "not signed in" });
     if (path === "/api/settings" && method === "GET") return json(200, deps.settings());
+    // POST, not GET: it writes a file. A rebuild reachable by typing a URL is a rebuild a
+    // link preview or a prefetching browser can trigger without anybody asking for it.
+    if (path === "/api/dashboard/rebuild" && method === "POST") return json(200, deps.rebuild());
     if (path === "/api/whoami" && method === "GET") return json(200, { user: session.user, expiresAt: session.expiresAt });
     return json(404, { error: `no such endpoint: ${method} ${path}` });
   }

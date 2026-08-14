@@ -12,6 +12,7 @@ const deps = (over: Partial<RouterDeps> = {}): RouterDeps => ({
   readAsset: (p) => (p === "/index.html" ? { body: "<html>app</html>", type: "text/html" } : null),
   settings: () => ({ tenants: [] }),
   dashboard: () => JSON.stringify({ summary: { total: 3 } }),
+  rebuild: () => ({ generatedAt: "2026-08-14T10:00:00.000Z", total: 3, warnings: [] }),
   ...over,
 });
 
@@ -100,6 +101,38 @@ describe("the dashboard's data is protected like every other reading", () => {
     const out = route(req({ path: "/dashboard.json", headers: withSession(d) }), d);
     expect(out.status).toBe(404);
     expect(JSON.parse(out.body).error).toContain("dashboard build");
+  });
+});
+
+describe("rebuilding the dashboard from the console", () => {
+  it("needs a session, like everything else that touches evidence", () => {
+    expect(route(req({ path: "/api/dashboard/rebuild", method: "POST" }), deps()).status).toBe(401);
+  });
+
+  it("REFUSES a GET, so nothing can trigger it by following a link", () => {
+    // It writes a file. A rebuild reachable by typing a URL is one a link preview, a
+    // prefetching browser or a crawler can start without anybody asking.
+    const d = deps();
+    const out = route(req({ path: "/api/dashboard/rebuild", headers: withSession(d) }), d);
+    expect(out.status).toBe(404);
+  });
+
+  it("returns what the dashboard NOW says, not just that it worked", () => {
+    // The caller is a console about to re-read the file. Handing back the new timestamp and
+    // count lets it say what changed rather than "done" — and a rebuild that reports success
+    // while producing an empty dashboard is exactly the case worth showing.
+    const d = deps();
+    const out = route(req({ path: "/api/dashboard/rebuild", method: "POST", headers: withSession(d) }), d);
+    expect(out.status).toBe(200);
+    expect(JSON.parse(out.body)).toEqual({ generatedAt: "2026-08-14T10:00:00.000Z", total: 3, warnings: [] });
+  });
+
+  it("passes the builder's warnings through rather than swallowing them", () => {
+    // A stale index is the reason a rebuild produces fewer runs than the evidence holds, and
+    // it is the one thing the reader must see to know the number is not the whole story.
+    const d = deps({ rebuild: () => ({ generatedAt: "2026-08-14T10:00:00.000Z", total: 0, warnings: ["4 unparseable index line(s) skipped"] }) });
+    const out = route(req({ path: "/api/dashboard/rebuild", method: "POST", headers: withSession(d) }), d);
+    expect(JSON.parse(out.body).warnings).toEqual(["4 unparseable index line(s) skipped"]);
   });
 });
 

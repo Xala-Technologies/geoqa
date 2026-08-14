@@ -1636,7 +1636,14 @@ export function renderPruneResult(result: EvidencePruneResult): string {
  * running — which is also why the React app can be read-only without that being a
  * limitation.
  */
-export function dashboardBuild(deps: CommandDeps, filter: HistoryFilter = {}): { path: string; view: DashboardView } {
+export function dashboardBuild(
+  // Narrowed to what it actually reads, so the server can call it without constructing a
+  // whole CLI dependency set — and so this stays honest about needing three things, not
+  // thirty. The alternative was a second dashboard builder in the server, and two builders
+  // are two answers to "what does the console show".
+  deps: Pick<CommandDeps, "evidenceRoot" | "historyFs" | "now">,
+  filter: HistoryFilter = {},
+): { path: string; view: DashboardView } {
   const { records, skipped } = readHistory(deps.evidenceRoot, historyFsOf(deps));
   const warnings = skipped > 0 ? [`${skipped} unparseable index line(s) skipped — "geoqa runs rebuild" reconstructs the index`] : [];
   const view = toDashboardView(filterHistory(records, filter), new Date(deps.now()).toISOString(), warnings);
