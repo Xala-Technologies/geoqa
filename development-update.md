@@ -19,6 +19,73 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-14 — Branch coverage found dead code, and one comment that argued for it
+
+Two merged PRs ([#33](https://github.com/Xala-Technologies/geoqa/pull/33),
+[#34](https://github.com/Xala-Technologies/geoqa/pull/34)). Branch coverage went
+**96.62% → 97.40%** and the ratchet moved with it, but the number is not the result. What
+the number *found* is the result.
+
+### Some of what was "uncovered" was unreachable
+
+`opportunities()` and `meanScore` both wrote `?? 0` against a field the preceding filter had
+already proved non-null. One carried a comment stating the fallback was reachable. It was
+not — `observeSearch` returns a null `examined` only where it also returns a null `score`,
+and both callers filter on `score !== null` first. I had already tried to delete that
+fallback once, seen TypeScript reject it, and concluded the branch was live. The type is
+wide; the value never is.
+
+A comment asserting the opposite of the truth is worse than no comment, because the next
+person to change that sort will believe it. Both sites now share one `isMeasured` type guard
+that narrows `score` and `examined` together and states the coupling once. The rule it
+protects is the one the whole console rests on: **a keyword nobody could search for must not
+average in as a score of zero, and must not sort above one that was genuinely measured.**
+
+### Ten copies of one idea became one tested function
+
+`e instanceof Error ? e.message : String(e)` appeared ten times in ten files. It is now
+`describeThrown` in `src/errors.ts` — zero imports, so `browser/` and the Temporal workflow
+sandbox can both use it. Consolidating fixed two things every copy had wrong:
+
+- `String(undefined)` is `"undefined"` — correct, and indistinguishable from a real message
+  that says so. `could not append to the run index: undefined` sends a reader after the
+  reporter instead of the disk. Both null-ish cases are now named.
+- `String(value)` can itself throw. This runs *inside catch blocks*, so a reporter that
+  fails while reporting turns a diagnosable problem into an undiagnosable one.
+
+Five copies of `deps.historyFs ?? nodeHistoryFs` became one for the same reason: five copies
+is five chances for one subcommand to read a different tree from the `runs rebuild` that
+filled it, and that presents as data loss.
+
+### Newly asserted behaviour
+
+A thrown string from a history append or rebuild read. A vendor sub-account row whose
+`status` is not a string, which would otherwise render `[object Object]` as an account state.
+A step `probability` outside 0..1, rejected at the envelope before its action is considered.
+A median over an even number of runs — where picking one of the middle pair makes the
+reported centre depend on sort stability. A gate that returns **`unknown`**, not allow, when
+the run throws.
+
+### Three of my own mistakes, kept in the record
+
+- Two tests asserted things that were not true: that an empty page of search results leaves
+  a keyword unmeasured (it scores as **absent** — a reading, and an actionable one), and that
+  a failed query sorts last in the opportunity list (it is excluded entirely, which is
+  better). The code was right both times.
+- A blanket find-and-replace rewrote the new `historyFsOf` helper into a call to itself. It
+  **type-checks perfectly** and would have infinitely recursed on the first `runs list`. No
+  gate caught it; reading the diff did.
+- A test used `as GateCheckResult` to skip filling in two required fields. Removing the cast
+  revealed it asserted on gate decisions `"pass"` and `"fail"` — which do not exist; the real
+  ones are allow/block/unknown. The cast would have shipped a test that could never fail.
+
+The through-line, and the same one as the `$`-in-the-password-hash incident earlier this
+week: **100% line coverage says every line ran, not that every line does something.** The
+branch ratchet is the part that finds dead code. A type assertion in a test is a request for
+the compiler to stop checking the thing the test exists to check.
+
+---
+
 ## 2026-08-14 — The coverage sweep found a live geographic bug
 
 Branch coverage was never enforced — the gate had lines, statements and functions at 100 and
