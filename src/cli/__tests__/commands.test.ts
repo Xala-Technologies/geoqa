@@ -257,6 +257,52 @@ describe("browserVerify", () => {
     });
   });
 
+  it("reports EVERY primitive's failure detail, which is the command's whole job", async () => {
+    /**
+     * `browser verify` exists to say which primitives work on this host and engine. Its failure
+     * arms — one per probe — were untested: the suite proved it reports success and never that
+     * it reports the reason for a failure. A verifier that goes quiet when the thing it verifies
+     * breaks is the one shape it must not have.
+     *
+     * One runtime where every primitive fails covers all of them, and asserts the property that
+     * matters: each row carries the ADAPTER's detail, not a generic message invented here.
+     */
+    const failing = fakeRuntime({
+      open: () => Promise.resolve(bad()),
+      getTitle: () => Promise.resolve(bad()),
+      getText: () => Promise.resolve(bad()),
+      snapshot: () => Promise.resolve(bad()),
+      evaluate: <T,>() => Promise.resolve(bad<T>()),
+      console: () => Promise.resolve(bad()),
+      errors: () => Promise.resolve(bad()),
+      networkRequests: () => Promise.resolve(bad()),
+      vitals: () => Promise.resolve(bad()),
+      a11y: () => Promise.resolve(bad()),
+      screenshot: () => Promise.resolve(bad()),
+    });
+    const result = await browserVerify(deps({ makeRuntime: () => failing }));
+
+    expect(result.passed).toBe(0);
+    expect(result.total).toBe(10);
+    // No launch hash to report when the open itself failed — and null rather than a guess.
+    expect(result.launchHash).toBeNull();
+    // Every row says WHY, using the failure the adapter produced.
+    for (const p of result.primitives) {
+      expect(p.ok, p.name).toBe(false);
+      expect(p.detail, p.name).not.toBe("");
+    }
+  });
+
+  it("counts a primitive that SUCCEEDS but returns nothing as a failure", async () => {
+    // `get-title` returning an empty string is a successful call and a useless answer. Reporting
+    // it as a working primitive would tell an operator the host is fine when the page has no
+    // title — the check is `out.ok && out.data.length > 0` for that reason.
+    const result = await browserVerify(
+      deps({ makeRuntime: () => fakeRuntime({ getTitle: () => Promise.resolve(ok("")) }) }),
+    );
+    expect(result.primitives.find((p) => p.name === "get-title")?.ok).toBe(false);
+  });
+
   it("records a failing primitive without aborting the rest", async () => {
     const result = await browserVerify(
       deps({ makeRuntime: () => fakeRuntime({ a11y: () => Promise.resolve(bad()) }) }),
@@ -1913,6 +1959,38 @@ describe("gateCheck", () => {
     expect(result.gate.decision).toBe("block");
     // Worst first, and the low-severity one is still available rather than discarded.
     expect(result.actionable.map((f) => f.id)).toEqual(["f1", "f2"]);
+  });
+
+  it("forwards every option it was given to the run it gates on", async () => {
+    // Each of these is a conditional spread, and an option that is accepted and then dropped is
+    // the B-1 defect: the caller sets it, nothing contradicts them, and the gate decides on a
+    // run configured differently from the one they asked for.
+    let captured: ExecuteOptions | null = null;
+    await gateCheck(
+      deps({
+        runOnce: async (o: ExecuteOptions) => {
+          captured = o;
+          return passing();
+        },
+      }),
+      {
+        ...base,
+        // `direct` rather than `http-proxy`: the spread fires on any truthy value, and
+        // http-proxy with no credentials refuses before a run happens — which would test the
+        // refusal rather than the forwarding.
+        providerName: "direct",
+        engine: "playwright",
+        verifyEndpoint: "https://example.test/ip",
+        seed: 4242,
+        tenantId: "digilist",
+        blockAtOrAbove: "medium",
+      },
+    );
+    const o = captured as unknown as ExecuteOptions;
+    expect(o.spec.engine).toBe("playwright");
+    expect(o.spec.verifyEndpoint).toBe("https://example.test/ip");
+    expect(o.spec.seed).toBe(4242);
+    expect(o.tenantId).toBe("digilist");
   });
 
   it("is UNKNOWN when the run THROWS — an exception must not be catchable as a pass", async () => {
