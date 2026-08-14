@@ -557,3 +557,23 @@ describe("health authentication probe", () => {
     expect(health.detail).toContain("refused authentication");
   });
 });
+
+describe("a proxy variable that is set but holds nothing usable", () => {
+  it("reports UNCONFIGURED for a pool of separators, not a configured-but-broken provider", async () => {
+    // `GEOQA_PROXY_OSLO=","` is set, so the truthiness check that guards the scan passes —
+    // but there is no exit in it. Reporting "configured" here would send the health check on
+    // to probe a gateway that was never named, and the operator would be told the vendor is
+    // unreachable when the real problem is a variable they filled in wrong.
+    const health = await httpProxyProvider({ env: { GEOQA_PROXY_OSLO: " , , " } }).health(0);
+    expect(health.state).toBe("unconfigured");
+    expect(health.detail).toContain("GEOQA_PROXY");
+  });
+
+  it("takes the FIRST usable exit when a pool has blanks in front of it", async () => {
+    // A trailing or leading comma is the most common way a list gets edited by hand. The
+    // scan skips the empties rather than treating the variable as unset.
+    const probe = (): Promise<boolean> => Promise.resolve(true);
+    const health = await httpProxyProvider({ env: { GEOQA_PROXY_OSLO: " ,http://gw.io:7777, " }, probe }).health(0);
+    expect(health.state).not.toBe("unconfigured");
+  });
+});

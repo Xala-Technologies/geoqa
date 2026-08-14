@@ -85,7 +85,7 @@ export default defineConfig({
        * removes a tested branch. One set below it fails only on regression, which is what a
        * ratchet is for.
        */
-      thresholds: { lines: 100, statements: 100, functions: 100, branches: 98.2 },
+      thresholds: { lines: 100, statements: 100, functions: 100, branches: 98.6 },
     },
     testTimeout: 15_000,
   },

@@ -21,6 +21,7 @@ import type { Market } from "../geo/types.js";
 import { coolingDown, loadCooldowns, recordCooldown } from "./cooldown.js";
 import { authProbe } from "./auth-probe.js";
 import type { AuthProbe, GeoNetworkProvider, GeoNetworkSession, ProviderHealth, ProxyAuthResult, SessionResult } from "./types.js";
+import { elementAt } from "../collections.js";
 export type { AuthProbe, ProxyAuthResult };
 export { authProbe };
 
@@ -46,6 +47,11 @@ export const tcpProbe: TcpProbe = (host, port, timeoutMs) =>
     const socket = net.connect({ host, port });
     let settled = false;
     const finish = (ok: boolean): void => {
+      // The race this exists for: a socket can error AND time out, or connect just as the
+      // timeout fires. Whichever arrives second must not resolve an already-resolved promise
+      // — and must not destroy a socket twice. Both orderings happen against a real network
+      // and neither is reproducible in a unit test, which is why this guard is asserted by
+      // reasoning rather than by a case.
       if (settled) return;
       settled = true;
       socket.destroy();
@@ -184,14 +190,18 @@ export function resolveProxyPool(market: Market, env: NodeJS.ProcessEnv, session
  * happened to open first, which is not a property of the run.
  */
 export function selectFromPool(pool: string[], sessionId: string): string | null {
+  // The ONLY legitimate null: there is no exit to choose. Every other path returns an
+  // address, because a null further down would read to the caller as "no proxy configured"
+  // and silently become direct egress — a geographic tool measuring the wrong country.
   if (pool.length === 0) return null;
-  if (pool.length === 1) return pool[0] ?? null;
   let hash = 2_166_136_261;
   for (let index = 0; index < sessionId.length; index++) {
     hash ^= sessionId.charCodeAt(index);
     hash = Math.imul(hash, 16_777_619);
   }
-  return pool[(hash >>> 0) % pool.length] ?? null;
+  // No single-element special case: `hash % 1` is 0, so the general path already returns the
+  // one exit. The special case computed the same answer down a second branch.
+  return elementAt(pool, (hash >>> 0) % pool.length);
 }
 
 export function resolveProxyUrl(market: Market, env: NodeJS.ProcessEnv, sessionId: string): string | null {
@@ -297,7 +307,10 @@ export function httpProxyProvider(options: ProviderOptions = {}): GeoNetworkProv
   const cooldownUntil = (nowMs: number): number | null => {
     if (!options.cooldownPath) return null;
     const cools = loadCooldowns(options.cooldownPath);
-    return coolingDown(cools, name, nowMs) ? (cools[name] ?? null) : null;
+    // Read once. Indexing again behind `coolingDown` — which already proves the value is a
+    // number in the future — needed a `?? null` that could never be taken.
+    const until = cools[name];
+    return until !== undefined && coolingDown(cools, name, nowMs) ? until : null;
   };
 
   /**

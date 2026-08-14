@@ -434,3 +434,56 @@ describe("nodeJsonFetch", () => {
     expect(await nodeJsonFetch("http://127.0.0.1:1/account")).toBeNull();
   });
 });
+
+describe("SerpApi answers whose shape is not the documented one", () => {
+  // Every field here belongs to a vendor, and a vendor's schema is theirs to change. The
+  // rule these share: an unreadable field means we do not know, never a confident value.
+
+  it("calls the account status \"unknown\" rather than rendering whatever arrived", () => {
+    const health = parseAccountHealth(200, { total_searches_left: 0, account_status: { code: 7 } });
+    expect(health.state).toBe("unusable");
+    expect(health.detail).toContain("unknown");
+    expect(health.detail).not.toContain("[object Object]");
+  });
+
+  it("does not treat a MISSING search_metadata as a failed search", () => {
+    // Absent metadata is not a failure report. Treating it as one would turn every answer
+    // from a slightly older API version into "the search did not complete".
+    const parsed = parseSearchResults(200, { organic_results: [{ position: 1, link: "https://a.test/" }] });
+    expect(parsed.ok).toBe(true);
+  });
+
+  it("does not treat a NON-STRING metadata status as a failed search either", () => {
+    const parsed = parseSearchResults(200, { search_metadata: { status: 200 }, organic_results: [{ position: 1, link: "https://a.test/" }] });
+    expect(parsed.ok).toBe(true);
+  });
+
+  it("REFUSES a search whose metadata says it did not succeed", () => {
+    const parsed = parseSearchResults(200, { search_metadata: { status: "Processing" }, organic_results: [] });
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok === false && parsed.reason).toContain("Processing");
+  });
+
+  it("skips a location entry with no country_code instead of matching it to everything", () => {
+    // `String(undefined).toUpperCase()` is "UNDEFINED", which matches no country — but only
+    // by accident. This asserts the behaviour rather than the accident: an entry that does
+    // not say where it is cannot answer a question about where.
+    const entries = [
+      { canonical_name: "Nowhere", target_type: "City", reach: 9_000_000 },
+      { canonical_name: "Oslo,Oslo,Norway", country_code: "NO", target_type: "City", reach: 1_360_000 },
+    ];
+    expect(pickLocation(entries, "NO")).toBe("Oslo,Oslo,Norway");
+  });
+
+  it("ranks an entry with no reach below one that has it, rather than throwing", () => {
+    const entries = [
+      { canonical_name: "Bergen,Vestland,Norway", country_code: "NO", target_type: "City" },
+      { canonical_name: "Oslo,Oslo,Norway", country_code: "NO", target_type: "City", reach: 1_360_000 },
+    ];
+    expect(pickLocation(entries, "NO")).toBe("Oslo,Oslo,Norway");
+  });
+
+  it("takes a bare language tag with no region", () => {
+    expect(googleLanguage("no")).toBe("no");
+  });
+});
