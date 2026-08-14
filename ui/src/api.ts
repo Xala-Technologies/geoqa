@@ -47,6 +47,30 @@ export async function getJson<T>(path: string): Promise<ApiResult<T>> {
   }
 }
 
+/**
+ * POST with no body, for the endpoints that DO something rather than fetch something.
+ *
+ * Separate from `getJson` because the method is the safety property, not a detail: the
+ * rebuild endpoint writes a file, and a browser will happily GET a URL nobody clicked —
+ * prefetch, link preview, a crawler following the DOM. Making the verb explicit here keeps
+ * that decision visible at the call site instead of buried in a fetch option.
+ */
+export async function postJson<T>(path: string): Promise<ApiResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(path, { method: "POST", credentials: "same-origin" });
+  } catch (cause) {
+    return { ok: false, signedOut: false, error: `could not reach the server: ${String(cause)}` };
+  }
+  if (response.status === 401) return { ok: false, signedOut: true };
+  if (!response.ok) return { ok: false, signedOut: false, error: await reasonFrom(response) };
+  try {
+    return { ok: true, value: (await response.json()) as T };
+  } catch {
+    return { ok: false, signedOut: false, error: `${path} answered with something that is not JSON` };
+  }
+}
+
 /** Sign in. Returns the session, a rejection, or a transport failure. */
 export async function signIn(user: string, password: string): Promise<ApiResult<{ user: string; expiresAt: number }>> {
   let response: Response;
