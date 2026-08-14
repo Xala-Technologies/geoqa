@@ -1583,6 +1583,39 @@ removing `coverageGaps` from the UI fails with *"site.coverageGaps is declared b
 component reads it"*. A behavioural test cannot catch this class — every component test
 asserts what its component does, and a component that does not exist has no test to fail.
 
+### C-20 · FIXED — a truncated `loc` placed an exit on the prime meridian
+
+Found by writing tests for `parseLoc`'s guards rather than reading them, during the branch
+coverage sweep.
+
+`Number("")` is **0**, not `NaN`. So a `loc` field arriving as `"59.9139,"` — a latitude
+with the longitude truncated — passed every guard the function had: 0 is finite, and
+`|0| <= 180`. `parseLoc` returned `[59.9139, 0]`.
+
+That is a point in the North Sea, roughly 600km west of Oslo. And these coordinates are
+not decorative: since [C-4](#c-4--closed--a-wrong-city-is-now-distinguishable-from-a-naming-artifact)
+the city axis is a **distance** verdict, so a vendor sending a truncated field would have
+produced a proven city **MISMATCH** against a correctly-routed Norwegian exit — a
+confident wrong answer about somebody's proxy vendor, from a field nobody would think to
+check.
+
+**The function's own comment described this hazard.** It reads:
+
+> `Number("")` is 0 … the prime meridian, which is a confident wrong answer of exactly the
+> kind a distance check must not produce.
+
+The reasoning was written down and the guard was never added. `Number.isFinite` was there
+and does not catch it, because 0 is finite — which is precisely why the comment singles
+this case out and precisely why reading the code agreed with itself.
+
+Fixed by rejecting an empty half before `Number` sees it. The input comes from a
+third-party IP-geo API, so malformed values are not hypothetical.
+
+**Worth noting how it surfaced.** Nothing about the sweep was looking for bugs; the task
+was to cover three uncovered branch arms. Writing a case per guard forced the question
+*what does this guard actually reject* — and one of them rejected less than its comment
+claimed.
+
 ### C-13 · CLOSED — an empty text read is confirmed, then refused rather than blamed on the page
 
 **Found by pointing the engine at a second real site**, which is exactly what

@@ -40,8 +40,19 @@ export function parseLoc(value: unknown): [number, number] | null {
   if (typeof value !== "string") return null;
   const parts = value.split(",");
   if (parts.length !== 2) return null;
-  const lat = Number(parts[0]);
-  const lon = Number(parts[1]);
+
+  // An EMPTY half is rejected before `Number` ever sees it, and this is the guard the comment
+  // above was describing while the code did not have it: `Number("")` is 0, not NaN, so it is
+  // finite and inside every range check below. `"59.9139,"` parsed to [59.9139, 0] — the prime
+  // meridian, several hundred kilometres off the coast of Norway — and these coordinates decide
+  // a city verdict by DISTANCE, so a vendor sending a truncated field would have produced a
+  // proven city MISMATCH against a correctly-routed exit. Found by testing the guards rather
+  // than reading them.
+  const [rawLat = "", rawLon = ""] = parts;
+  if (rawLat.trim() === "" || rawLon.trim() === "") return null;
+
+  const lat = Number(rawLat);
+  const lon = Number(rawLon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
   return [lat, lon];
