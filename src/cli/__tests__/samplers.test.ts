@@ -40,6 +40,7 @@ import {
   summariseJourney,
   summariseProfileConsistency,
 } from "../samplers.js";
+import type { RunSpec } from "../../run/context.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -886,11 +887,138 @@ describe("every sampler honours --engine and --verifyEndpoint (D-1b)", () => {
     expect(two.requests[0]?.engine).toBe("playwright");
   });
 
+  /**
+   * The three samplers below reach their engine through `deps.runOnce` rather than
+   * `makeRuntime`, so the forwarding is asserted on the RunSpec they build. Same invariant,
+   * one layer up — and it was unproven for all three until now, which means `--engine
+   * playwright` on EXP-005, EXP-006 or EXP-007 could have measured agent-browser and
+   * reported a clean result for an engine it never touched. That is the exact defect D-1b
+   * was opened for.
+   */
+  const specsFrom = (): { specs: RunSpec[]; runOnce: CommandDeps["runOnce"] } => {
+    const specs: RunSpec[] = [];
+    const runOnce = ((opts: { spec: RunSpec }) => {
+      specs.push(opts.spec);
+      return Promise.resolve({
+        runId: "r",
+        verdict: "PASS",
+        findings: [],
+        durationMs: 1,
+        geo: { network: { egressHeld: { verdict: "match" }, observed: { ip: "1.2.3.4" } } },
+        confidence: { overall: 90, evidence: 100 },
+        evidenceId: "ev_1",
+        journey: { steps: [] },
+      });
+    }) as unknown as CommandDeps["runOnce"];
+    return { specs, runOnce };
+  };
+
+  it("carries the engine and endpoint into EXP-005, which runs a whole journey", async () => {
+    const { specs, runOnce } = specsFrom();
+    await sampleJourney(deps({ runOnce }), { ...base, id: "EXP-005", engine: "playwright", verifyEndpoint: "http://127.0.0.1:1/ipinfo" });
+    expect(specs[0]?.engine).toBe("playwright");
+    expect(specs[0]?.verifyEndpoint).toBe("http://127.0.0.1:1/ipinfo");
+  });
+
+  it("falls back to the recorded default for EXP-005 when neither is given", async () => {
+    // Absence must mean the SAME engine every stored EXP-005 result was measured on, or a
+    // re-run is not comparable with the numbers it is being compared against.
+    const { specs, runOnce } = specsFrom();
+    await sampleJourney(deps({ runOnce }), { ...base, id: "EXP-005" });
+    expect(specs[0]?.engine).toBe(DEFAULT_ENGINE);
+  });
+
+  it("carries the engine into EXP-006, whose subject is the evidence a run leaves", async () => {
+    const { specs, runOnce } = specsFrom();
+    await sampleEvidenceQuality(deps({ runOnce }), { ...base, id: "EXP-006", engine: "playwright" }, 0);
+    expect(specs[0]?.engine).toBe("playwright");
+  });
+
+  it("carries it into EVERY session EXP-007 opens, control included", async () => {
+    // The control is what the batch is measured against. A control on one engine and a
+    // batch on another would report the engine difference as a concurrency effect.
+    const { specs, runOnce } = specsFrom();
+    await sampleConcurrency(deps({ runOnce }), { ...base, id: "EXP-007", engine: "playwright", verifyEndpoint: "http://127.0.0.1:1/ipinfo" });
+    expect(specs.length).toBeGreaterThan(1);
+    expect(specs.every((sp) => sp.engine === "playwright")).toBe(true);
+    expect(specs.every((sp) => sp.verifyEndpoint === "http://127.0.0.1:1/ipinfo")).toBe(true);
+  });
+
   it("carries it into EXP-000, whose SUBJECT is the adapter", async () => {
     // The one experiment where the engine is the thing under test rather than a
     // detail of how the measurement was taken.
     const cap = capturing();
     await sampleBrowserPrimitives(cap.deps, { ...base, id: "EXP-000", engine: "playwright" });
     expect(cap.requests[0]?.engine).toBe("playwright");
+  });
+});
+
+describe("summarisers reading samples that are missing what they expect", () => {
+  // A results.jsonl line is written by whatever version of the code ran it. An older run,
+  // a partial write, or a sampler that threw mid-way all produce a sample without the field
+  // a summariser wants. None of them should make the summariser throw, and none should be
+  // silently counted as a zero reading — the two are different facts.
+
+  it("ignores a `failures` field that is not a list rather than throwing on it", () => {
+    const { notes } = summariseBrowserPrimitives([sample({ passed: 9, total: 10, failures: "everything" })]);
+    expect(Array.isArray(notes)).toBe(true);
+  });
+
+  it("counts a sample with no instrumentation figure as nothing to add, not as a finding", () => {
+    // `?? 0` is right HERE and wrong elsewhere: this is a sum, and a sample that recorded no
+    // instrumentation findings contributes none. The distinction is that the total is
+    // reported alongside the sample count, so a reader can see the denominator.
+    const { metrics } = summariseEvidenceQuality([sample({ evidenceComplete: true }), sample({ evidenceComplete: true, instrumentationFindings: 2 })]);
+    expect(metrics.length).toBeGreaterThan(0);
+  });
+
+  it("does not treat a sample with no concurrency figure as a shared-egress sample", () => {
+    // The shared-egress check is `one IP AND more than one session`. A sample that never
+    // recorded its concurrency has not demonstrated sharing, and counting it as one would
+    // report a proxy defect that no measurement supports.
+    const { notes } = summariseConcurrency([sample({ distinctEgressIps: 1 })], { ...options, id: "EXP-007" });
+    expect(notes.join(" ")).not.toContain("shared");
+  });
+
+  it("reports journey stability as UNMEASURED over no samples, never 0%", () => {
+    // 0% stability reads as "the journey is wildly unstable", which is the opposite of "we
+    // have not run it". This is the same rule the console applies to every absence.
+    const { metrics } = summariseJourney([]);
+    expect(metrics.length).toBeGreaterThan(0);
+    expect(metrics.map((m) => m.value)).toEqual(metrics.map(() => null));
+  });
+});
+
+describe("options a sampler is NOT given", () => {
+  it("selects a provider without a probe when no probe was injected", () => {
+    // Production passes no probe — the real one is the provider's own. Every other test in
+    // this file injects one, so the arm production actually takes was the untested one.
+    const bare = defaultDeps(repoRoot, { evidenceRoot, env: {}, now: () => 1_000, log: () => {} });
+    expect(bare.probe).toBeUndefined();
+    return expect(sampleEgress(bare, { ...options, providerName: "direct" }, 0)).resolves.toBeDefined();
+  });
+
+  it("records that EXP-005 fell back to direct egress, instead of sampling clean", () => {
+    // The forwarding is proven by the CONSEQUENCE: an unknown provider name reaches
+    // `selectProvider`, which falls back to direct egress and says so. Before this, the
+    // warning was dropped and the sample looked identical to one measured through the
+    // market's proxy — so a typo in `--provider` could produce a whole EXP-005 series
+    // measured outside the market it names, reading as a healthy result.
+    const runOnce = (() =>
+      Promise.resolve({
+        runId: "r", verdict: "PASS", findings: [], durationMs: 1,
+        geo: { network: { egressHeld: { verdict: "match" }, observed: { ip: "1.2.3.4" } } },
+        confidence: { overall: 90, evidence: 100 }, evidenceId: "ev_1", journey: { steps: [] },
+      })) as unknown as CommandDeps["runOnce"];
+
+    return sampleJourney(deps({ runOnce }), { ...options, id: "EXP-005", providerName: "decodo-typo" }).then((data) => {
+      expect((data.warnings as string[]).join(" ")).toContain("NOT geographic");
+    });
+  });
+
+  it("says it ONCE in the summary, however many samples repeated it", () => {
+    const warned = { verdict: "PASS", completed: true, warnings: ["unknown network provider — falling back"] };
+    const { notes } = summariseJourney([sample(warned), sample(warned), sample(warned)]);
+    expect(notes.filter((n) => n.includes("falling back"))).toHaveLength(1);
   });
 });
