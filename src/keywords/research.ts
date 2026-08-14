@@ -146,7 +146,7 @@ export async function researchKeywords(options: ResearchOptions): Promise<Keywor
     );
   }
 
-  const measured = observations.filter((o) => o.score !== null);
+  const measured = observations.filter(isMeasured);
   return {
     tenantId: options.tenantId,
     queried: observations.length,
@@ -154,7 +154,7 @@ export async function researchKeywords(options: ResearchOptions): Promise<Keywor
     observations,
     // Over the MEASURED ones only. Averaging in the failures would let a broken account
     // read as poor visibility.
-    meanScore: measured.length === 0 ? null : Math.round(measured.reduce((sum, o) => sum + (o.score ?? 0), 0) / measured.length),
+    meanScore: measured.length === 0 ? null : Math.round(measured.reduce((sum, o) => sum + o.score, 0) / measured.length),
     warnings,
   };
 }
@@ -167,6 +167,19 @@ const hostOf = (url: string | undefined): string | null => {
     return null;
   }
 };
+
+/**
+ * A measured observation: one where the search actually ran.
+ *
+ * The predicate narrows `score` AND `examined` together, because `observeSearch` only ever
+ * returns a null `examined` alongside a null `score` — a query that failed examined nothing.
+ * Asserting that coupling here rather than writing `?? 0` at each use is the difference
+ * between one checked claim and a scatter of fallbacks that quietly render an absence as a
+ * zero. The two are not the same: a keyword nobody searched for must never average in as a
+ * score of 0, or sort above one that was genuinely measured.
+ */
+const isMeasured = (o: KeywordObservation): o is MeasuredObservation => o.score !== null && o.examined !== null;
+type MeasuredObservation = KeywordObservation & { score: number; examined: number };
 
 /**
  * The terms worth acting on first: measured, and the tenant is not on the page.
@@ -182,6 +195,6 @@ const hostOf = (url: string | undefined): string | null => {
  */
 export function opportunities(report: KeywordReport): KeywordObservation[] {
   return report.observations
-    .filter((o) => o.score !== null && o.position === null)
-    .sort((a, b) => (b.examined ?? 0) - (a.examined ?? 0));
+    .filter((o): o is MeasuredObservation => isMeasured(o) && o.position === null)
+    .sort((a, b) => b.examined - a.examined);
 }

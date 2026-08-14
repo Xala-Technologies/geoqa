@@ -208,3 +208,20 @@ describe("resolveSteps", () => {
     expect(resolveSteps(steps, { target: "x" })).toEqual(steps);
   });
 });
+
+describe("a step whose ENVELOPE is wrong, before its action is even considered", () => {
+  it("rejects a probability outside 0..1 and names the step by index", () => {
+    // Checked before the action, because `probability: 1.5` is not a question about what
+    // `click` means. A number above 1 is almost always a percentage written by hand, and
+    // silently clamping it would make "runs 150% of the time" mean the same as "always" —
+    // which hides that the author believed something the engine cannot do.
+    const parsed = parseStep({ action: "click", selector: "#buy", probability: 1.5 }, 3);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok === false && parsed.errors.join(" ")).toContain("steps[3]");
+  });
+
+  it("rejects a probability that is not a number at all", () => {
+    const parsed = parseStep({ action: "click", selector: "#buy", probability: "sometimes" }, 0);
+    expect(parsed.ok).toBe(false);
+  });
+});

@@ -422,3 +422,23 @@ describe("nodeHistoryFs", () => {
     expect(readHistory(root).records.map((r) => r.runId)).toEqual(["run_2_b"]);
   });
 });
+
+describe("things thrown that are not Errors", () => {
+  // A filesystem shim, a native binding or a rejected promise can throw a string. `e.message`
+  // on one is undefined, and an index error reading "could not append to the run index:
+  // undefined" sends the reader looking for a bug in the reporter rather than the disk.
+  it("still names the cause when append throws a bare string", () => {
+    const failing: HistoryFs = { ...memoryFs(), append: () => { throw "disk quota exceeded"; } };
+    expect(appendRun("/e", record(), failing)).toContain("disk quota exceeded");
+  });
+
+  it("still names the run and the cause when a rebuild read throws a bare string", () => {
+    const fs: HistoryFs = {
+      ...memoryFs({}, { "/e": ["run_2000_b"] }),
+      exists: () => true,
+      read: () => { throw "I/O error 5"; },
+    };
+    const result = rebuildHistory("/e", () => record(), fs);
+    expect(result.unreadable).toEqual(["run_2000_b: I/O error 5"]);
+  });
+});

@@ -276,3 +276,60 @@ describe("opportunities", () => {
     expect(gaps.map((o) => o.term)).toEqual(["contested", "thin"]);
   });
 });
+
+describe("what a keyword report says when a search found NOTHING", () => {
+  const seeds: KeywordSeed[] = [{ term: "leie lokaler", intent: "local", audience: "private" }];
+  const empty: SearchOutcome = { ok: true, totalResults: 0, results: [] };
+
+  it("reports no top competitor rather than inventing one", () => {
+    // A successful search with zero results is a real answer about a term nobody ranks for.
+    // `results[0]?.url` is undefined there, and a host derived from undefined would be a
+    // competitor that does not exist.
+    return researchKeywords({ seeds, markets: [OSLO], tenantId: "t", ownUrl: "https://acme.test", provider: provider(() => empty) }).then((report) => {
+      expect(report.observations[0]?.topCompetitor).toBeNull();
+    });
+  });
+
+  it("still SCORES a term nobody ranks for, because that is a reading and not a gap", () => {
+    // An empty page of results is a real answer: the tenant is absent from a market that has
+    // no market. It scores as absent rather than going unmeasured, and the distinction is the
+    // whole point — "nobody ranks here" is actionable, "we could not look" is not.
+    return researchKeywords({ seeds, markets: [OSLO], tenantId: "t", ownUrl: "https://acme.test", provider: provider(() => empty) }).then((report) => {
+      expect(report.meanScore).not.toBeNull();
+      expect(report.observations[0]?.position).toBeNull();
+      expect(report.observations[0]?.examined).toBe(0);
+    });
+  });
+
+  it("keeps an UNMEASURED term out of the opportunity list entirely", () => {
+    // Not sorted last — absent. A "things to fix" list containing a query that never ran
+    // would send somebody to rewrite a page over a billing problem.
+    const failing: SearchOutcome = { ok: false, reason: "quota exhausted", kind: "quota" };
+    return researchKeywords({
+      seeds: [...seeds, { term: "kontorlokaler", intent: "local", audience: "private" }],
+      markets: [OSLO],
+      tenantId: "t",
+      ownUrl: "https://acme.test",
+      provider: provider((q) => (q.includes("kontor") ? failing : empty)),
+    }).then((report) => {
+      expect(report.meanScore).not.toBeNull();
+      expect(opportunities(report).map((o) => o.term)).toEqual(["leie lokaler"]);
+    });
+  });
+});
+
+describe("seed files that do not parse", () => {
+  it("names the ROOT when the error is not about a field", () => {
+    // A zod issue with an empty path has no field to blame. Reporting an empty string there
+    // would print "': expected object'", which reads as a bug in the reporter.
+    const parsed = parseKeywordSeeds("not an object at all");
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok === false && parsed.errors.join(" ")).toContain("(root)");
+  });
+
+  it("prefixes a file's errors with the file, so one of several is identifiable", () => {
+    const out = loadKeywordSeeds(path.join(repoRoot, "package.json"));
+    expect(out.ok).toBe(false);
+    expect(out.ok === false && out.errors.every((e) => e.includes("package.json"))).toBe(true);
+  });
+});
