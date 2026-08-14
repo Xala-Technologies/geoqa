@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ import type { GeoNetworkProvider } from "../../network/types.js";
 import type { RunSpec } from "../context.js";
 import { executeRun, prepareRun } from "../execute.js";
 import { StageError } from "../stages.js";
-import { bad, fakeRuntime, ok } from "./fake-runtime.js";
+import { bad, BROWSER_ENV_OSLO, fakeRuntime, ok } from "./fake-runtime.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const profilePath = path.join(repoRoot, "profiles", "oslo-mobile.yaml");
@@ -411,5 +411,157 @@ describe("executeRun with --repeat", () => {
       log: (l) => lines.push(l),
     });
     expect(lines.join("\n")).toContain("DECLARES WRITES — this run will change state on https://digilist.no 3 TIMES");
+  });
+});
+
+describe("the things executeRun says OUT LOUD", () => {
+  /**
+   * Nine branches nothing asserted, and they are all the same kind of thing: a condition that
+   * produces a WARNING. A warning that is computed and never logged is a warning nobody sees,
+   * which is indistinguishable from the condition not happening — and this engine's whole
+   * position is that what it could not verify must be said rather than inferred.
+   */
+  const lines = (): { log: (l: string) => void; all: string[] } => {
+    const all: string[] = [];
+    return { log: (l) => all.push(l), all };
+  };
+
+  it("REFUSES an invalid journey rather than running an empty one", async () => {
+    // A journey that will not parse must stop the run. Continuing with zero steps would produce
+    // a PASS: no check ran, so nothing failed.
+    //
+    // The spec is built directly rather than through `prepareRun`, which loads the journey too
+    // and would throw first — leaving executeRun's own guard unexercised while the test passed.
+    await withFakeBrowser();
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const withBadJourney = { ...prepared.spec, journeyPath: path.join(root, "no-such-journey.yaml") };
+    await expect(executeRun({ spec: withBadJourney, provider: directProvider() })).rejects.toThrow();
+  });
+
+  it("warns when a RETURNING profile had no session to restore", async () => {
+    // The honesty half of B-7: the profile asked to be a returning visitor and this run was a
+    // first-time one. Silence here makes the two indistinguishable in the log.
+    await withFakeBrowser();
+    const out = lines();
+    const returning = path.join(repoRoot, "profiles", "oslo-desktop-returning.yaml");
+    const prepared = await prepareRun(base({ profilePath: returning, engine: "playwright" }), directProvider(), 0);
+    await executeRun({ spec: prepared.spec, provider: directProvider(), log: out.log });
+    expect(out.all.some((l) => l.includes("FIRST-TIME visitor"))).toBe(true);
+  });
+
+  it("warns when the VIEWPORT could not be applied", async () => {
+    // A profile that never applied its viewport measures a different layout than the one it
+    // claims — the axis would describe the browser's default, not the market's.
+    //
+    // Through `setViewport` rather than `setDevice`: `applyDeviceProfile` only calls the latter
+    // when a profile declares `emulate`, and no profile does any more (gaps C-8 reverted it from
+    // all eight mobile profiles). A test mocking `setDevice` asserts nothing about any run this
+    // repo can currently perform.
+    await withFakeBrowser({ setViewport: () => Promise.resolve(bad()) });
+    const out = lines();
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    await executeRun({ spec: prepared.spec, provider: directProvider(), log: out.log });
+    expect(out.all.some((l) => l.startsWith("warning:"))).toBe(true);
+  });
+
+  it("marks a geo reading as NOT FULLY VERIFIED when an axis could not be proven", async () => {
+    // `trustworthy` false means an axis is unverified. A confidence number printed without that
+    // qualifier reads as a measurement rather than as a partially-unproven one.
+    //
+    // Produced by the egress ROTATING mid-run, which is the realistic shape and the most
+    // consequential: nothing observed after a rotation can be attributed to the site, so the
+    // run may not claim full verification whatever the page did.
+    //
+    // The fake tells the two `evaluate` calls apart by the expression: the egress read is a
+    // `fetch` against the identity endpoint, the browser read is not.
+    await withFakeBrowser({
+      evaluate: <T,>(expression: string) =>
+        Promise.resolve(
+          ok((expression.includes("fetch") ? JSON.stringify({ ip: "9.9.9.9" }) : BROWSER_ENV_OSLO) as unknown as T),
+        ),
+    });
+    const out = lines();
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    await executeRun({ spec: prepared.spec, provider: directProvider(), log: out.log });
+    expect(out.all.some((l) => l.includes("not fully verified"))).toBe(true);
+    // And the rotation is named, not merely folded into a number.
+    expect(out.all.some((l) => l.startsWith("egress:"))).toBe(true);
+  });
+
+  it("marks the geo line NOT FULLY VERIFIED when the BROWSER axis could not be read", async () => {
+    // Distinct from the egress case: `trustworthy` is folded down again later by the
+    // egress-held and corroboration axes, so a rotation flips it AFTER this line is logged.
+    // What this covers is the verification itself coming back partial — the browser read
+    // failing, so language, timezone and viewport are all unverified.
+    await withFakeBrowser({
+      evaluate: <T,>(expression: string) =>
+        expression.includes("fetch")
+          ? Promise.resolve(ok(JSON.stringify({ ip: "1.1.1.1" }) as unknown as T))
+          : Promise.resolve(bad<T>()),
+    });
+    const out = lines();
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    await executeRun({ spec: prepared.spec, provider: directProvider(), log: out.log });
+    expect(out.all.some((l) => l.startsWith("geo: confidence") && l.includes("not fully verified"))).toBe(true);
+  });
+
+  it("warns when the run INDEX could not be appended, and does not fail the run", async () => {
+    // The index is a derived cache — `geoqa runs rebuild` reconstructs it from the evidence on
+    // disk — so losing a line costs nothing permanent. A run that verified a site correctly and
+    // wrote its evidence has not failed at anything a user cares about because a cache line
+    // could not be written. But it must SAY so, or the run silently vanishes from every view
+    // that reads the index.
+    await withFakeBrowser();
+    const out = lines();
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    // A directory where the file belongs: the append fails, nothing else does.
+    mkdirSync(path.join(root, "runs.jsonl"), { recursive: true });
+    const result = await executeRun({ spec: prepared.spec, provider: directProvider(), log: out.log });
+    expect(result.verdict).toBe("PASS");
+    expect(out.all.some((l) => l.startsWith("warning:"))).toBe(true);
+  });
+
+  it("OMITS vitals from the history record when they could not be read", async () => {
+    // A history line carrying zeroes for a run whose vitals were unreadable would make the
+    // trends draw a cliff that never happened. Absent is the honest shape.
+    await withFakeBrowser({ vitals: () => Promise.resolve(bad()) });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    await executeRun({ spec: prepared.spec, provider: directProvider() });
+    const line = readFileSync(path.join(root, "runs.jsonl"), "utf8").trim().split("\n").at(-1) as string;
+    // Every metric NULL rather than zero. `toRunRecord` defaults an absent reading to nulls,
+    // which is the honest shape — a history line carrying zeroes for an unreadable run would
+    // make the trends draw a cliff that never happened.
+    expect((JSON.parse(line) as { vitals: Record<string, number | null> }).vitals).toEqual({
+      lcp: null,
+      cls: null,
+      ttfb: null,
+      inp: null,
+    });
+  });
+
+  it("passes a configured cooldown window through to the provider outcome", async () => {
+    // The arm that runs when `network.cooldownMs` is actually configured. Without it the
+    // built-in default is used for a caller who set one, which is B-1 in miniature.
+    await withFakeBrowser();
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const result = await executeRun({
+      spec: prepared.spec,
+      provider: directProvider(),
+      cooldownPath: path.join(root, "cooldowns.json"),
+      cooldownMs: 1234,
+    });
+    expect(result.runId).toBe(prepared.spec.runId);
+  });
+
+  it("reports an unlisted HAR that was removed after the close", async () => {
+    // The prune is deliberately noisy: a deleted file is the one thing a reader cannot go back
+    // and check, so "the run kept nothing" is a claim the log should make explicitly.
+    await withFakeBrowser();
+    const out = lines();
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    mkdirSync(path.join(root, prepared.spec.runId), { recursive: true });
+    writeFileSync(path.join(root, prepared.spec.runId, "network.har"), "{}");
+    await executeRun({ spec: prepared.spec, provider: directProvider(), log: out.log });
+    expect(out.all.some((l) => l.includes("removed an unlisted network.har"))).toBe(true);
   });
 });

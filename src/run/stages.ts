@@ -40,12 +40,16 @@ export class StageError extends Error {
 }
 
 /** Load and validate the run's profile and journey. Fails loudly and early. */
-export function loadInputs(spec: RunSpec): { profile: GeoProfile; journey: ReturnType<typeof loadJourney> } {
+export function loadInputs(spec: RunSpec): { profile: GeoProfile; journey: Journey } {
   const profile = loadGeoProfile(spec.profilePath);
   if (!profile.ok) throw new StageError(`invalid profile: ${profile.errors.join("; ")}`, "load");
   const journey = loadJourney(spec.journeyPath);
   if (!journey.ok) throw new StageError(`invalid journey: ${journey.errors.join("; ")}`, "load");
-  return { profile: profile.value, journey };
+  // The VALUE, not the result. Returning the wrapper made every caller re-check something this
+  // function had already thrown over — and `executeRun` did, in a branch nothing could reach.
+  // A guard duplicating one a call deeper is not defence in depth; it is a second claim about
+  // the same fact, and the coverage gate is what noticed nobody could make it fire.
+  return { profile: profile.value, journey: journey.value };
 }
 
 /**
