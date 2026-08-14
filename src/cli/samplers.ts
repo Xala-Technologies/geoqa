@@ -27,6 +27,14 @@ import type { GeoProfile } from "../geo/types.js";
 import { parseDurationMs, type ParsedArgs } from "./args.js";
 import { describeThrown } from "../errors.js";
 
+/**
+ * Look up a metric spec by key, refusing to invent one.
+ *
+ * The throw is a programmer guard, not an operator-facing error: every key passed here is a
+ * literal in this file, so reaching it means a summariser was written against a metric its
+ * experiment does not declare. Failing loudly at that point beats reporting a result under
+ * a metric nobody defined, which would read as a measurement.
+ */
 const metric = (specs: MetricSpec[], key: string): MetricSpec => {
   const found = specs.find((m) => m.key === key);
   if (!found) throw new Error(`no metric "${key}"`);
@@ -322,6 +330,12 @@ export async function sampleStability(deps: CommandDeps, options: StabilityOptio
   } finally {
     await runtime.close();
   }
+  // `?? null` is a TYPE floor, not a runtime case: `resolveStabilityWindow` refuses fewer
+  // than two reads, so the loop above always pushed at least two entries and `seen[0]` is
+  // always present. It is here because `noUncheckedIndexedAccess` widens every index to
+  // `| undefined`, and it is called out because the last two people to look at an
+  // unreachable `??` in this repo — both of them me — spent time trying to write a test for
+  // one. If that guarantee ever moves, this becomes a real branch and needs one.
   const first = seen[0] ?? null;
   const readable = seen.filter((ip): ip is string => ip !== null);
   return {
@@ -471,6 +485,13 @@ export async function sampleJourney(deps: CommandDeps, options: ExperimentOption
     instrumentationFindings: result.findings.filter((f) => f.category === "instrumentation").length,
     confidence: result.confidence.overall,
     evidenceId: result.evidenceId,
+    // The warnings travel WITH the sample, for the reason the stability window does: a
+    // results.jsonl line that cannot be interpreted a month later is not evidence. The
+    // specific loss this prevents: a typo in `--provider` falls back to direct egress —
+    // which `selectProvider` calls "NOT geographic" in as many words — and every sample
+    // recorded afterwards looked clean. A whole EXP-005 series could have been measured
+    // outside the market it claims and read as a healthy result.
+    warnings: result.warnings,
   };
 }
 
@@ -478,15 +499,25 @@ export function summariseJourney(samples: ExperimentSample[]): { metrics: Metric
   const verdicts = samples.map((s) => String(s.data.verdict ?? "THREW"));
   const counts = new Map<string, number>();
   for (const v of verdicts) counts.set(v, (counts.get(v) ?? 0) + 1);
+  // Guarded on `commonest` rather than on `samples.length`: the two are the same condition —
+  // there is a commonest verdict exactly when there was a sample — and testing the one the
+  // next line actually reads means the fallback that was here (`?? 0`) is not needed. A
+  // fallback on a value the guard already proved present is a claim nobody can check, and a
+  // stability of 0% would be a far worse thing to render than "not measured".
   const commonest = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
-  const stability = samples.length === 0 ? null : ((commonest?.[1] ?? 0) / samples.length) * 100;
+  const stability = commonest === undefined ? null : (commonest[1] / samples.length) * 100;
 
   return {
     metrics: [
       evaluateMetric(metric(EXP_005.metrics, "journey-completion"), rate(samples, truthy("completed")), "no runs completed"),
       evaluateMetric(metric(EXP_005.metrics, "verdict-stability"), stability, "no runs produced a verdict"),
     ],
-    notes: [`verdicts: ${[...counts.entries()].map(([v, n]) => `${v}×${n}`).join(", ")}`],
+    notes: [
+      `verdicts: ${[...counts.entries()].map(([v, n]) => `${v}×${n}`).join(", ")}`,
+      // Deduplicated, because the same warning on all twenty samples is one fact about the
+      // series, not twenty — and a note repeated twenty times is a note nobody reads.
+      ...[...new Set(samples.flatMap((s) => (Array.isArray(s.data.warnings) ? (s.data.warnings as string[]) : [])))],
+    ],
   };
 }
 
