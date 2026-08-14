@@ -1795,6 +1795,25 @@ describe("runs history", () => {
     expect(result.warnings[0]).toContain("runs rebuild");
   });
 
+  it("puts the rebuild advice in the RENDERED output, not only in the object", () => {
+    // A warning that only exists on the result object is a warning nobody sees. This is the
+    // line that tells an operator their index is stale and what to do about it, and the
+    // command prints it — so the print path is what needs asserting.
+    const rendered = renderRunsList(runsList(withIndex(`${line({ runId: "r1" })}\n{"half\n`)));
+    expect(rendered).toContain("! ");
+    expect(rendered).toContain("runs rebuild");
+  });
+
+  it("calls a run with no journey block ERRORED, never PASSED, when rebuilding", () => {
+    // A run.json missing its journey is a run that did not finish writing. The absent
+    // verdict must default to the WORST reading, not the most convenient one — defaulting
+    // to PASS would let an interrupted run become a green line in the history.
+    const partial = JSON.stringify({ runId: "run_2000_oslo-desktop", target: "https://a.test/", profile: { id: "oslo-desktop" } });
+    const scoped = withIndex("", { [evidenceRoot]: ["run_2000_oslo-desktop"] }, { [path.join(evidenceRoot, "run_2000_oslo-desktop", "run.json")]: partial });
+    expect(runsRebuild(scoped).written).toBe(1);
+    expect(runsList(scoped).runs[0]?.verdict).toBe("ERROR");
+  });
+
   it("surfaces a regression, and renders it", () => {
     const good = line({ runId: "r1", startedAt: "2026-08-13T10:00:00.000Z" });
     const bad = line({
@@ -2323,5 +2342,192 @@ describe("things thrown that are not Errors, at the CLI boundary", () => {
     expect(result.gate.decision).toBe("unknown");
     expect(result.gate.reason).toContain("browser did not start");
     expect(result.gate.runId).toBeNull();
+  });
+});
+
+describe("what the CLI says when a file on disk does not load", () => {
+  /**
+   * Every one of these is a path a person reaches by making a typo in a YAML file, which is
+   * the most likely way any of this fails in practice. The rule they share: name the file
+   * AND the reason, and never present a broken definition as an absent one — "no such
+   * profile" sends somebody to create a file that already exists.
+   */
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(path.join(tmpdir(), "geoqa-broken-yaml-"));
+    for (const d of ["profiles", "journeys", "tenants"]) mkdirSync(path.join(root, d), { recursive: true });
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  const brokenDeps = (): CommandDeps => defaultDeps(root, { evidenceRoot, env: {}, now: () => 1_000, log: () => {} });
+
+  it("LISTS a malformed tenant as INVALID rather than dropping it from the list", () => {
+    // Dropping it would be the worst option available: a tenant whose file is broken is a
+    // tenant whose quota and target allowlist are not being enforced, and a list that
+    // silently omits it looks exactly like a list of everything that exists.
+    writeFileSync(path.join(root, "tenants", "acme.yaml"), "id: acme\nname: [not a string\n");
+    const { tenants } = tenantList(brokenDeps());
+    expect(tenants).toHaveLength(1);
+    expect(tenants[0]?.id).toBe("acme");
+    expect(tenants[0]?.name).toContain("INVALID");
+    // And its quota reads as zero, not as unlimited.
+    expect(tenants[0]?.trafficMb).toBe(0);
+  });
+
+  it("names the profile and the reason, not just \"invalid\"", () => {
+    writeFileSync(path.join(root, "profiles", "oslo-broken.yaml"), "id: oslo-broken\nmarket: 12\n");
+    expect(() => loadProfileOrThrow(brokenDeps(), "oslo-broken")).toThrow(/oslo-broken/);
+  });
+
+  it("distinguishes a REJECTED id from a missing file", () => {
+    // A id that fails the pattern never becomes a path at all. Saying "no such profile"
+    // there would be a lie: nothing was looked for.
+    const rejected = resolveDataPath(brokenDeps(), "profiles", "../../etc/passwd");
+    expect(rejected.ok).toBe(false);
+    const missing = resolveDataPath(brokenDeps(), "journeys", "nowhere");
+    expect(missing.ok).toBe(false);
+    expect(missing.ok === false && missing.errors[0]).toContain("looked in");
+  });
+
+  it("refuses a keyword seed file that does not parse, rather than researching nothing", async () => {
+    // Researching zero keywords would report a tenant with no search presence — a finding
+    // ABOUT THE TENANT. The seed file failing to parse is a finding about us, and the two
+    // must not be reported as the same thing.
+    mkdirSync(path.join(root, "tenants", "acme"), { recursive: true });
+    writeFileSync(path.join(root, "tenants", "acme", "keywords.yaml"), "seeds: [\n");
+    const tenant: Tenant = {
+      id: "acme",
+      name: "Acme",
+      markets: ["oslo"],
+      targets: ["acme.test"],
+      proxyCredentials: null,
+      proxySubUser: null,
+      quota: { trafficMb: 100, runsPerDay: 10 },
+      retentionDays: 30,
+    };
+    await expect(keywordsResearch(brokenDeps(), tenant, {})).rejects.toThrow();
+  });
+});
+
+describe("matrix values that only some invocations carry", () => {
+  const capture = (): { runs: Record<string, unknown>[]; opts: Record<string, unknown>; deps: (o?: Partial<CommandDeps>) => CommandDeps } => {
+    const state = { runs: [] as Record<string, unknown>[], opts: {} as Record<string, unknown> };
+    const make = (o: Partial<CommandDeps> = {}): CommandDeps =>
+      deps({
+        startDurable: async (given: unknown[], opts: { workflowId: string }) => {
+          state.runs = given as Record<string, unknown>[];
+          state.opts = opts as unknown as Record<string, unknown>;
+          return { workflowId: opts.workflowId, address: "a", namespace: "default", results: given.map(() => ({ result: { verdict: "PASS" } as never, warnings: [] })) };
+        },
+        ...o,
+      } as Partial<CommandDeps>);
+    return { get runs() { return state.runs; }, get opts() { return state.opts; }, deps: make };
+  };
+
+  it("gives each page on the URL axis its OWN run id, not one id repeated", async () => {
+    // The defect this guards: the axis expanded, every scenario got its own key and seed,
+    // and all of them visited `--url` — a sweep reporting clean pages having loaded one of
+    // them repeatedly. The index in the slug is what keeps two pages of the same
+    // profile/journey pair from colliding into a single run id.
+    const cap = capture();
+    await matrixRun(cap.deps(), {
+      url: "https://x",
+      markets: ["oslo"],
+      journeys: ["landing-page"],
+      devices: ["mobile"],
+      targets: ["https://digilist.no/faq", "https://digilist.no/priser"],
+      durable: true,
+    });
+    const bases = cap.runs.map((r) => (r as { base: { runId: string; target: string } }).base);
+    expect(bases.map((b) => b.target)).toEqual(["https://digilist.no/faq", "https://digilist.no/priser"]);
+    expect(new Set(bases.map((b) => b.runId)).size).toBe(2);
+  });
+
+  it("carries a configured retention policy into the durable path", async () => {
+    // Retention decides what is DELETED. A durable sweep running under the default while the
+    // operator configured something else would quietly discard evidence they meant to keep.
+    const cap = capture();
+    const retention: NonNullable<CommandDeps["retention"]> = { pass: ["metadata"], warning: ["metadata", "screenshot"], fail: ["metadata", "screenshot", "har"], investigation: ["har", "trace"] };
+    await matrixRun(cap.deps({ retention }), {
+      url: "https://x", markets: ["oslo"], journeys: ["landing-page"], devices: ["mobile"], durable: true,
+    });
+    expect((cap.runs[0] as { base: { retention?: unknown } }).base.retention).toEqual(retention);
+  });
+
+  it("starts the workflow at the address it was given, not the default", async () => {
+    const cap = capture();
+    await matrixRun(cap.deps(), {
+      url: "https://x", markets: ["oslo"], journeys: ["landing-page"], devices: ["mobile"], durable: true,
+      temporalAddress: "temporal.internal:7233",
+    });
+    expect(cap.opts.address).toBe("temporal.internal:7233");
+  });
+
+  it("carries the cooldown FILE, which is how a failed vendor stays failed across processes", async () => {
+    // The read half of the cooldown. Without the path, `cooldownUntil` returns null and a
+    // vendor that failed a minute ago is tried again immediately — by every scenario.
+    const cap = capture();
+    await matrixRun(cap.deps({ cooldownPath: path.join(evidenceRoot, "cooldowns.json"), tenantId: "digilist" }), {
+      url: "https://x", markets: ["oslo"], journeys: ["landing-page"], devices: ["mobile"], durable: true,
+    });
+    expect(cap.runs[0]?.cooldownPath).toBe(path.join(evidenceRoot, "cooldowns.json"));
+  });
+});
+
+describe("readings that came back empty rather than failing", () => {
+  it("prints \"?\" for a vitals metric the page never reported, not 0", () => {
+    // `browser verify` is the command a person runs to find out whether the engine works at
+    // all. A page that never fired LCP — a redirect, a blank document, an aborted load — is
+    // a SUCCESSFUL vitals read with nothing in it. Printing `lcp=0` there would say the page
+    // painted instantly, which is the most flattering possible lie about a page that never
+    // painted.
+    const blank = fakeRuntime({ vitals: () => Promise.resolve(ok({ lcp: null, cls: null, ttfb: null, fcp: null, inp: null })) });
+    return browserVerify(deps({ makeRuntime: () => blank })).then((result) => {
+      const vitals = result.primitives.find((p) => p.name === "vitals");
+      expect(vitals?.ok).toBe(true);
+      expect(vitals?.detail).toContain("lcp=?");
+      expect(vitals?.detail).toContain("ttfb=?");
+      expect(vitals?.detail).not.toContain("=0");
+    });
+  });
+});
+
+describe("refusing before spending anything", () => {
+  it("names EVERY broken file in a matrix, not the first one", () => {
+    // Fixing one typo per run of a 96-scenario matrix is how a tool stops being used. The
+    // sweep is validated in full before a single browser opens, so one pass gives the whole
+    // list.
+    const root = mkdtempSync(path.join(tmpdir(), "geoqa-matrix-broken-"));
+    try {
+      mkdirSync(path.join(root, "profiles"), { recursive: true });
+      mkdirSync(path.join(root, "journeys"), { recursive: true });
+      writeFileSync(path.join(root, "profiles", "oslo-desktop.yaml"), "id: oslo-desktop\nmarket: 7\n");
+      writeFileSync(path.join(root, "journeys", "landing-page.yaml"), "id: landing-page\nsteps: 4\n");
+      const d = defaultDeps(root, { evidenceRoot, env: {}, now: () => 1_000, log: () => {} });
+      return expect(
+        matrixRun(d, { url: "https://x", markets: ["oslo"], journeys: ["landing-page"], devices: ["desktop"] }),
+      ).rejects.toThrow(/profile "oslo-desktop"[\s\S]*journey "landing-page"|journey "landing-page"[\s\S]*profile "oslo-desktop"/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to verify through a provider that has already been declared unusable", async () => {
+    // The real path: a vendor that failed a minute ago is still cooling down, and the
+    // cooldown FILE is what carries that across processes. Not a warning — an unusable provider means the next
+    // measurement would be taken from somewhere other than the market it claims, and a
+    // geographic tool reporting a reading from the wrong country is worse than one
+    // reporting nothing. Refusing costs a browser launch; not refusing costs the result.
+    const cooldownPath = path.join(evidenceRoot, "cooldowns.json");
+    writeFileSync(cooldownPath, JSON.stringify({ "http-proxy": 2_000 }));
+    await expect(
+      proxyVerify(
+        // An obviously-fake exit, so the provider counts as CONFIGURED and the cooldown is
+        // the thing being tested. With no exit at all health reports "unconfigured", which
+        // is a different state and takes a different path.
+        deps({ env: { GEOQA_PROXY_OSLO: "http://not-a-real-user:not-a-real-secret@127.0.0.1:9/" }, cooldownPath, now: () => 1_000 }),
+        { profileId: "oslo-desktop", providerName: "http-proxy" },
+      ),
+    ).rejects.toThrow(/unusable/);
   });
 });
