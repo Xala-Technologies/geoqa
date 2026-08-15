@@ -48,6 +48,7 @@ function runtime(over: Partial<BrowserRuntime> = {}): BrowserRuntime {
     press: () => Promise.resolve(ok(null)),
     select: () => Promise.resolve(ok(null)),
     check: () => Promise.resolve(ok(null)),
+    pinch: () => Promise.resolve(ok(null)),
     scroll: () => Promise.resolve(ok(null)),
     waitFor: () => Promise.resolve(ok(null)),
     evaluate: <T,>() => Promise.resolve(ok(null as T)),
@@ -74,7 +75,7 @@ const assertStep = (spec: Check, severity: "critical" | "high" | "medium" | "low
   severity,
   spec,
 });
-const opts = { screenshotDir: "/e" };
+const opts = { screenshotDir: "/e", afterNavigateMs: 0 };
 
 describe("gatherReading", () => {
   it("fetches only what the check needs", async () => {
@@ -595,11 +596,15 @@ describe("input steps", () => {
     expect(describeAction({ action: "screenshot", label: "landing", fullPage: false, probability: 1 })).toBe(
       "screenshot landing ok",
     );
+    expect(describeAction({ action: "snapshot", label: "tree", probability: 1 })).toBe("snapshot tree ok");
   });
 
   it("still never puts a fill value in the description", () => {
     expect(describeAction({ action: "fill", selector: "#password", value: "hunter2", probability: 1 })).toBe(
       "fill #password ok (value not recorded)",
+    );
+    expect(describeAction({ action: "pinch", selector: ".map", direction: "in", probability: 1 })).toBe(
+      "pinch in .map ok",
     );
   });
 
@@ -722,6 +727,58 @@ describe("optional steps", () => {
     expect(result.verdict).toBe("PASS");
     expect(result.counts.skipped).toBe(1);
     expect(result.steps[0]?.check).toBe("title-exists");
+  });
+
+  it("skips an optional click when the control is not on the page, and keeps going", async () => {
+    const clicked: string[] = [];
+    const result = await runJourney(
+      runtime({
+        isVisible: (sel) => Promise.resolve(ok(sel !== "#book")),
+        click: (sel) => {
+          clicked.push(sel);
+          return Promise.resolve(ok(null));
+        },
+      }),
+      chancy([
+        { action: "click", selector: "#book", optional: true, probability: 1, label: "book now" },
+        { action: "click", selector: "#contact", optional: true, probability: 1, label: "contact" },
+      ]),
+      opts,
+    );
+    expect(result.steps[0]).toMatchObject({ outcome: "skipped", label: "book now" });
+    expect(result.steps[0]?.detail).toContain("not on this page");
+    expect(result.steps[1]?.outcome).toBe("passed");
+    expect(clicked).toEqual(["#contact"]);
+    expect(result.verdict).toBe("PASS");
+  });
+
+  it("records an unreadable optional target as OUR defect, and does not halt", async () => {
+    const result = await runJourney(
+      runtime({ isVisible: () => Promise.resolve(bad()) }),
+      chancy([
+        { action: "click", selector: "#book", optional: true, probability: 1, label: "book now" },
+        { action: "reload", probability: 1, label: "still going" },
+      ]),
+      opts,
+    );
+    expect(result.steps[0]).toMatchObject({ outcome: "errored", category: "instrumentation" });
+    expect(result.steps[1]?.outcome).toBe("passed");
+  });
+
+  it("does not halt when an optional click is visible but the click itself fails", async () => {
+    const result = await runJourney(
+      runtime({
+        click: (sel) => (sel === "#book" ? Promise.resolve(bad()) : Promise.resolve(ok(null))),
+      }),
+      chancy([
+        { action: "click", selector: "#book", optional: true, probability: 1, label: "book now" },
+        { action: "reload", probability: 1, label: "still going" },
+      ]),
+      opts,
+    );
+    expect(result.steps[0]?.outcome).toBe("errored");
+    expect(result.steps[1]?.outcome).toBe("passed");
+    expect(result.verdict).toBe("ERROR");
   });
 
   it("picks the same optional steps for the same seed", async () => {
@@ -1023,4 +1080,84 @@ describe("a selector that could have hit more than one element", () => {
     );
     expect(counted).not.toHaveBeenCalled();
   });
-})
+});
+
+describe("after a navigation the page is allowed to finish loading", () => {
+  it("waits before the frame, and records how long that was", async () => {
+    const order: string[] = [];
+    const r = runtime({
+      waitFor: (t) => {
+        order.push(`wait:${t}`);
+        return Promise.resolve(ok(null));
+      },
+      screenshot: (p) => {
+        order.push(`shot:${p}`);
+        return Promise.resolve(ok(null));
+      },
+    });
+    const result = await runJourney(r, journey([{ action: "open", url: "https://x", label: "open target" }]), {
+      screenshotDir: "/e",
+      afterNavigateMs: 3_000,
+    });
+    expect(order[0]).toBe("wait:3000");
+    expect(order[1]).toContain("00-open-target");
+    expect(result.steps[0]?.detail).toContain("ready after 3000ms");
+  });
+
+  it("does not wait after a scroll or a screenshot — those are not a new page", async () => {
+    const waits: string[] = [];
+    await runJourney(
+      runtime({
+        waitFor: (t) => {
+          waits.push(t);
+          return Promise.resolve(ok(null));
+        },
+      }),
+      journey([
+        { action: "scroll", direction: "down", px: 100 },
+        { action: "screenshot", label: "hero", fullPage: false },
+      ]),
+      { screenshotDir: "/e", afterNavigateMs: 3_000 },
+    );
+    expect(waits).toEqual([]);
+  });
+
+  it("skips the wait when afterNavigateMs is 0, so the suite does not pay it", async () => {
+    const waits: string[] = [];
+    await runJourney(
+      runtime({
+        waitFor: (t) => {
+          waits.push(t);
+          return Promise.resolve(ok(null));
+        },
+      }),
+      journey([{ action: "open", url: "https://x" }]),
+      opts,
+    );
+    expect(waits).toEqual([]);
+  });
+});
+
+describe("pinch", () => {
+  it("asks the runtime to pinch in or out, and takes a frame", async () => {
+    const pinches: [string, string][] = [];
+    const shots: string[] = [];
+    const result = await runJourney(
+      runtime({
+        pinch: (sel, dir) => {
+          pinches.push([sel, dir]);
+          return Promise.resolve(ok(null));
+        },
+        screenshot: (p) => {
+          shots.push(p);
+          return Promise.resolve(ok(null));
+        },
+      }),
+      journey([{ action: "pinch", selector: ".map", direction: "in", label: "zoom the map" }]),
+      opts,
+    );
+    expect(pinches).toEqual([[".map", "in"]]);
+    expect(shots[0]).toContain("00-zoom-the-map");
+    expect(result.steps[0]?.detail).toBe("pinch in .map ok");
+  });
+});

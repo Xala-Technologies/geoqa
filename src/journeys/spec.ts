@@ -124,6 +124,19 @@ export const StepSchema = z.discriminatedUnion("action", [
     px: z.number().int().optional(),
     label: z.string().optional(),
   }),
+  /**
+   * Pinch-zoom a map (or anything that listens for ctrl-wheel).
+   *
+   * `in` is zoom in, `out` is zoom out. Implemented as a ctrl-wheel at the
+   * element's centre — the gesture maps actually honour — rather than a
+   * two-finger touch the engines do not share.
+   */
+  z.object({
+    action: z.literal("pinch"),
+    selector: z.string().min(1),
+    direction: z.enum(["in", "out"]),
+    label: z.string().optional(),
+  }),
   z.object({ action: z.literal("wait"), target: z.string().min(1), label: z.string().optional() }),
   z.object({
     action: z.literal("screenshot"),
@@ -177,6 +190,16 @@ export const StepEnvelopeSchema = z.object({
    * silently dropped — see the engine.
    */
   probability: z.number().min(0).max(1).default(1),
+  /**
+   * Skip when the target is not on this page, and never halt the journey.
+   *
+   * An organic visit asks "is there a map, a Book button, a second tab?" and
+   * keeps going when the answer is no. Without this flag a missing Book now
+   * is fatal (R-15) and every later check is skipped — so a blog and a
+   * booking site could not share a journey. Off by default: every existing
+   * file keeps today's meaning.
+   */
+  optional: z.boolean().default(false),
 });
 
 export type StepAction =
@@ -189,6 +212,7 @@ export type StepAction =
   | { action: "check"; selector: string; label?: string }
   | { action: "pause"; minMs: number; maxMs: number; label?: string }
   | { action: "scroll"; direction: "up" | "down" | "left" | "right"; px?: number; label?: string }
+  | { action: "pinch"; selector: string; direction: "in" | "out"; label?: string }
   | { action: "wait"; target: string; label?: string }
   | { action: "screenshot"; label: string; fullPage: boolean }
   | { action: "snapshot"; label: string }
@@ -200,7 +224,7 @@ export type StepAction =
       spec: Check;
     };
 
-export type Step = StepAction & { probability: number };
+export type Step = StepAction & { probability: number; optional?: boolean };
 
 export const JourneySchema = z.object({
   id: z.string().min(1),
@@ -235,14 +259,14 @@ export function parseStep(raw: unknown, index: number): ParseResult<Step> {
 
   const envelope = StepEnvelopeSchema.safeParse(record);
   if (!envelope.success) return { ok: false, errors: prefix(index, formatIssues(envelope.error)) };
-  const { probability } = envelope.data;
+  const { probability, optional } = envelope.data;
 
   if (record.action === "assert") {
     const head = AssertStepSchema.safeParse(record);
     if (!head.success) return { ok: false, errors: prefix(index, formatIssues(head.error)) };
     const body = CheckSchema.safeParse(record);
     if (!body.success) return { ok: false, errors: prefix(index, formatIssues(body.error)) };
-    const step: Step = { action: "assert", severity: head.data.severity, spec: body.data, probability };
+    const step: Step = { action: "assert", severity: head.data.severity, spec: body.data, probability, optional };
     if (head.data.label !== undefined) step.label = head.data.label;
     if (head.data.category !== undefined) step.category = head.data.category;
     return { ok: true, value: step };
@@ -250,7 +274,7 @@ export function parseStep(raw: unknown, index: number): ParseResult<Step> {
 
   const parsed = StepSchema.safeParse(record);
   if (!parsed.success) return { ok: false, errors: prefix(index, formatIssues(parsed.error)) };
-  return { ok: true, value: { ...(parsed.data as StepAction), probability } };
+  return { ok: true, value: { ...(parsed.data as StepAction), probability, optional } };
 }
 
 const prefix = (index: number, errors: string[]): string[] => errors.map((e) => `steps[${index}].${e}`);

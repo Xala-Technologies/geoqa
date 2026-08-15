@@ -129,6 +129,12 @@ export interface BrowserRuntime {
   /** Interaction. */
   click(selector: string): Promise<BrowserResult<unknown>>;
   scroll(direction: "up" | "down" | "left" | "right", px?: number): Promise<BrowserResult<unknown>>;
+  /**
+   * Pinch-zoom. `in` is closer, `out` is further. Maps honour ctrl-wheel at
+   * the element's centre; both adapters evaluate that gesture rather than
+   * inventing a touch primitive one engine does not have.
+   */
+  pinch(selector: string, direction: "in" | "out"): Promise<BrowserResult<unknown>>;
   waitFor(target: string): Promise<BrowserResult<unknown>>;
 
   /**

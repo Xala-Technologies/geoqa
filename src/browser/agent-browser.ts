@@ -15,6 +15,7 @@ import {
   selectCommand,
   snapshotCommand,
 } from "./args.js";
+import { pinchExpression } from "./pinch.js";
 import { execAgentBrowser, type ExecOutcome } from "./exec.js";
 import {
   toA11yViolations,
@@ -314,6 +315,10 @@ export class AgentBrowserRuntime implements BrowserRuntime {
 
   scroll(direction: "up" | "down" | "left" | "right", px?: number): Promise<BrowserResult<unknown>> {
     return this.run(scrollCommand(direction, px));
+  }
+
+  pinch(selector: string, direction: "in" | "out"): Promise<BrowserResult<unknown>> {
+    return this.evaluate(pinchExpression(selector, direction));
   }
 
   waitFor(target: string): Promise<BrowserResult<unknown>> {

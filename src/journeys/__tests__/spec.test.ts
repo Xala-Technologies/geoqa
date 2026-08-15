@@ -40,6 +40,7 @@ describe("parseStep", () => {
       action: "assert",
       severity: "high",
       probability: 1,
+      optional: false,
       spec: { check: "title-exists" },
     });
   });
@@ -149,6 +150,7 @@ describe("the journeys that actually ship", () => {
       "reader.yaml",
       "search.yaml",
       "sweep.yaml",
+      "explore.yaml",
     ]) {
       expect(files).toContain(required);
     }
@@ -223,5 +225,28 @@ describe("a step whose ENVELOPE is wrong, before its action is even considered",
   it("rejects a probability that is not a number at all", () => {
     const parsed = parseStep({ action: "click", selector: "#buy", probability: "sometimes" }, 0);
     expect(parsed.ok).toBe(false);
+  });
+
+  it("defaults optional to false, and keeps a declared true", () => {
+    // A click that is not on this page must not halt an organic visit. The flag
+    // is off unless asked for, so every existing journey keeps today's meaning.
+    const plain = parseStep({ action: "click", selector: "#buy" }, 0);
+    if (!plain.ok) throw new Error("expected ok");
+    expect(plain.value.optional).toBe(false);
+    const flagged = parseStep({ action: "click", selector: "#buy", optional: true }, 0);
+    if (!flagged.ok) throw new Error("expected ok");
+    expect(flagged.value.optional).toBe(true);
+  });
+});
+
+describe("pinch", () => {
+  it("parses in and out, and refuses a missing selector", () => {
+    const inn = parseStep({ action: "pinch", selector: ".leaflet-container", direction: "in" }, 0);
+    if (!inn.ok) throw new Error("expected ok");
+    expect(inn.value).toMatchObject({ action: "pinch", selector: ".leaflet-container", direction: "in" });
+    const out = parseStep({ action: "pinch", selector: ".map", direction: "out" }, 1);
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.value).toMatchObject({ direction: "out" });
+    expect(parseStep({ action: "pinch", direction: "in" }, 2).ok).toBe(false);
   });
 });

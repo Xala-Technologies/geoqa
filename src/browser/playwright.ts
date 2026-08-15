@@ -36,6 +36,7 @@
  */
 import { describeThrown } from "../errors.js";
 import { toVitals } from "./map.js";
+import { pinchExpression } from "./pinch.js";
 import type { ExecFailureKind, ExecOutcome } from "./exec.js";
 import type {
   A11yViolation,
@@ -584,6 +585,12 @@ export class PlaywrightRuntime implements BrowserRuntime {
     };
     const [dx, dy] = deltas[direction];
     return this.withSession(`playwright:wheel ${direction} ${px}`, (s) => s.page.wheel(dx, dy));
+  }
+
+  async pinch(selector: string, direction: "in" | "out"): Promise<BrowserResult<unknown>> {
+    return this.withSession(`playwright:pinch ${direction} ${selector}`, (s) =>
+      s.page.evaluate(pinchExpression(selector, direction)),
+    );
   }
 
   /**

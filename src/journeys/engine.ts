@@ -69,6 +69,16 @@ export interface EngineOptions {
    */
   metricSettleMs?: number;
   /**
+   * How long to sit after a navigation before the frame and the next assert.
+   *
+   * `open`/`click`/`press`/`reload` return as soon as the document is there;
+   * the first paint is often still a spinner. A frame taken then is a loading
+   * shell, and every later check runs against a page that is still hydrating.
+   * The wait is fixed (not seeded) so two runs of the same journey stay
+   * comparable. Tests pass `0` so the suite does not pay it.
+   */
+  afterNavigateMs?: number;
+  /**
    * Seeds every pause length and probability draw.
    *
    * Recorded on the result and in `run.json`, so a run whose variation mattered
@@ -238,7 +248,10 @@ const outcomeOf = (result: CheckResult): StepOutcome =>
  * navigation nobody thinks of as a click.
  */
 const NAVIGATING_ACTIONS = new Set(["click", "press", "open", "reload"]);
-const FRAME_ACTIONS = new Set(["open", "click", "scroll", "press", "reload"]);
+const FRAME_ACTIONS = new Set(["open", "click", "scroll", "press", "reload", "pinch"]);
+
+/** Default settle after a navigation. See `EngineOptions.afterNavigateMs`. */
+export const DEFAULT_AFTER_NAVIGATE_MS = 3_000;
 
 const frameName = (index: number, label: string): string => {
   const slug = label
@@ -261,7 +274,7 @@ const captureFrame = async (
 };
 
 /** Actions that act on ONE element chosen from a selector's matches. */
-const TARGETED_ACTIONS = new Set(["click", "fill", "select", "check"]);
+const TARGETED_ACTIONS = new Set(["click", "fill", "select", "check", "pinch"]);
 
 /**
  * "matched N visible elements, acted on the first", or null when there is nothing to say.
@@ -339,6 +352,48 @@ export async function runJourney(
       continue;
     }
 
+    /**
+     * An optional interaction whose target is not on this page is SKIPPED.
+     *
+     * A required click that misses is fatal (R-15). That is correct for a
+     * journey that named a specific button. It is wrong for an organic visit
+     * that asks "is there a Book now, a map, a second tab?" — those absences
+     * are facts about the page, not a broken tool, and they must not skip
+     * every later check. Unreadable is still ours: we could not look, so the
+     * step is `errored`, but it still does not halt.
+     */
+    if (step.optional) {
+      switch (step.action) {
+        case "click":
+        case "fill":
+        case "select":
+        case "check":
+        case "pinch": {
+          const seen = await runtime.isVisible(step.selector);
+          if (!seen.ok) {
+            await record({
+              index, action: step.action, label, outcome: "errored", severity: "critical",
+              category: "instrumentation", check: null,
+              detail: `${step.action} failed: ${seen.failure.kind} — ${seen.failure.detail}`,
+              expected: null, observed: null, durationMs: now() - stepStarted,
+            });
+            log(`  ! ${label} — ${seen.failure.kind}`);
+            continue;
+          }
+          if (!seen.data) {
+            await record({
+              index, action: step.action, label, outcome: "skipped", severity: "info",
+              category: null, check: null,
+              detail: "not on this page — optional",
+              expected: null, observed: null, durationMs: now() - stepStarted,
+            });
+            log(`  · ${label} — not on this page`);
+            continue;
+          }
+        }
+      }
+    }
+
     if (step.action === "assert") {
       const reading = await gatherReading(runtime, step.spec, selectorOf(step.spec), options.metricSettleMs ?? 600);
       const result = evaluateCheck(step.spec, reading);
@@ -373,6 +428,16 @@ export async function runJourney(
     if (step.action === "fill" || step.action === "select" || step.action === "check") touchedForm = true;
 
     if (out.ok) {
+      // Sit after a navigation BEFORE the frame. `open` returns as soon as the
+      // document is there; the first paint is often still a spinner. A frame
+      // taken then is a loading shell, and every later check runs against a
+      // page that is still hydrating. Scroll is a FRAME_ACTION but not a
+      // navigation — it does not wait. A failed navigation does not wait
+      // either: there is no page to settle.
+      const settleMs = options.afterNavigateMs ?? DEFAULT_AFTER_NAVIGATE_MS;
+      const settled = NAVIGATING_ACTIONS.has(step.action) && settleMs > 0;
+      if (settled) await runtime.waitFor(String(settleMs));
+
       // A frame after every visual action. An explicit `screenshot` step already
       // wrote one; fill/select/check do not — those frames can hold a typed value.
       if (step.action !== "screenshot" && FRAME_ACTIONS.has(step.action)) {
@@ -389,11 +454,13 @@ export async function runJourney(
       // for actions that can navigate — a `fill` reading back a URL would be noise,
       // and a `fill` must never render its own value.
       const landedOn = NAVIGATING_ACTIONS.has(step.action) ? await currentUrl(runtime) : null;
+      const ready = settled ? ` · ready after ${settleMs}ms` : "";
+      const described = `${describeAction(step)}${ready}`;
       await record({
         index, action: step.action, label, outcome: "passed", severity: "info",
         category: null, check: null,
         // `describeAction` exists so a `fill` can never render its own value.
-        detail: ambiguity === null ? describeAction(step) : `${describeAction(step)} — ${ambiguity}`,
+        detail: ambiguity === null ? described : `${described} — ${ambiguity}`,
         expected: null, observed: landedOn, durationMs: now() - stepStarted,
       });
       log(`  ✓ ${label}`);
@@ -401,7 +468,9 @@ export async function runJourney(
     }
 
     // A screenshot or snapshot that fails costs us evidence, not the run.
-    const fatal = step.action !== "screenshot" && step.action !== "snapshot";
+    // An optional interaction that fails is the same: the rest of the visit
+    // still has things to measure.
+    const fatal = !step.optional && step.action !== "screenshot" && step.action !== "snapshot";
     halted = fatal;
     await record({
       index, action: step.action, label, outcome: "errored", severity: fatal ? "critical" : "low",
@@ -449,6 +518,8 @@ export function describeAction(step: Exclude<Step, { action: "assert" }>): strin
       return `open ${step.url} ok`;
     case "scroll":
       return `scroll ${step.direction}${step.px !== undefined ? ` ${step.px}px` : ""} ok`;
+    case "pinch":
+      return `pinch ${step.direction} ${step.selector} ok`;
     case "screenshot":
       return `screenshot ${step.label} ok`;
     case "snapshot":
@@ -631,6 +702,8 @@ function act(
       return runtime.waitFor(String(pauseMs(random, step.minMs, step.maxMs)));
     case "scroll":
       return step.px === undefined ? runtime.scroll(step.direction) : runtime.scroll(step.direction, step.px);
+    case "pinch":
+      return runtime.pinch(step.selector, step.direction);
     case "wait":
       return runtime.waitFor(step.target);
     case "screenshot":

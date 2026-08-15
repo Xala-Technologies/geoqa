@@ -337,6 +337,21 @@ describe("PlaywrightRuntime interaction", () => {
     ]);
   });
 
+  it("pinches by evaluating a ctrl-wheel at the element's centre", async () => {
+    const evaluated: string[] = [];
+    const built = session({
+      page: {
+        evaluate: (expression) => {
+          evaluated.push(expression);
+          return Promise.resolve(true);
+        },
+      },
+    });
+    expect((await runtimeOver(built).pinch(".map", "in")).ok).toBe(true);
+    expect(evaluated[0]).toContain(".map");
+    expect(evaluated[0]).toContain("-120");
+  });
+
   it("uses a default distance when a journey gives no pixel count", async () => {
     const built = session();
     await runtimeOver(built).scroll("down");

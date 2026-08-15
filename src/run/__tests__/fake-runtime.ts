@@ -58,6 +58,7 @@ export function fakeRuntime(over: Partial<BrowserRuntime> = {}): BrowserRuntime 
     select: () => Promise.resolve(ok(null)),
     check: () => Promise.resolve(ok(null)),
     scroll: () => Promise.resolve(ok(null)),
+    pinch: () => Promise.resolve(ok(null)),
     waitFor: () => Promise.resolve(ok(null)),
     setViewport: () => Promise.resolve(ok(null)),
     setDevice: () => Promise.resolve(ok(null)),

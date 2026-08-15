@@ -613,7 +613,10 @@ describe("the things executeRun says OUT LOUD", () => {
     expect(phases).toContain("journey");
     expect(phases.at(-1)).toBe("done");
     expect(frames.length).toBeGreaterThan(0);
-    expect(frames[0]).toBe(path.join(root, "live.png"));
+    // The journey still writes its own evidence frame first; the live board
+    // copies the page after the step, so live.png is not the first path.
+    expect(frames.some((p) => p.endsWith("00-open-target.png"))).toBe(true);
+    expect(frames).toContain(path.join(root, "live.png"));
   });
 
   it("warns when a live frame cannot be captured, and does not fail the run", async () => {

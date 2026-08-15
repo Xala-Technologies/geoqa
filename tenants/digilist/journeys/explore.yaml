@@ -1,0 +1,78 @@
+# Digilist's own explore: same visit, selectors this site actually uses.
+#
+# The shared file stays generic. This one searches for Oslo (a term that
+# matches), prefers listing cards over a bare `#results` union, and treats a
+# missing search box or listing as a real finding rather than a note — those
+# are the product.
+id: explore
+title: Organic visit (digilist)
+description: >
+  The shared explore journey aimed at digilist.no. Searches for Oslo, opens a
+  listing, changes a tab, pinches the map if one is there, and walks up to
+  Book / Kontakt / Forespørsel without submitting. Does not write.
+writes: false
+steps:
+  - { action: open, url: "{target}", label: land on the page }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: selector-visible, selector: h1, severity: high, label: has a primary heading }
+  - { action: screenshot, label: landing }
+  - { action: assert, check: lcp-below, value: 2500, severity: medium, label: landing LCP }
+  - { action: assert, check: cls-below, value: 0.1, severity: low, label: landing CLS }
+
+  - { action: assert, check: selector-visible, selector: "nav, header nav, [role='navigation']", severity: medium, label: has navigation }
+  - { action: assert, check: selector-visible, selector: "input[type='search'], input[name='q'], input[name='s'], [role='searchbox']", severity: medium, label: has a search box }
+  - { action: assert, check: selector-visible, selector: "main a[href*='/'], [data-listing] a, .listing a, article a[href^='/']", severity: medium, label: has a listing to open }
+  - { action: assert, check: selector-visible, selector: "[role='tab']", severity: low, label: has tabs }
+  - { action: assert, check: selector-visible, selector: ".leaflet-container, .mapboxgl-map, [class*='map-'], [id*='map']", severity: low, label: has a map }
+
+  - { action: pause, minMs: 1200, maxMs: 3200, label: look around }
+  - { action: scroll, direction: down, px: 900, label: scroll the landing }
+  - { action: screenshot, label: mid-landing }
+
+  - {
+      action: fill,
+      selector: "input[type='search'], input[name='q'], input[name='s'], [role='searchbox']",
+      value: "oslo",
+      optional: true,
+      label: type Oslo,
+    }
+  - { action: press, key: Enter, label: submit the search }
+  - { action: assert, check: no-http-5xx, severity: critical, label: search did not 500 }
+  - { action: screenshot, label: after-search }
+  - { action: assert, check: lcp-below, value: 2500, severity: medium, label: after-search LCP }
+
+  # Content-scoped. A bare `a[href^='/']` is the logo — C-11.
+  - {
+      action: click,
+      selector: "main a[href^='/'], article a[href^='/'], [data-listing] a, .listing a, #results a",
+      optional: true,
+      label: open a listing,
+    }
+  - { action: assert, check: title-exists, severity: high, label: the listing has a title }
+  - { action: assert, check: no-http-4xx, severity: high, label: the listing is not a dead link }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: selector-visible, selector: h1, severity: medium, label: the listing has a heading }
+  - { action: screenshot, label: detail }
+  - { action: pause, minMs: 1400, maxMs: 3600, label: read the listing }
+  - { action: scroll, direction: down, px: 800, label: scroll the listing }
+  - { action: assert, check: lcp-below, value: 2500, severity: medium, label: listing LCP }
+  - { action: assert, check: cls-below, value: 0.1, severity: low, label: listing CLS }
+
+  - { action: click, selector: "[role='tab'][aria-selected='false']", optional: true, label: change tab }
+  - { action: assert, check: no-http-5xx, severity: high, label: the tab did not 500 }
+  - { action: screenshot, label: after-tab }
+
+  - { action: pinch, selector: ".leaflet-container, .mapboxgl-map, [class*='map-'], [id*='map']", direction: in, optional: true, label: zoom the map in }
+  - { action: screenshot, label: map-zoomed }
+  - { action: pinch, selector: ".leaflet-container, .mapboxgl-map, [class*='map-'], [id*='map']", direction: out, optional: true, label: zoom the map out }
+
+  - { action: click, selector: "a[href*='book'], a[href*='bestill'], a[href*='booking'], button[name*='book' i]", optional: true, label: open book now }
+  - { action: screenshot, label: book }
+  - { action: assert, check: no-http-5xx, severity: high, label: book did not 500 }
+  - { action: click, selector: "a[href*='kontakt'], a[href*='contact'], a[href*='forespors'], a[href*='inquiry']", optional: true, label: open contact }
+  - { action: screenshot, label: contact }
+  - { action: assert, check: no-http-5xx, severity: high, label: contact did not 500 }
+
+  - { action: assert, check: no-page-errors, severity: high }
+  - { action: assert, check: no-console-errors, severity: medium }

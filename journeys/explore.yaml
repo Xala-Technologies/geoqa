@@ -1,0 +1,97 @@
+id: explore
+title: Organic visit
+description: >
+  J07. A visitor session, not a render check. Lands, looks at what is actually
+  on the page, searches if there is a box, opens a listing if there is one,
+  changes a tab, pinches a map, and walks up to Book / Contact / Inquiry
+  without submitting.
+
+  Every interaction the page does not have is `optional: true`, so the same
+  file is runnable against a blog and a booking site — a missing Book now is
+  a skip, not a halt. Clicks are scoped the way C-11 requires: a CSS comma
+  is a union in document order, not a preference list, so none of these
+  reach into the nav.
+
+  Performance is measured after each navigation. The engine sits after
+  `open` / `click` / `press` before the frame, so the stills and the LCP
+  reading describe a page that has had time to arrive.
+
+  The search term is `{query}` (`--var query=oslo`). An unknown placeholder
+  is left intact, so a run that did not supply one searches for the literal
+  string "{query}" and the result-count check is only a warning.
+
+  Does not write. Book / contact / inquiry stop at the form.
+writes: false
+steps:
+  - { action: open, url: "{target}", label: land on the page }
+  - { action: assert, check: title-exists, severity: critical }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: selector-visible, selector: h1, severity: high, label: has a primary heading }
+  - { action: screenshot, label: landing }
+  - { action: assert, check: lcp-below, value: 2500, severity: medium, label: landing LCP }
+  - { action: assert, check: cls-below, value: 0.1, severity: low, label: landing CLS }
+
+  # What exists — absence is a note, not a broken site.
+  - { action: assert, check: selector-visible, selector: "nav, header nav, [role='navigation']", severity: medium, label: has navigation }
+  - { action: assert, check: selector-visible, selector: "input[type='search'], input[name='q'], input[name='s'], [role='searchbox']", severity: low, label: has a search box }
+  - { action: assert, check: selector-visible, selector: "main a[href*='listing'], main a[href*='property'], main a[href*='annonse'], #results a, .result a, [data-listing] a", severity: low, label: has a listing to open }
+  - { action: assert, check: selector-visible, selector: "[role='tab']", severity: low, label: has tabs }
+  - { action: assert, check: selector-visible, selector: ".leaflet-container, .mapboxgl-map, [class*='map-'], [id*='map'], [aria-label*='map' i]", severity: low, label: has a map }
+  - { action: assert, check: selector-visible, selector: "a[href*='book'], a[href*='bestill'], a[href*='booking'], [data-action='book']", severity: low, label: has a book action }
+  - { action: assert, check: selector-visible, selector: "a[href*='contact'], a[href*='kontakt'], a[href*='inquiry'], a[href*='enquiry'], a[href*='forespors']", severity: low, label: has a contact action }
+
+  - { action: pause, minMs: 1200, maxMs: 3200, label: look around }
+  - { action: scroll, direction: down, px: 900, label: scroll the landing }
+  - { action: screenshot, label: mid-landing }
+
+  # Search if the box is there. Enter after a skipped fill is a no-op on most pages.
+  - {
+      action: fill,
+      selector: "input[type='search'], input[name='q'], input[name='s'], [role='searchbox']",
+      value: "{query}",
+      optional: true,
+      label: type a search,
+    }
+  - { action: press, key: Enter, label: submit the search }
+  - { action: assert, check: no-http-5xx, severity: critical, label: search did not 500 }
+  - { action: assert, check: selector-count-min, selector: "#results a, .result, [data-result], main a[href*='listing'], main a[href*='property']", value: 1, severity: low, label: search returned something }
+  - { action: screenshot, label: after-search }
+  - { action: assert, check: lcp-below, value: 2500, severity: medium, label: after-search LCP }
+
+  # Open a listing / result. Content-scoped — a bare `a[href^='/']` clicks the logo.
+  - {
+      action: click,
+      selector: "#results a, .result a, [data-result] a, main a[href*='listing'], main a[href*='property'], main a[href*='annonse'], [data-listing] a",
+      optional: true,
+      label: open a listing,
+    }
+  - { action: assert, check: title-exists, severity: high, label: the next page has a title }
+  - { action: assert, check: no-http-4xx, severity: high, label: the listing is not a dead link }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: selector-visible, selector: h1, severity: medium, label: the listing has a heading }
+  - { action: screenshot, label: detail }
+  - { action: pause, minMs: 1400, maxMs: 3600, label: read the listing }
+  - { action: scroll, direction: down, px: 800, label: scroll the listing }
+  - { action: assert, check: lcp-below, value: 2500, severity: medium, label: listing LCP }
+  - { action: assert, check: cls-below, value: 0.1, severity: low, label: listing CLS }
+
+  # Tabs — switch away from the selected one and see whether the panel loads.
+  - { action: click, selector: "[role='tab'][aria-selected='false']", optional: true, label: change tab }
+  - { action: assert, check: no-http-5xx, severity: high, label: the tab did not 500 }
+  - { action: screenshot, label: after-tab }
+
+  # Map — pinch in, look, pinch out. Skip on pages with no map.
+  - { action: pinch, selector: ".leaflet-container, .mapboxgl-map, [class*='map-'], [id*='map']", direction: in, optional: true, label: zoom the map in }
+  - { action: screenshot, label: map-zoomed }
+  - { action: pinch, selector: ".leaflet-container, .mapboxgl-map, [class*='map-'], [id*='map']", direction: out, optional: true, label: zoom the map out }
+
+  # Walk up to conversion. Do not submit — that would write.
+  - { action: click, selector: "a[href*='book'], a[href*='bestill'], a[href*='booking'], [data-action='book']", optional: true, label: open book now }
+  - { action: screenshot, label: book }
+  - { action: assert, check: no-http-5xx, severity: high, label: book did not 500 }
+  - { action: click, selector: "a[href*='contact'], a[href*='kontakt'], a[href*='inquiry'], a[href*='enquiry'], a[href*='forespors']", optional: true, label: open contact }
+  - { action: screenshot, label: contact }
+  - { action: assert, check: no-http-5xx, severity: high, label: contact did not 500 }
+
+  - { action: assert, check: no-page-errors, severity: high }
+  - { action: assert, check: no-console-errors, severity: medium }

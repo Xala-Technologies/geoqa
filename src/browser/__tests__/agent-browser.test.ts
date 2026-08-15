@@ -113,6 +113,13 @@ describe("AgentBrowserRuntime", () => {
     expect(calls[0]).toContain("eval");
   });
 
+  it("pinches through eval, so the CLI does not need a second gesture primitive", async () => {
+    const { rt, calls } = make({ result: "true" });
+    expect((await rt.pinch(".map", "out")).ok).toBe(true);
+    expect(calls[0]?.some((a) => a === "eval")).toBe(true);
+    expect(calls[0]?.some((a) => String(a).includes("120"))).toBe(true);
+  });
+
   it("returns an unparseable eval result as the raw string", async () => {
     const { rt } = make({ result: "not json" });
     const out = await rt.evaluate<string>("1");
