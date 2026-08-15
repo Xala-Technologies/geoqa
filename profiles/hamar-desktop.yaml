@@ -1,0 +1,16 @@
+# Hamar at desktop width, where a delivery estimator that assumed the capital's depot has the room to print a date nobody in Innlandet will get.
+id: hamar-desktop
+label: Hamar, desktop
+market:
+  id: hamar
+  country: NO
+  city: Hamar
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [60.7945, 11.068]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

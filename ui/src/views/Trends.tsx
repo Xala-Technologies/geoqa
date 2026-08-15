@@ -25,7 +25,6 @@ export function Trends({ view }: { view: DashboardView }): JSX.Element {
   return (
     <>
       <div className="head">
-        <h2>Trends</h2>
         <p className="hint">
           A direction is refused below six measured points, and again unless the change clears both
           a relative and an absolute floor. A 14% move on a 1ms reading is 0.15ms, and nobody has

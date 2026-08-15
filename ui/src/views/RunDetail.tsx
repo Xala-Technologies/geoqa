@@ -12,32 +12,25 @@
 import type { JSX } from "react";
 import type { DashboardView, RunView } from "../types.ts";
 import { MeasuredValue, Verdict } from "../Measured.tsx";
+import { RunJourney } from "./RunJourney.tsx";
+import { LiveVisit } from "./LiveVisit.tsx";
 
 export function RunDetail({ view, runId }: { view: DashboardView; runId: string }): JSX.Element {
   const run = view.runs.find((r) => r.runId === runId);
-  if (run === undefined) {
-    return (
-      <div className="panel">
-        <div className="empty">
-          <strong>No such run.</strong>
-          <code>{runId}</code> is not in this dashboard. It may predate the last{" "}
-          <code>geoqa dashboard build</code>.
-        </div>
-      </div>
-    );
-  }
+  if (run === undefined) return <LiveVisit runId={runId} />;
 
   const sameTarget = view.runs.filter((r) => r.target === run.target && r.journeyId === run.journeyId);
 
   return (
     <>
       <div className="head">
-        <h2>{run.journeyId}</h2>
         <p className="hint">
-          <Verdict value={run.verdict} /> &nbsp;{run.target} &nbsp;·&nbsp; {run.profileId} &nbsp;·&nbsp;{" "}
-          {run.startedAt.replace("T", " ").slice(0, 19)}
+          <Verdict value={run.verdict} /> {run.target} · {run.profileId} · asked {run.geo.requested} ·
+          saw {run.geo.observed} · {run.startedAt.replace("T", " ").slice(0, 19)}
         </p>
       </div>
+
+      <RunJourney runId={run.runId} steps={run.steps ?? []} screenshots={run.screenshots ?? []} />
 
       <div className="gauges">
         <Cell k="Verdict" v={<Verdict value={run.verdict} />} sub={verdictMeans(run.verdict)} />

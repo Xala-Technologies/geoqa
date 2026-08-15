@@ -53,6 +53,7 @@ pnpm geoqa profile list
 pnpm geoqa journey list
 pnpm geoqa browser verify [--engine agent-browser|playwright] [--geo <profile>]
 pnpm geoqa proxy verify --geo oslo-mobile [--provider http-proxy] [--engine …]
+pnpm geoqa run --url <url> --country NO --city Bergen --device mobile --journey browse --json
 pnpm geoqa journey run --url <url> --geo <profile> --journey <id> \
                        [--engine agent-browser|playwright] [--seed <n>] \
                        [--repeat <n>] [--var k=v]... [--headed]
@@ -64,6 +65,9 @@ pnpm geoqa evidence inspect <runId>
 pnpm geoqa evidence prune [--apply] [--max-age <tier>=<days|null>]... \
                           [--max-total <bytes>] [--privacy-days <days|off>] \
                           [--sweep-tiers pass,warning] [--delete-unreadable]
+pnpm geoqa server [--port <n>]          # Watch + Live + POST /api/run (needs auth env)
+pnpm geoqa server hash <password>       # prints GEOQA_ADMIN_PASSWORD_HASH + SESSION_SECRET
+pnpm ui:dev                             # Vite HMR on :5173, proxies /api to geoqa server :4180
 ```
 
 Every command accepts `--json`, and **the JSON shape is the integration
@@ -102,6 +106,7 @@ Dependencies point one way; each layer knows only the one below it.
 ```
 cli/          parse → dispatch → print (index.ts is thin; commands.ts holds the judgement)
 config/       geoqa.config.json: schema + credential guard + IMPORTED defaults
+watch/        operator surface: YAML spec → tick (when to start) → live board
 run/          context (RunSpec) → stages → execute (one run) → matrix (many, bounded)
 journeys/     spec (YAML DSL) → engine (executes) → assertions (pure judgement) + random (seeded)
 geo/          profile → observe (both axes) → verify (three-valued verdicts)
@@ -130,9 +135,9 @@ launcher.
 Root-level `profiles/*.yaml` and `journeys/*.yaml` are inputs; `infra/` provisions
 one country-correct exit per market (read its README before spending anything);
 `evidence/` and `experiments/*/results.jsonl` are gitignored run output. The matrix
-is **data, not code**: 16 profiles (8 markets × {mobile, desktop}) × 6 journeys =
-96 scenarios. `geoqa matrix run` executes them under a bounded pool; nothing
-schedules it ([gaps A-3](docs/gaps.md#a-3--the-matrix-runs-in-process-now-nothing-schedules-it-and-the-bound-is-a-guess)).
+is **data, not code**: one profile pair per market × device. `geoqa matrix run`
+executes a selection under a bounded pool; `geoqa server` can also run it on a
+clock from the Watch view ([gaps A-3](docs/gaps.md#a-3--the-matrix-runs-in-process-now-nothing-schedules-it-and-the-bound-is-a-guess)).
 
 ## Load-bearing invariants
 

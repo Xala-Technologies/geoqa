@@ -299,6 +299,24 @@ Multi-tenancy:
       and the shared evidence root is still correct for it. No tenant rule applies
       then either, which is the honest consequence rather than a silent default.
 
+  geoqa run --url <url> --country <cc> --city <c> --device mobile|desktop
+            --journey <id> [--locale <tag>] [--timezone <iana>]
+            [--session-duration <min>] [--rotate-ip] [--evidence] [--json]
+      The control-plane entry. Same runtime as journey run — one browser, one
+      network session, evidence written, a new proxy session id so the
+      residential pool rotates the exit. --json writes one event per line
+      (observedIp, liveUrl, confidence, message) so a console can screen the
+      session. journey run --json stays a single object; that is the
+      agent-to-agent contract and it does not stream.
+
+      --locale and --timezone must match the profile or the run is refused:
+      the profile is the identity. --rotate-ip and --evidence are how a run
+      already works; passing them as false is refused. --session-duration
+      fills {sessionduration} in the proxy template (Decodo default 10).
+
+      liveUrl is http://127.0.0.1:4848 when the engine is agent-browser,
+      or AGENT_BROWSER_DASHBOARD_URL when set. Playwright has no dashboard.
+
   geoqa journey run --url <url> --geo <profile> --journey <id>
                     [--provider direct|http-proxy]
                     [--engine agent-browser|playwright] [--seed <n>]
@@ -520,6 +538,28 @@ Multi-tenancy:
 
       Exit 1 when anything was refused or failed, or when a --max-total could not
       be met, so a scheduled prune goes red instead of looking fine.
+
+  geoqa server [--port <n>] [--ui-root <path>] [--secure]
+  geoqa server hash <password>
+      The operator console. Watch decides what to run and how often; Live
+      shows screening frames while a session is in flight. Needs
+      GEOQA_ADMIN_PASSWORD_HASH and GEOQA_SESSION_SECRET. hash prints those
+      exports — never write them into a committed file.
+
+      Watch writes tenants/<id>/watch.yaml. Settings stays read-only: it
+      reports the files the engine already reads. Live is a feed, not remote control
+      — a click from the console would make a seeded run unreproducible.
+
+      The scheduler lives in this process. Last start and last finish are
+      written under the evidence root so a restart does not look like a
+      first sweep. Dying loses the in-memory live board; the evidence
+      packages remain.       Default watch is paused so opening the server does
+      not spend the proxy allowance.
+
+      HTTP, not only the CLI. POST /api/run starts one journey (same
+      runtime as geoqa run). GET /api/run returns inFlight, events and
+      sessions. Cookie session or Authorization: Bearer GEOQA_API_TOKEN
+      (32+ characters, optional). GET /api/live is the screening board.
 
 Configuration:
   geoqa.config.json in the repo root, when present, supplies the defaults for

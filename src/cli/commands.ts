@@ -80,6 +80,7 @@ import {
   type ContentRecord,
 } from "../analysis/content.js";
 import { toDashboardView, type DashboardView } from "../report/view.js";
+import { readJourneyFromRunJson } from "../evidence/package.js";
 import {
   filterHistory,
   findRegressions,
@@ -94,7 +95,15 @@ import {
 } from "../history/store.js";
 import { HISTORY_SCHEMA_VERSION, type RunRecord } from "../history/records.js";
 import type { Tenant } from "../tenant/types.js";
-import { executeRun, prepareRun } from "../run/execute.js";
+import { executeRun, prepareRun, type RunProgress } from "../run/execute.js";
+import {
+  acceptControlFlags,
+  assertProfileIdentity,
+  eventFromProgress,
+  eventsFromResult,
+  liveDashboardUrl,
+  type ControlEvent,
+} from "./events.js";
 import {
   countScenarios,
   expandMatrix,
@@ -962,6 +971,13 @@ export interface JourneyRunOptions {
    * Activity rebuilds everything from serialisable arguments.
    */
   verifyEndpoint?: string;
+  /** Progress for `geoqa run` JSONL. Absent is a no-op — `journey run` has no stream. */
+  onProgress?: (event: RunProgress) => void;
+  /**
+   * Sticky-session lifetime in minutes, substituted as `{sessionduration}`.
+   * Absent keeps the provider default (10).
+   */
+  sessionDurationMinutes?: number;
 }
 
 export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions): Promise<GeoQaRunResult & { warnings: string[] }> {
@@ -972,6 +988,7 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
     // The READ half of the cooldown. Without it `httpProxyProvider` returns null from
     // `cooldownUntil` and a vendor that failed a minute ago is tried again immediately.
     ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
+    ...(options.sessionDurationMinutes !== undefined ? { sessionDurationMinutes: options.sessionDurationMinutes } : {}),
   });
   const runId = newRunId(profile.id, deps.now());
 
@@ -1015,8 +1032,59 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
     // it. Both are required — a store that only ever adds freezes a vendor that recovered.
     ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
     ...(deps.cooldownMs !== undefined ? { cooldownMs: deps.cooldownMs } : {}),
+    ...(options.onProgress ? { onProgress: options.onProgress } : {}),
   });
   return { ...result, warnings };
+}
+
+export interface ControlRunOptions extends JourneyRunOptions {
+  locale?: string;
+  timezone?: string;
+  rotateIp?: boolean;
+  evidence?: boolean;
+  onEvent?: (event: ControlEvent) => void;
+}
+
+/**
+ * The control-plane entry: same runtime as `journey run`, JSONL events on top.
+ *
+ * Electron asked for `geoqa run --country --city --device`. Those already
+ * resolve through `resolveProfileId`. This function refuses a locale or
+ * timezone that disagrees with the profile (the profile is the identity),
+ * refuses `--rotate-ip=false` / `--evidence=false` (both are how a run
+ * already works), and streams events. It does not open a second browser.
+ */
+export async function controlRun(
+  deps: CommandDeps,
+  options: ControlRunOptions,
+): Promise<{ result: GeoQaRunResult & { warnings: string[] }; events: ControlEvent[] }> {
+  const flags = acceptControlFlags({
+    ...(options.rotateIp !== undefined ? { rotateIp: options.rotateIp } : {}),
+    ...(options.evidence !== undefined ? { evidence: options.evidence } : {}),
+  });
+  if (!flags.ok) throw new Error(flags.errors.join("\n"));
+  const profile = loadProfileOrThrow(deps, options.profileId);
+  const identity = assertProfileIdentity(profile, {
+    ...(options.locale !== undefined ? { locale: options.locale } : {}),
+    ...(options.timezone !== undefined ? { timezone: options.timezone } : {}),
+  });
+  if (!identity.ok) throw new Error(identity.errors.join("\n"));
+
+  const engine = options.engine ?? DEFAULT_ENGINE;
+  const events: ControlEvent[] = [];
+  const emit = (event: ControlEvent): void => {
+    events.push(event);
+    options.onEvent?.(event);
+  };
+  const liveUrl = liveDashboardUrl(deps.env, engine);
+  if (liveUrl !== null) emit({ level: "info", message: "Browser session started", liveUrl });
+
+  const result = await journeyRun(deps, {
+    ...options,
+    onProgress: (progress) => emit(eventFromProgress(progress)),
+  });
+  for (const event of eventsFromResult(result, { engine, env: deps.env, includeLive: false })) emit(event);
+  return { result, events };
 }
 
 // ── matrix run ───────────────────────────────────────────────────────────
@@ -1094,6 +1162,20 @@ export interface MatrixRunOptions {
   /** Required before a matrix containing a state-changing journey will run. */
   allowWrites?: boolean;
   verifyEndpoint?: string;
+  /**
+   * Run these scenarios instead of the cartesian expansion.
+   *
+   * Continuous watch sampling. An empty pick is refused — zero scenarios is
+   * zero evidence.
+   */
+  pick?: { market: string; device: string; journey: string; target: string }[];
+  /**
+   * Fires when a scenario is about to be planned, before the browser opens.
+   *
+   * Threaded through to `runMatrix` so a live board can claim the slot the
+   * moment the pool takes it. Absent is a no-op — the CLI has no board.
+   */
+  onStart?: (scenario: MatrixScenario) => void;
 }
 
 export interface MatrixRunResult {
@@ -1143,21 +1225,37 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
   const devices = options.devices?.length ? options.devices : DEFAULT_MATRIX_DEVICES;
   const engine = options.engine ?? DEFAULT_ENGINE;
   const errors: string[] = [];
-  if (options.markets.length === 0) errors.push("matrix run needs at least one --market");
-  if (options.journeys.length === 0) errors.push("matrix run needs at least one --journey");
+  const picked = options.pick;
+  if (picked !== undefined) {
+    if (picked.length === 0) errors.push("matrix run pick is empty — that is zero evidence");
+  } else {
+    if (options.markets.length === 0) errors.push("matrix run needs at least one --market");
+    if (options.journeys.length === 0) errors.push("matrix run needs at least one --journey");
+  }
   const targets = options.targets ?? [];
   // Checked here rather than left to `prepareRun`: an empty target reaches the
   // browser as a navigation to nothing, once per scenario, and the matrix reports
   // N unmeasured scenarios instead of one refused argument.
-  if (targets.length === 0 && options.url === "") {
+  if (picked === undefined && targets.length === 0 && options.url === "") {
     errors.push("matrix run needs --url, or --urls-file to sweep a list of pages");
   }
 
   // Expanded through the same function the runner uses, so what is validated and
   // printed here is exactly what will be executed — including its dedupe and its
-  // ordering.
+  // ordering. A `pick` is a slice of that expansion and must not be re-expanded
+  // into the rectangle its markets × devices would form.
   const axes = { markets: options.markets, devices, journeys: options.journeys, targets };
-  const scenarios = expandMatrix(axes);
+  const scenarios =
+    picked === undefined
+      ? expandMatrix(axes)
+      : picked.map((p, index) => ({
+          index,
+          key: `${p.market}/${p.device}/${p.journey}/${p.target}`,
+          market: p.market,
+          device: p.device,
+          journey: p.journey,
+          target: p.target,
+        }));
 
   // Resolved through `resolveDataPath` rather than `profilePath`, because a matrix
   // reports EVERY problem at once and a throwing path builder would abort on the
@@ -1290,6 +1388,7 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
 
   const result = await runMatrix({
     axes,
+    scenarios,
     plan: async (scenario) => {
       const profileId = `${scenario.market}-${scenario.device}`;
       // The journey is part of the run id, not just the profile: two journeys on
@@ -1336,6 +1435,12 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
         provider,
         log: deps.log,
         repeat: options.repeat ?? 1,
+        label: {
+          market: scenario.market,
+          device: scenario.device,
+          journey: scenario.journey,
+          target: scenario.target ?? options.url,
+        },
         ...(deps.tenantId !== undefined ? { tenantId: deps.tenantId } : {}),
         ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
         ...(deps.cooldownMs !== undefined ? { cooldownMs: deps.cooldownMs } : {}),
@@ -1344,6 +1449,7 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
     run: deps.runOnce,
     now: deps.now,
     ...(options.concurrency !== undefined ? { concurrency: options.concurrency } : {}),
+    ...(options.onStart ? { onStart: options.onStart } : {}),
     onScenario: (outcome) =>
       deps.log(`matrix: ${outcome.scenario.key} → ${outcome.outcome}${outcome.error === null ? "" : ` (${outcome.error})`}`),
   });
@@ -1646,9 +1752,11 @@ export function dashboardBuild(
 ): { path: string; view: DashboardView } {
   const { records, skipped } = readHistory(deps.evidenceRoot, historyFsOf(deps));
   const warnings = skipped > 0 ? [`${skipped} unparseable index line(s) skipped — "geoqa runs rebuild" reconstructs the index`] : [];
-  const view = toDashboardView(filterHistory(records, filter), new Date(deps.now()).toISOString(), warnings);
-  const file = path.join(deps.evidenceRoot, DASHBOARD_FILE);
+  const selected = filterHistory(records, filter);
   const fs = historyFsOf(deps);
+  const journeys = Object.fromEntries(selected.map((r) => [r.runId, readJourneyFromRunJson(deps.evidenceRoot, r.runId, fs)]));
+  const view = toDashboardView(selected, new Date(deps.now()).toISOString(), warnings, journeys);
+  const file = path.join(deps.evidenceRoot, DASHBOARD_FILE);
   fs.mkdir(deps.evidenceRoot);
   fs.write(file, JSON.stringify(view, null, 2));
   return { path: file, view };

@@ -1,0 +1,16 @@
+# Sandnes at desktop width — the city a Stavanger store-locator treats as a suburb until the wide map shows the 15km gap.
+id: sandnes-desktop
+label: Sandnes, desktop
+market:
+  id: sandnes
+  country: NO
+  city: Sandnes
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [58.8518, 5.7361]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

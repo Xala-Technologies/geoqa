@@ -1,0 +1,16 @@
+# Tonsberg at desktop width, where a history timeline or ferry table built for the capital's tourists has the room to be read as local.
+id: tonsberg-desktop
+label: Tonsberg, desktop
+market:
+  id: tonsberg
+  country: NO
+  city: Tonsberg
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.2675, 10.4076]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

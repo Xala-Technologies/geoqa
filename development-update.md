@@ -19,6 +19,54 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-15 — The console can arm a watch, and you can see the session while it runs
+
+The matrix used to start when a human typed `geoqa matrix run`. That is still
+true, and it is no longer the only way. `geoqa server` now ticks a watch file
+and launches the same `matrixRun` the CLI uses — periodic (from the last start)
+or continuous (from the last finish). Each sweep mints a new run id, which
+becomes a new proxy session id, so the residential pool hands back a different
+exit. That is the rotation. There is no second provider.
+
+The operator surface is a new Watch view, not an editable Settings page.
+Settings stays a readout of the files the engine already reads. Watch writes
+`tenants/<id>/watch.yaml`, so the tenant file's comments survive and the
+allowlist the operator typed is the one the sweep hits. Brand URLs
+(`app.digilist.no`, `dev.digilist.no`, `xala.no`) are added there. A writes
+journey still needs an explicit allow.
+
+Live is a screening feed, not a remote control. While a session is in flight
+the console shows the market, the URL, the current step, and the latest
+frame. You watch it. You do not drive it — an operator in the middle of a
+seeded journey would make the evidence unreproducible.
+
+Fourteen Norwegian cities joined the matrix as profile pairs (Drammen,
+Fredrikstad, Sandnes, Skien, Tønsberg, Haugesund, Sandefjord, Lillehammer,
+Hamar, Molde, Harstad, Alta, Narvik, Kongsberg), each with a unique header
+comment. Digilist's tenant now lists every Norwegian market we have a
+profile for; the default watch starts with five of them, paused, so opening
+the server does not spend the proxy allowance until somebody arms it.
+
+`geoqa run` is the control-plane entry an external console can spawn. It is
+`journeyRun` with a JSONL stream — `observedIp`, `liveUrl`
+(`http://127.0.0.1:4848` on agent-browser), `confidence` — not a second
+browser stack. `--locale` / `--timezone` must match the profile.
+`--rotate-ip` and `--evidence` cannot be turned off. Continuous watch now
+walks a cursor (`maxConcurrent`, default 2) instead of launching the
+cartesian product every tick. Svolvær joined the Norwegian set.
+
+The clock itself is now a file under the evidence root, not a pair of
+in-memory numbers. A restarted server that used to look like a first sweep
+(and fire immediately if armed) now waits out the remaining interval. The
+live board carries the scenario the planner already knew — market, device,
+journey, URL — instead of guessing them from the run id. Watch checkboxes
+are the tenant's markets that have a profile, not every city on disk.
+`--help` documents `geoqa server`.
+
+Closes the clock half of [A-3](docs/gaps.md#a-3--the-matrix-runs-in-process-now-nothing-schedules-it-and-the-bound-is-a-guess).
+Residue: no Temporal cron, and a process that dies mid-sweep loses the live
+board (the evidence packages remain).
+
 ## 2026-08-14 — The console could not load through the server it ships with
 
 [PR #38](https://github.com/Xala-Technologies/geoqa/pull/38). Served through `geoqa server`,

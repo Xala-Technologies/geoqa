@@ -1,0 +1,16 @@
+# Same harbour at desktop width. A hero written for a winter-dark mainland city looks wrong in a place whose summer product is midnight sun and whose winter product is northern lights over a fishing village.
+id: svolvaer-desktop
+label: Svolvær, desktop
+market:
+  id: svolvaer
+  country: NO
+  city: Svolvaer
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [68.2336, 14.568]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

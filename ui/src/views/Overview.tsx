@@ -21,7 +21,6 @@ export function Overview({ view }: { view: DashboardView }): JSX.Element {
   return (
     <>
       <div className="head">
-        <h2>Overview</h2>
         <p className="hint">
           Every reading here was taken from inside the market it claims, through a real browser. A
           value the engine could not measure says so rather than reading as a zero.

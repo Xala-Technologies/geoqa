@@ -3,6 +3,7 @@ import type { BrowserResult, BrowserRuntime } from "../../browser/types.js";
 import { findingsFromSteps } from "../../findings/classify.js";
 import {
   countOutcomes,
+  describeAction,
   gatherReading,
   mergeAttempts,
   runJourney,
@@ -232,6 +233,26 @@ describe("gatherReading: the attribute read", () => {
 
 
 describe("runJourney", () => {
+  it("reports every recorded step to onStep, including ones that did not run", async () => {
+    const seen: string[] = [];
+    await runJourney(
+      runtime(),
+      {
+        id: "j",
+        title: "J",
+        description: "",
+        writes: false,
+        steps: [
+          { action: "open", url: "https://x", probability: 1 },
+          { action: "pause", minMs: 1, maxMs: 1, probability: 0 },
+          { ...assertStep({ check: "title-exists" }), probability: 1 },
+        ],
+      },
+      { ...opts, onStep: (step) => { seen.push(`${step.outcome}:${step.action}`); } },
+    );
+    expect(seen).toEqual(["passed:open", "skipped:pause", "passed:assert"]);
+  });
+
   it("passes a healthy page", async () => {
     const result = await runJourney(
       runtime(),
@@ -292,6 +313,39 @@ describe("runJourney", () => {
       opts,
     );
     expect(result.screenshots).toEqual(["hero"]);
+  });
+
+  it("captures a frame after open, click and scroll — a visit without pictures is not evidence", async () => {
+    const shots: string[] = [];
+    const result = await runJourney(
+      runtime({
+        screenshot: (p) => {
+          shots.push(p);
+          return Promise.resolve(ok(null));
+        },
+      }),
+      journey([
+        { action: "open", url: "https://digilist.no/", label: "open target" },
+        assertStep({ check: "title-exists" }, "critical"),
+        { action: "scroll", direction: "down", px: 800, label: "scroll" },
+        { action: "click", selector: "main a", label: "click" },
+        { action: "fill", selector: "#q", value: "secret" },
+      ]),
+      opts,
+    );
+    expect(result.screenshots).toEqual(["00-open-target", "02-scroll", "03-click"]);
+    expect(shots).toEqual(["/e/00-open-target.png", "/e/02-scroll.png", "/e/03-click.png"]);
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("does not invent a frame when the capture itself failed", async () => {
+    const result = await runJourney(
+      runtime({ screenshot: () => Promise.resolve(bad()) }),
+      journey([{ action: "open", url: "https://digilist.no/" }]),
+      opts,
+    );
+    expect(result.screenshots).toEqual([]);
+    expect(result.steps[0]?.outcome).toBe("passed");
   });
 
   it("writes screenshots into the configured directory, honouring fullPage", async () => {
@@ -527,6 +581,28 @@ describe("input steps", () => {
     expect(result.steps[0]?.detail).toContain("1 value(s), not recorded");
   });
 
+  it("names WHERE a click, open or scroll acted — 'click ok' is not a report", () => {
+    // A run detail that says "click ok" cannot answer "what did it click". The selector
+    // is not a secret; the filled value is. Same for the URL an open used and the
+    // direction a scroll took — those are the journey, and the evidence has to say them.
+    expect(describeAction({ action: "click", selector: "#results a, .result", probability: 1 })).toBe(
+      "click #results a, .result ok",
+    );
+    expect(describeAction({ action: "open", url: "https://digilist.no/", probability: 1 })).toBe(
+      "open https://digilist.no/ ok",
+    );
+    expect(describeAction({ action: "scroll", direction: "down", px: 800, probability: 1 })).toBe("scroll down 800px ok");
+    expect(describeAction({ action: "screenshot", label: "landing", fullPage: false, probability: 1 })).toBe(
+      "screenshot landing ok",
+    );
+  });
+
+  it("still never puts a fill value in the description", () => {
+    expect(describeAction({ action: "fill", selector: "#password", value: "hunter2", probability: 1 })).toBe(
+      "fill #password ok (value not recorded)",
+    );
+  });
+
   it("reports which controls a run touched, so screenshots can be flagged", async () => {
     const touched = await runJourney(runtime(), journey([{ action: "fill", selector: "#a", value: "x" }]), opts);
     expect(touched.touchedForm).toBe(true);
@@ -630,8 +706,10 @@ describe("optional steps", () => {
     expect(result.steps).toHaveLength(3);
     expect(result.steps[1]).toMatchObject({ outcome: "skipped", index: 1 });
     expect(result.steps[1]?.detail).toContain("probability 0");
-    // A skipped screenshot never claims to have produced a file.
-    expect(result.screenshots).toEqual([]);
+    // A skipped screenshot never claims to have produced a file. Reloads do
+    // capture a frame — that is the visit trail, not the skipped step.
+    expect(result.screenshots).toEqual(["00-reload-0", "02-reload-2"]);
+    expect(result.screenshots).not.toContain("gallery");
     expect(result.verdict).toBe("PASS");
   });
 

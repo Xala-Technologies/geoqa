@@ -76,6 +76,14 @@ export interface EngineOptions {
    * the same order.
    */
   seed?: number;
+  /**
+   * Fires after every step is recorded, including skipped ones.
+   *
+   * The live board needs to know which step is on screen *during* the journey,
+   * not after it. A hook rather than a log-line parse: the log is for humans
+   * and its wording is not a contract.
+   */
+  onStep?: (step: StepResult) => void | Promise<void>;
 }
 
 /** Which Vitals field each vitals-based check depends on. */
@@ -230,6 +238,27 @@ const outcomeOf = (result: CheckResult): StepOutcome =>
  * navigation nobody thinks of as a click.
  */
 const NAVIGATING_ACTIONS = new Set(["click", "press", "open", "reload"]);
+const FRAME_ACTIONS = new Set(["open", "click", "scroll", "press", "reload"]);
+
+const frameName = (index: number, label: string): string => {
+  const slug = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return `${String(index).padStart(2, "0")}-${slug || "frame"}`;
+};
+
+const captureFrame = async (
+  runtime: BrowserRuntime,
+  dir: string,
+  index: number,
+  label: string,
+): Promise<string | null> => {
+  const name = frameName(index, label);
+  const shot = await runtime.screenshot(`${dir}/${name}.png`, { fullPage: false });
+  return shot.ok ? name : null;
+};
 
 /** Actions that act on ONE element chosen from a selector's matches. */
 const TARGETED_ACTIONS = new Set(["click", "fill", "select", "check"]);
@@ -273,13 +302,17 @@ export async function runJourney(
   const screenshots: string[] = [];
   let halted = false;
   let touchedForm = false;
+  const record = async (step: StepResult): Promise<void> => {
+    steps.push(step);
+    await options.onStep?.(step);
+  };
 
   for (const [index, step] of journey.steps.entries()) {
     const label = labelFor(step, index);
     const stepStarted = now();
 
     if (halted) {
-      steps.push({
+      await record({
         index, action: step.action, label, outcome: "skipped", severity: "info",
         category: null, check: step.action === "assert" ? step.spec.check : null,
         detail: "skipped — an earlier state-changing step failed, so this would measure nothing",
@@ -297,7 +330,7 @@ export async function runJourney(
      * was fine" the same row, and would move every later step's index.
      */
     if (!takesStep(random, step.probability)) {
-      steps.push({
+      await record({
         index, action: step.action, label, outcome: "skipped", severity: "info",
         category: null, check: step.action === "assert" ? step.spec.check : null,
         detail: `not taken this run — probability ${step.probability}`,
@@ -310,7 +343,7 @@ export async function runJourney(
       const reading = await gatherReading(runtime, step.spec, selectorOf(step.spec), options.metricSettleMs ?? 600);
       const result = evaluateCheck(step.spec, reading);
       const outcome = outcomeOf(result);
-      steps.push({
+      await record({
         index, action: step.action, label, outcome, severity: step.severity,
         category: step.category ?? null, check: step.spec.check,
         detail: `${step.spec.check}: expected ${result.expected}, observed ${result.observed}`,
@@ -340,6 +373,12 @@ export async function runJourney(
     if (step.action === "fill" || step.action === "select" || step.action === "check") touchedForm = true;
 
     if (out.ok) {
+      // A frame after every visual action. An explicit `screenshot` step already
+      // wrote one; fill/select/check do not — those frames can hold a typed value.
+      if (step.action !== "screenshot" && FRAME_ACTIONS.has(step.action)) {
+        const frame = await captureFrame(runtime, options.screenshotDir, index, label);
+        if (frame !== null) screenshots.push(frame);
+      }
       // Where a NAVIGATING action left us, recorded as the step's observation.
       //
       // Without this a click records nothing, and a check that fails after it is
@@ -350,7 +389,7 @@ export async function runJourney(
       // for actions that can navigate — a `fill` reading back a URL would be noise,
       // and a `fill` must never render its own value.
       const landedOn = NAVIGATING_ACTIONS.has(step.action) ? await currentUrl(runtime) : null;
-      steps.push({
+      await record({
         index, action: step.action, label, outcome: "passed", severity: "info",
         category: null, check: null,
         // `describeAction` exists so a `fill` can never render its own value.
@@ -364,7 +403,7 @@ export async function runJourney(
     // A screenshot or snapshot that fails costs us evidence, not the run.
     const fatal = step.action !== "screenshot" && step.action !== "snapshot";
     halted = fatal;
-    steps.push({
+    await record({
       index, action: step.action, label, outcome: "errored", severity: fatal ? "critical" : "low",
       category: "instrumentation", check: null,
       detail: `${step.action} failed: ${out.failure.kind} — ${out.failure.detail}`,
@@ -404,7 +443,20 @@ export function describeAction(step: Exclude<Step, { action: "assert" }>): strin
       return `press ${step.key} ok`;
     case "check":
       return `check ${step.selector} ok`;
-    default:
+    case "click":
+      return `click ${step.selector} ok`;
+    case "open":
+      return `open ${step.url} ok`;
+    case "scroll":
+      return `scroll ${step.direction}${step.px !== undefined ? ` ${step.px}px` : ""} ok`;
+    case "screenshot":
+      return `screenshot ${step.label} ok`;
+    case "snapshot":
+      return `snapshot ${step.label} ok`;
+    case "wait":
+      return `wait ${step.target} ok`;
+    case "pause":
+    case "reload":
       return `${step.action} ok`;
   }
 }

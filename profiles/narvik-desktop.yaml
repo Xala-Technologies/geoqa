@@ -1,0 +1,16 @@
+# Narvik at desktop width, where a border-aware shipping table has the room to flip to SEK while the visitor is still in Nordland.
+id: narvik-desktop
+label: Narvik, desktop
+market:
+  id: narvik
+  country: NO
+  city: Narvik
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [68.4384, 17.4272]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

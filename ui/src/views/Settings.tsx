@@ -63,7 +63,6 @@ export function Settings(): JSX.Element {
     return (
       <>
         <div className="head">
-          <h2>Settings</h2>
           <p className="hint">
             This page reads live configuration from the server, so it is unavailable in a static build — which is a
             legitimate way to read the rest of this console, since evidence is files a browser can open. Run{" "}
@@ -82,7 +81,6 @@ export function Settings(): JSX.Element {
   return (
     <>
       <div className="head">
-        <h2>Settings</h2>
         <p className="hint">
           Read from the files the engine itself uses, so this page cannot disagree with what a run would actually do.
           Credentials show as <b>set</b> or <b>not set</b> — no value is ever sent to this browser.

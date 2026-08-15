@@ -24,6 +24,7 @@ import {
   parseEngine,
   USAGE,
 } from "./args.js";
+import { formatEvent } from "./events.js";
 import {
   browserVerify,
   defaultDeps,
@@ -47,6 +48,7 @@ import {
   tenantList,
   checkTenantScope,
   journeyList,
+  controlRun,
   journeyRun,
   matrixRun,
   parsePrunePolicy,
@@ -288,6 +290,46 @@ async function main(argv: string[]): Promise<number> {
       ...result.warnings.map((w) => `  ! ${w}`),
     ].join("\n");
     return emit(result, human);
+  }
+
+  if (group === "run" && action === undefined) {
+    const scope = tenant === null ? [] : checkTenantScope(tenant, { url: flagString(args, "url", "") });
+    if (scope.length > 0) {
+      console.error(scope.join("\n"));
+      return 2;
+    }
+    if (tenant !== null) {
+      const quota = await enforceQuota(deps, tenant, flagNumber(args, "repeat", 1));
+      for (const w of quota.warnings) console.error(`warning: ${w}`);
+      if (quota.state === "refused") {
+        console.error(quota.errors.join("\n"));
+        return 2;
+      }
+    }
+    const { result } = await controlRun(deps, {
+      url: flagString(args, "url", ""),
+      profileId,
+      journeyId: flagString(args, "journey", "landing-page"),
+      providerName,
+      engine,
+      verifyEndpoint,
+      vars: flagVars(argv),
+      headed: flagBool(args, "headed"),
+      repeat: flagNumber(args, "repeat", 1),
+      corroborate: flagBool(args, "corroborate"),
+      ...(tenant !== null ? { tenantId: tenant.id } : {}),
+      ...(args.flags.seed !== undefined ? { seed: flagNumber(args, "seed", 0) } : {}),
+      ...(args.flags.locale !== undefined ? { locale: flagString(args, "locale", "") } : {}),
+      ...(args.flags.timezone !== undefined ? { timezone: flagString(args, "timezone", "") } : {}),
+      ...(args.flags["rotate-ip"] !== undefined ? { rotateIp: flagBool(args, "rotate-ip") } : {}),
+      ...(args.flags.evidence !== undefined ? { evidence: flagBool(args, "evidence") } : {}),
+      ...(args.flags["session-duration"] !== undefined
+        ? { sessionDurationMinutes: flagNumber(args, "session-duration", 10) }
+        : {}),
+      ...(json ? { onEvent: (event) => console.log(formatEvent(event)) } : {}),
+    });
+    if (!json) emit(result, renderRunResult(result));
+    return result.verdict === "FAIL" || result.verdict === "ERROR" ? 1 : 0;
   }
 
   if (group === "journey" && action === "run") {

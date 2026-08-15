@@ -8,4 +8,15 @@ export default defineConfig({
   // to one deployment path and break exactly the "just copy it next to the data" story.
   base: "./",
   build: { outDir: "dist", emptyOutDir: true },
+  // `geoqa server` serves ui/dist — no HMR. `pnpm ui:dev` is the hot console; it
+  // proxies the API to the already-running server so a cookie from :4180 still works
+  // (cookies ignore port on localhost).
+  server: {
+    port: 5173,
+    proxy: {
+      "/api": "http://127.0.0.1:4180",
+      "/dashboard.json": "http://127.0.0.1:4180",
+      "/health": "http://127.0.0.1:4180",
+    },
+  },
 });

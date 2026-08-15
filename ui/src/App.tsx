@@ -21,34 +21,86 @@ import { Trends } from "./views/Trends.tsx";
 import { Findings } from "./views/Findings.tsx";
 import { RunDetail } from "./views/RunDetail.tsx";
 import { Settings } from "./views/Settings.tsx";
+import { Watch } from "./views/Watch.tsx";
+import { Live } from "./views/Live.tsx";
+import { Logo } from "./Logo.tsx";
 
-type ViewId = "overview" | "runs" | "findings" | "geography" | "coverage" | "trends" | "settings";
+type ViewId = "overview" | "live" | "runs" | "findings" | "geography" | "coverage" | "trends" | "watch" | "settings";
 
 /** A route is a view, or a drill-down into one run. */
-type Route = { view: ViewId; runId?: string };
+type Route = { view: ViewId; runId?: string; liveId?: string };
 
-const VIEWS: { id: ViewId; label: string; group: string }[] = [
-  { id: "overview", label: "Overview", group: "Monitor" },
-  { id: "runs", label: "Runs", group: "Monitor" },
-  { id: "findings", label: "Findings", group: "Monitor" },
-  { id: "geography", label: "Geography", group: "Analyse" },
-  { id: "coverage", label: "Coverage", group: "Analyse" },
-  { id: "trends", label: "Trends", group: "Analyse" },
-  { id: "settings", label: "Settings", group: "Configure" },
+const VIEWS: { id: ViewId; label: string; group: string; purpose: string; rail?: boolean }[] = [
+  {
+    id: "overview",
+    label: "At a glance",
+    group: "Work",
+    purpose: "A briefing. The work is Visits.",
+    rail: false,
+  },
+  {
+    id: "live",
+    label: "Now",
+    group: "Work",
+    purpose: "A visit happening right now. You watch. You do not drive.",
+  },
+  {
+    id: "runs",
+    label: "Visits",
+    group: "Work",
+    purpose: "Every finished visit. Open one to see what it did and the frames it kept.",
+  },
+  {
+    id: "findings",
+    label: "To fix",
+    group: "Work",
+    purpose: "Checks that failed. Same defect across many visits is one row.",
+  },
+  {
+    id: "geography",
+    label: "By market",
+    group: "Compare",
+    purpose: "The same page from different cities. Quiet until they disagree.",
+  },
+  {
+    id: "coverage",
+    label: "Gaps",
+    group: "Compare",
+    purpose: "Cities and pages nobody has visited yet.",
+  },
+  {
+    id: "trends",
+    label: "Over time",
+    group: "Compare",
+    purpose: "Whether a number is getting better or worse. Needs several visits.",
+  },
+  {
+    id: "watch",
+    label: "Schedule",
+    group: "Setup",
+    purpose: "When to visit, from where. Off until you turn it on.",
+  },
+  {
+    id: "settings",
+    label: "This machine",
+    group: "Setup",
+    purpose: "What this install can do. Read-only — it reports the files a run already reads.",
+  },
 ];
 
 /**
- * `#/runs`, or `#/run/<id>` for a drill-down.
+ * `#/runs`, `#/run/<id>` for a finished visit, `#/live/<id>` for one on the board.
  *
- * A run detail is addressable rather than modal state, so a row can be linked to from a finding,
- * shared in a message, and survive a reload. A console whose deepest page has no URL is one
- * where "look at this run" means "click these four things".
+ * A live card must stay on Now. Sending it to `#/run/<id>` left the feed and
+ * opened a page that only knows the dashboard index — which is rebuilt after
+ * the sweep, so the visit you were watching said it did not exist.
  */
 const routeFromHash = (): Route => {
   const raw = window.location.hash.replace(/^#\/?/, "");
   const [head, ...rest] = raw.split("/");
   if (head === "run" && rest.length > 0) return { view: "runs", runId: rest.join("/") };
-  return { view: VIEWS.some((v) => v.id === head) ? (head as ViewId) : "overview" };
+  if (head === "live" && rest.length > 0) return { view: "live", liveId: rest.join("/") };
+  return { view: VIEWS.some((v) => v.id === head) ? (head as ViewId) : "runs" };
 };
 
 export function App(): JSX.Element {
@@ -69,6 +121,8 @@ export function App(): JSX.Element {
   /** Null when idle; a message while a rebuild is in flight or has just finished. */
   const [rebuilding, setRebuilding] = useState<string | null>(null);
   const [route, setRoute] = useState<Route>(routeFromHash);
+  /** Sessions currently on the live board — the badge that says something is on screen. */
+  const [liveCount, setLiveCount] = useState(0);
 
   useEffect(() => {
     const onHash = (): void => setRoute(routeFromHash());
@@ -114,6 +168,22 @@ export function App(): JSX.Element {
   }, []);
 
   useEffect(load, [load]);
+
+  useEffect(() => {
+    if (!servedWithSession) return;
+    let cancelled = false;
+    const poll = (): void => {
+      void getJson<{ inFlight: number }>("/api/live").then((result) => {
+        if (!cancelled && result.ok) setLiveCount(result.value.inFlight);
+      });
+    };
+    poll();
+    const timer = window.setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [servedWithSession]);
 
   /**
    * Rebuild, then re-read.
@@ -167,6 +237,7 @@ export function App(): JSX.Element {
   // that will make a reader open the view.
   const counts: Record<ViewId, number> = {
     overview: 0,
+    live: liveCount,
     runs: view.runs.length,
     // Distinct failing CHECKS, not total findings: the number somebody has to work through.
     findings: new Set(view.runs.flatMap((r) => r.findings.labels)).size,
@@ -174,28 +245,40 @@ export function App(): JSX.Element {
     coverage: view.site.coverageGaps.length,
     trends: view.trends.length,
     // No badge: a settings page has nothing a number could usefully say about it.
+    watch: 0,
     settings: 0,
   };
   const alerts: Record<string, boolean> = {
+    live: liveCount > 0,
     findings: view.runs.some((r) => r.findings.total > 0),
     geography: view.site.geographicallyDivergent.length > 0,
     coverage: view.site.coverageGaps.length > 0,
   };
 
-  const groups = [...new Set(VIEWS.map((v) => v.group))];
+  const rail = VIEWS.filter((v) => v.rail !== false);
+  const groups = [...new Set(rail.map((v) => v.group))];
   const current = VIEWS.find((v) => v.id === route.view);
+  const run = route.runId === undefined ? undefined : view.runs.find((r) => r.runId === route.runId);
 
   return (
     <div className="app">
       <div className="brand">
-        <Mark />
-        <span className="brand-name">
-          geo<b>qa</b>
-        </span>
+        <Logo />
       </div>
 
       <header className="bar">
-        <span className="bar-title">{route.runId === undefined ? current?.label : "Run"}</span>
+        <div className="bar-copy">
+          <span className="bar-title">
+            {run !== undefined ? run.journeyId : route.liveId !== undefined ? "LIVE" : (current?.label ?? "geoqa")}
+          </span>
+          <span className="bar-purpose">
+            {run !== undefined
+              ? "This one visit — what it did, the frames it kept, and whether we can trust it."
+              : route.liveId !== undefined
+                ? "Still on Now — the frame and the steps, as they happen."
+                : (current?.purpose ?? "")}
+          </span>
+        </div>
         <div className="bar-stats">
           <Stat k="runs" v={String(view.summary.total)} />
           <Stat k="confidence" v={view.summary.meanConfidence.text} />
@@ -227,7 +310,7 @@ export function App(): JSX.Element {
         {groups.map((group) => (
           <div key={group}>
             <div className="rail-group">{group}</div>
-            {VIEWS.filter((v) => v.group === group).map((v) => (
+            {rail.filter((v) => v.group === group).map((v) => (
               <a
                 key={v.id}
                 className="nav"
@@ -247,11 +330,13 @@ export function App(): JSX.Element {
       <main className="readout">
         {route.runId !== undefined && <RunDetail view={view} runId={route.runId} />}
         {route.runId === undefined && route.view === "overview" && <Overview view={view} />}
+        {route.runId === undefined && route.view === "live" && <Live selectedId={route.liveId} />}
         {route.runId === undefined && route.view === "runs" && <Runs view={view} />}
         {route.runId === undefined && route.view === "findings" && <Findings view={view} />}
         {route.runId === undefined && route.view === "geography" && <Geography view={view} />}
         {route.runId === undefined && route.view === "coverage" && <Coverage view={view} />}
         {route.runId === undefined && route.view === "trends" && <Trends view={view} />}
+        {route.runId === undefined && route.view === "watch" && <Watch />}
         {route.runId === undefined && route.view === "settings" && <Settings />}
       </main>
     </div>
@@ -267,21 +352,3 @@ function Stat({ k, v }: { k: string; v: string }): JSX.Element {
   );
 }
 
-/**
- * The mark: a fix on a grid.
- *
- * Drawn rather than an emoji or an image — it is four shapes, it inherits the signal colour, and
- * it stays crisp at any density. Square crosshair rather than a globe: this is an instrument
- * that takes a reading at a coordinate, and a globe icon would say "international" when the
- * product's actual claim is "measured from exactly here".
- */
-function Mark(): JSX.Element {
-  return (
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-      <rect x="1.5" y="1.5" width="19" height="19" stroke="var(--signal)" strokeWidth="1.25" opacity="0.5" />
-      <path d="M11 1.5v19M1.5 11h19" stroke="var(--signal)" strokeWidth="1" opacity="0.3" />
-      <rect x="7.5" y="7.5" width="7" height="7" stroke="var(--signal)" strokeWidth="1.25" opacity="0.7" />
-      <rect x="9.5" y="9.5" width="3" height="3" fill="var(--signal)" />
-    </svg>
-  );
-}

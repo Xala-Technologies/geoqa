@@ -1,0 +1,16 @@
+# Lillehammer on desktop, where a seasonal hero built for the whole country has the width to look like a homepage rather than a campaign.
+id: lillehammer-desktop
+label: Lillehammer, desktop
+market:
+  id: lillehammer
+  country: NO
+  city: Lillehammer
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [61.1153, 10.4662]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

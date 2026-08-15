@@ -122,7 +122,12 @@ const PROXY_SCHEMES = new Set(["http:", "https:", "socks:", "socks4:", "socks5:"
  * validates the SUBSTITUTED url — so a session id that cannot live inside a URL
  * refuses the run rather than quietly egressing from the wrong place.
  */
-function substituteProxyPlaceholders(url: string, market: Market, sessionId: string): string {
+function substituteProxyPlaceholders(
+  url: string,
+  market: Market,
+  sessionId: string,
+  sessionDurationMinutes = 10,
+): string {
   return url
     .replaceAll("{market}", market.id)
     .replaceAll("{country}", market.country.toUpperCase())
@@ -133,7 +138,8 @@ function substituteProxyPlaceholders(url: string, market: Market, sessionId: str
     // `newSessionId`, a market id with a hyphen, or a caller passing its own id would
     // otherwise reintroduce the silent truncation this cost a day to find. The vendor
     // parses the username as `-`-delimited parameters, so a hyphen inside a VALUE ends it.
-    .replaceAll("{session}", sessionId.replace(/-/g, ""));
+    .replaceAll("{session}", sessionId.replace(/-/g, ""))
+    .replaceAll("{sessionduration}", String(sessionDurationMinutes));
 }
 
 /**
@@ -168,7 +174,12 @@ function substituteProxyPlaceholders(url: string, market: Market, sessionId: str
  * Blank entries are dropped rather than treated as "direct": a trailing comma in
  * an env var must not silently produce an unrouted run wearing a proxy's name.
  */
-export function resolveProxyPool(market: Market, env: NodeJS.ProcessEnv, sessionId: string): string[] {
+export function resolveProxyPool(
+  market: Market,
+  env: NodeJS.ProcessEnv,
+  sessionId: string,
+  sessionDurationMinutes = 10,
+): string[] {
   const byMarket = env[`GEOQA_PROXY_${market.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`];
   const byCountry = env[`GEOQA_PROXY_${market.country.toUpperCase()}`];
   const configured = byMarket || byCountry || env.GEOQA_PROXY_TEMPLATE;
@@ -177,7 +188,7 @@ export function resolveProxyPool(market: Market, env: NodeJS.ProcessEnv, session
     .split(",")
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0)
-    .map((entry) => substituteProxyPlaceholders(entry, market, sessionId));
+    .map((entry) => substituteProxyPlaceholders(entry, market, sessionId, sessionDurationMinutes));
 }
 
 /**
@@ -204,8 +215,13 @@ export function selectFromPool(pool: string[], sessionId: string): string | null
   return elementAt(pool, (hash >>> 0) % pool.length);
 }
 
-export function resolveProxyUrl(market: Market, env: NodeJS.ProcessEnv, sessionId: string): string | null {
-  return selectFromPool(resolveProxyPool(market, env, sessionId), sessionId);
+export function resolveProxyUrl(
+  market: Market,
+  env: NodeJS.ProcessEnv,
+  sessionId: string,
+  sessionDurationMinutes = 10,
+): string | null {
+  return selectFromPool(resolveProxyPool(market, env, sessionId, sessionDurationMinutes), sessionId);
 }
 
 export interface ProviderOptions {
@@ -224,6 +240,13 @@ export interface ProviderOptions {
   proxyBypass?: string;
   /** Injectable id generator so sessions are deterministic in tests. */
   newSessionId?: (market: Market, nowMs: number) => string;
+  /**
+   * Sticky-session lifetime in minutes, substituted as `{sessionduration}`.
+   *
+   * Decodo's documented default is 10. A template that hardcodes
+   * `sesstime-15` is left alone — this only fills the placeholder.
+   */
+  sessionDurationMinutes?: number;
 }
 
 /**
@@ -303,6 +326,7 @@ export function httpProxyProvider(options: ProviderOptions = {}): GeoNetworkProv
   const probeTimeout = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   const newId = options.newSessionId ?? defaultSessionId;
   const name = "http-proxy";
+  const sessionDurationMinutes = resolveSessionDuration(options.sessionDurationMinutes, env);
 
   const cooldownUntil = (nowMs: number): number | null => {
     if (!options.cooldownPath) return null;
@@ -407,7 +431,7 @@ export function httpProxyProvider(options: ProviderOptions = {}): GeoNetworkProv
       // would claim a stickiness it never asked the vendor for, and the closing
       // egress re-read (invariant 16) would be diagnosing the wrong thing.
       const id = newId(market, nowMs);
-      const url = resolveProxyUrl(market, env, id);
+      const url = resolveProxyUrl(market, env, id, sessionDurationMinutes);
       if (!url) {
         return Promise.resolve({ ok: false, reason: `no proxy configured for market "${market.id}"` });
       }
@@ -453,6 +477,12 @@ export function noteProviderOutcome(
   const until = succeeded ? null : nowMs + (options.cooldownMs ?? DEFAULT_COOLDOWN_MS);
   recordCooldown(options.cooldownPath, providerName, until, nowMs);
 }
+
+const resolveSessionDuration = (asked: number | undefined, env: NodeJS.ProcessEnv): number => {
+  if (asked !== undefined && Number.isFinite(asked) && asked > 0) return Math.floor(asked);
+  const fromEnv = Number.parseInt(env.GEOQA_SESSION_DURATION ?? "", 10);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 10;
+};
 
 export type ProviderName = "direct" | "http-proxy";
 

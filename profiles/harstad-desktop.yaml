@@ -1,0 +1,16 @@
+# Harstad at desktop width — the northern city that is not Tromso, which is when a single Arctic edge makes a wide page stall on images the capital cached.
+id: harstad-desktop
+label: Harstad, desktop
+market:
+  id: harstad
+  country: NO
+  city: Harstad
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [68.7981, 16.5417]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

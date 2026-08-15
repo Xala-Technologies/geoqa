@@ -1,0 +1,16 @@
+# Skien on desktop, where a county-wide offer that assumed the Porsgrunn waterfront has the room to show the wrong skyline.
+id: skien-desktop
+label: Skien, desktop
+market:
+  id: skien
+  country: NO
+  city: Skien
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.2096, 9.6086]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

@@ -16,6 +16,7 @@
  * React app is a renderer; every judgement about what a number means happens on this side.
  */
 import type { RunRecord } from "../history/records.js";
+import type { EvidencePackage, EvidenceShot, EvidenceStep } from "../evidence/package.js";
 import { analyseSite, marketOf, type SiteReport } from "../analysis/site.js";
 import { findRegressions, summariseHistory, type Regression } from "../history/store.js";
 import { buildConfidenceSeries, buildSeries, notableTrends, type TrendSeries } from "./trends.js";
@@ -65,6 +66,9 @@ export interface RunView {
     agreement: string;
   };
   latency: Measured<number>;
+  /** The journey log from this run's `run.json`. Empty when that file is gone. */
+  steps: EvidenceStep[];
+  screenshots: EvidenceShot[];
 }
 
 /**
@@ -74,7 +78,7 @@ export interface RunView {
  * in this system, and a dashboard showing `0` there would tell a reader their site is
  * invisible in search when the truth is that nobody looked.
  */
-export function toRunView(record: RunRecord): RunView {
+export function toRunView(record: RunRecord, journey: EvidencePackage | null = null): RunView {
   return {
     runId: record.runId,
     target: record.target,
@@ -120,6 +124,8 @@ export function toRunView(record: RunRecord): RunView {
       agreement: record.geo.agreement,
     },
     latency: ms(record.latencyMs, "the identity endpoint was not reached"),
+    steps: journey?.steps ?? [],
+    screenshots: journey?.screenshots ?? [],
   };
 }
 
@@ -156,7 +162,12 @@ export interface DashboardView {
  * picture. `generatedAt` is passed in rather than read from the clock, because a view model
  * that stamps itself is not reproducible and its tests would depend on the time of day.
  */
-export function toDashboardView(records: RunRecord[], generatedAt: string, warnings: string[] = []): DashboardView {
+export function toDashboardView(
+  records: RunRecord[],
+  generatedAt: string,
+  warnings: string[] = [],
+  journeys: Record<string, EvidencePackage | null> = {},
+): DashboardView {
   const summary = summariseHistory(records);
   // Every trendable metric. `confidence` goes through its own builder because lower is
   // better for all the others and sharing the comparison would report a site whose readings
@@ -172,7 +183,7 @@ export function toDashboardView(records: RunRecord[], generatedAt: string, warni
     generatedAt,
     // Newest first: a dashboard is read from the top, and the most recent run is what
     // somebody opened it to see.
-    runs: [...records].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).map(toRunView),
+    runs: [...records].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).map((r) => toRunView(r, journeys[r.runId] ?? null)),
     trends: notableTrends(allTrends),
     allTrends,
     summary: {

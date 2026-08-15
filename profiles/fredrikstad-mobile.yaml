@@ -1,0 +1,22 @@
+# Ostfold's fortress town on the Glomma. A shipping-zone calculator that treats everything south of Oslo as Ostlandet fails the moment a Fredrikstad postcode wants a different depot.
+id: fredrikstad-mobile
+label: Fredrikstad, mobile
+market:
+  id: fredrikstad
+  country: NO
+  city: Fredrikstad
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.2181, 10.9298]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+  # A real mobile identity WITHOUT a device descriptor — see `oslo-mobile.yaml` for the
+  # measurement. `isMobile` is the only descriptor option that costs viewport control
+  # (980 vs 390 on a page with no viewport meta tag), and it is the one not set here.
+  userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  hasTouch: true
+  deviceScaleFactor: 3
+visitorType: anonymous

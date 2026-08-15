@@ -159,14 +159,14 @@ export function tenantEvidenceRoot(evidenceRoot: string, tenantId: string): Pars
  * QA runner and something that looks like distributed traffic aimed at whoever the
  * URL names.
  */
-export function tenantOwnsTarget(tenant: Tenant, url: string): boolean {
+export function tenantOwnsTarget(tenant: Tenant, url: string, extraTargets: string[] = []): boolean {
   let asked: URL;
   try {
     asked = new URL(url);
   } catch {
     return false;
   }
-  return tenant.targets.some((target) => {
+  return [...tenant.targets, ...extraTargets].some((target) => {
     try {
       const owned = new URL(target);
       // Origin covers scheme, host and port. An http target does not authorise https

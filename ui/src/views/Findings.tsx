@@ -89,7 +89,6 @@ export function Findings({ view }: { view: DashboardView }): JSX.Element {
   return (
     <>
       <div className="head">
-        <h2>Findings</h2>
         <p className="hint">
           Grouped by the check that produced them, because that is the unit somebody fixes. A
           check failing every time it runs and a check failing once are the same row in a run list

@@ -1,0 +1,16 @@
+# Haugesund on the wide layout — the west-coast city that is not Bergen and not Stavanger, which is exactly when a region dropdown shows the empty state.
+id: haugesund-desktop
+label: Haugesund, desktop
+market:
+  id: haugesund
+  country: NO
+  city: Haugesund
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.4138, 5.268]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

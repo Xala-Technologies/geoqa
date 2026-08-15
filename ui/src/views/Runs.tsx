@@ -1,109 +1,92 @@
 /**
- * Every run, filterable.
+ * Every visit, filterable, sortable, paged.
  *
  * The filters are the whole reason this is its own view: at 32 runs a table is readable, and at
  * 3,200 it is a wall. Filtering happens in memory over the loaded document — there is no server
- * to ask, by design ([R-147]).
+ * to ask, by design ([R-147]). Latest first is the opening order; a header click is the rest.
+ *
+ * The page title lives in the header bar. Repeating it here is the same word twice.
  */
 import { useMemo, useState, type JSX } from "react";
 import type { DashboardView, RunView } from "../types.ts";
 import { MeasuredValue, Verdict } from "../Measured.tsx";
-
-type SortKey = "startedAt" | "verdict" | "marketId" | "journeyId" | "lcp" | "ttfb" | "confidence" | "findings";
+import {
+  DEFAULT_PAGE_SIZE,
+  PAGE_SIZES,
+  deviceOf,
+  filterRuns,
+  nextSort,
+  pageRuns,
+  sortRuns,
+  type RunSortKey,
+} from "./run-list.ts";
 
 export function Runs({ view }: { view: DashboardView }): JSX.Element {
   const [q, setQ] = useState("");
   const [market, setMarket] = useState("");
   const [verdict, setVerdict] = useState("");
   const [journey, setJourney] = useState("");
-  const [sort, setSort] = useState<SortKey>("startedAt");
+  const [device, setDevice] = useState("");
+  const [sort, setSort] = useState<RunSortKey>("startedAt");
   const [desc, setDesc] = useState(true);
-
-  /**
-   * Sorting on a `Measured<number>` puts absences LAST in both directions.
-   *
-   * An unmeasured LCP is not a fast page and not a slow one. Sorting it as 0 would put every run
-   * the engine could not read at the top of "fastest", which is the conflation this entire
-   * application exists to refuse — at the exact moment somebody is looking for the fastest page.
-   */
-  const value = (r: RunView, key: SortKey): number | string | null => {
-    switch (key) {
-      case "lcp":
-        return r.vitals.lcp.measured ? r.vitals.lcp.value : null;
-      case "ttfb":
-        return r.vitals.ttfb.measured ? r.vitals.ttfb.value : null;
-      case "confidence":
-        return r.confidence.overall.measured ? r.confidence.overall.value : null;
-      case "findings":
-        return r.findings.total;
-      default:
-        return r[key];
-    }
-  };
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
   const markets = useMemo(() => [...new Set(view.runs.map((r) => r.marketId))].sort(), [view.runs]);
   const journeys = useMemo(() => [...new Set(view.runs.map((r) => r.journeyId))].sort(), [view.runs]);
   const verdicts = useMemo(() => [...new Set(view.runs.map((r) => r.verdict))].sort(), [view.runs]);
+  const devices = useMemo(() => [...new Set(view.runs.map((r) => deviceOf(r.profileId)))].sort(), [view.runs]);
 
-  const rows = view.runs
-    .filter(
-      (r) =>
-        (market === "" || r.marketId === market) &&
-        (verdict === "" || r.verdict === verdict) &&
-        (journey === "" || r.journeyId === journey) &&
-        (q === "" || `${r.target} ${r.runId} ${r.profileId}`.toLowerCase().includes(q.toLowerCase())),
-    )
-    .sort((a, b) => {
-      const av = value(a, sort);
-      const bv = value(b, sort);
-      // Absences last, whichever way the column is pointing.
-      if (av === null && bv === null) return 0;
-      if (av === null) return 1;
-      if (bv === null) return -1;
-      const cmp = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
-      return desc ? -cmp : cmp;
-    });
+  const filtered = filterRuns(view.runs, { q, market, verdict, journey, device });
+  const sorted = sortRuns(filtered, sort, desc);
+  const shown = pageRuns(sorted, page, pageSize);
 
-  /**
-   * Defined OUTSIDE the component, and that is not a style preference.
-   *
-   * `Th` was declared inside `Runs`, so React saw a new component type on every render and
-   * remounted the whole header. Clicking a column to sort descending and clicking it again to
-   * sort ascending did nothing the second time, because the node the click landed on had already
-   * been replaced. A component defined during render is a component that cannot hold state or
-   * receive a second event.
-   */
-  const onSort = (key: SortKey): void => {
-    if (key === sort) setDesc(!desc);
-    else {
-      setSort(key);
-      setDesc(true);
-    }
+  const tally = filtered.reduce(
+    (acc, r) => {
+      acc[r.verdict] = (acc[r.verdict] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+
+  const reset = (fn: () => void): void => {
+    fn();
+    setPage(0);
+  };
+
+  const onSort = (key: RunSortKey): void => {
+    const next = nextSort(sort, desc, key);
+    setSort(next.sort);
+    setDesc(next.desc);
+    setPage(0);
   };
 
   return (
     <>
       <div className="head">
-        <h2>Runs</h2>
         <p className="hint">
-          One row per run. <strong>ERROR</strong> is our instrumentation failing, not the page —
-          it carries its own tone and is excluded from every cross-market comparison.
+          {tally.PASS ?? 0} pass · {tally.FAIL ?? 0} fail · {tally.ERROR ?? 0} error
+          {tally.PASS_WITH_WARNINGS ? ` · ${tally.PASS_WITH_WARNINGS} warned` : ""}.{" "}
+          <strong>ERROR</strong> is our instrumentation, not the page — excluded from every
+          cross-market comparison. Observed city is the one that matters: a pass from the wrong
+          town is a geographic claim we could not keep.
         </p>
       </div>
 
       <div className="filters">
         <input
           type="search"
-          placeholder="filter by URL, run id or profile…"
+          placeholder="filter by URL, run id, profile or observed city…"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => reset(() => setQ(e.target.value))}
           aria-label="Filter runs"
         />
-        <Select value={market} onChange={setMarket} options={markets} all="all markets" />
-        <Select value={journey} onChange={setJourney} options={journeys} all="all journeys" />
-        <Select value={verdict} onChange={setVerdict} options={verdicts} all="all verdicts" />
+        <Select value={market} onChange={(v) => reset(() => setMarket(v))} options={markets} all="all markets" />
+        <Select value={device} onChange={(v) => reset(() => setDevice(v))} options={devices} all="all devices" />
+        <Select value={journey} onChange={(v) => reset(() => setJourney(v))} options={journeys} all="all journeys" />
+        <Select value={verdict} onChange={(v) => reset(() => setVerdict(v))} options={verdicts} all="all verdicts" />
         <span className="spacer">
-          {rows.length} / {view.runs.length}
+          {shown.total === 0 ? "0" : `${shown.from}–${shown.to}`} / {view.runs.length}
         </span>
       </div>
 
@@ -113,60 +96,120 @@ export function Runs({ view }: { view: DashboardView }): JSX.Element {
             <thead>
               <tr>
                 <Th sort={sort} desc={desc} onSort={onSort} k="verdict" label="Verdict" />
-                <Th sort={sort} desc={desc} onSort={onSort} k="startedAt" label="Started" />
-                <Th sort={sort} desc={desc} onSort={onSort} k="marketId" label="Market" />
+                <Th sort={sort} desc={desc} onSort={onSort} k="startedAt" label="When" />
+                <Th sort={sort} desc={desc} onSort={onSort} k="marketId" label="From" />
                 <Th sort={sort} desc={desc} onSort={onSort} k="journeyId" label="Journey" />
-                <th>Page</th>
+                <Th sort={sort} desc={desc} onSort={onSort} k="target" label="Page" />
+                <Th sort={sort} desc={desc} onSort={onSort} k="observed" label="Observed" />
                 <Th sort={sort} desc={desc} onSort={onSort} k="findings" label="Issues" num />
                 <Th sort={sort} desc={desc} onSort={onSort} k="lcp" label="LCP" num />
-                <th className="num">CLS</th>
-                <Th sort={sort} desc={desc} onSort={onSort} k="ttfb" label="TTFB" num />
-                <th className="num">INP</th>
+                <Th sort={sort} desc={desc} onSort={onSort} k="cls" label="CLS" num />
                 <Th sort={sort} desc={desc} onSort={onSort} k="confidence" label="Conf" num />
-                <th>Country</th>
-                <th>City</th>
+                <Th sort={sort} desc={desc} onSort={onSort} k="durationMs" label="Dur" num />
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {shown.rows.map((r) => (
                 <Row key={r.runId} r={r} />
               ))}
             </tbody>
           </table>
         </div>
-        {rows.length === 0 && (
+        {shown.total === 0 ? (
           <div className="empty">
             <strong>No run matches.</strong>
             Widen the filters — the data is loaded, nothing is being fetched.
           </div>
+        ) : (
+          <Pager
+            shown={shown}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={(n) => {
+              setPageSize(n);
+              setPage(0);
+            }}
+          />
         )}
       </div>
     </>
   );
 }
 
-/**
- * A row is a link to the run, not a dead cell.
- *
- * The whole row rather than an id column, because the question a reader has while scanning is
- * always "what happened in THAT one" — and a drill-down reachable only from a narrow link is a
- * drill-down most people never find.
- */
+function Pager({
+  shown,
+  pageSize,
+  onPage,
+  onPageSize,
+}: {
+  shown: { page: number; pages: number; from: number; to: number; total: number };
+  pageSize: number;
+  onPage: (n: number) => void;
+  onPageSize: (n: number) => void;
+}): JSX.Element {
+  return (
+    <div className="pager">
+      <span className="pager-pos">
+        {shown.from}–{shown.to} of {shown.total}
+      </span>
+      <div className="pager-nav">
+        <select
+          value={pageSize}
+          aria-label="Rows per page"
+          onChange={(e) => onPageSize(Number(e.target.value))}
+        >
+          {PAGE_SIZES.map((n) => (
+            <option key={n} value={n}>
+              {n} / page
+            </option>
+          ))}
+        </select>
+        <button className="btn btn-quiet" type="button" disabled={shown.page === 0} onClick={() => onPage(shown.page - 1)}>
+          Prev
+        </button>
+        <span className="pager-pos">
+          {shown.page + 1} / {shown.pages}
+        </span>
+        <button
+          className="btn btn-quiet"
+          type="button"
+          disabled={shown.page + 1 >= shown.pages}
+          onClick={() => onPage(shown.page + 1)}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Row({ r }: { r: RunView }): JSX.Element {
+  const firstLabel = r.findings.labels[0];
+  const cityOff = r.geo.city !== "match";
   return (
     <tr className="link" onClick={() => (window.location.hash = `#/run/${r.runId}`)} title={`open ${r.runId}`}>
       <td>
         <Verdict value={r.verdict} />
       </td>
       <td className="mono dim">{r.startedAt.slice(0, 19).replace("T", " ")}</td>
-      <td className="mono">{r.marketId}</td>
+      <td>
+        <span className="mono">{r.marketId}</span>
+        <span className="row-sub">{deviceOf(r.profileId)}</span>
+      </td>
       <td className="dim">{r.journeyId}</td>
       <td>
         <Page url={r.target} />
       </td>
+      <td>
+        <span className={cityOff ? "bad-num" : "measured"}>{r.geo.observed}</span>
+        <span className="row-sub">
+          asked {r.geo.requested}
+          {r.geo.egressHeld !== "match" ? ` · held ${r.geo.egressHeld}` : ""}
+        </span>
+      </td>
       <td className="num">
-        {/* Zero is not dimmed: "nothing wrong" is a real answer and deserves to read as one. */}
         <span className={r.findings.total > 0 ? "bad-num" : "measured"}>{r.findings.total}</span>
+        {firstLabel !== undefined ? <span className="row-sub">{firstLabel}</span> : null}
       </td>
       <td className="num">
         <MeasuredValue value={r.vitals.lcp} />
@@ -175,20 +218,9 @@ function Row({ r }: { r: RunView }): JSX.Element {
         <MeasuredValue value={r.vitals.cls} />
       </td>
       <td className="num">
-        <MeasuredValue value={r.vitals.ttfb} />
-      </td>
-      <td className="num">
-        <MeasuredValue value={r.vitals.inp} />
-      </td>
-      <td className="num">
         <MeasuredValue value={r.confidence.overall} />
       </td>
-      <td>
-        <Verdict value={r.geo.country} />
-      </td>
-      <td>
-        <Verdict value={r.geo.city} />
-      </td>
+      <td className="num mono dim">{(Math.round(r.durationMs / 100) / 10).toFixed(1)}s</td>
     </tr>
   );
 }
@@ -201,34 +233,24 @@ function Th({
   desc,
   onSort,
 }: {
-  k: SortKey;
+  k: RunSortKey;
   label: string;
   num?: boolean;
-  sort: SortKey;
+  sort: RunSortKey;
   desc: boolean;
-  onSort: (k: SortKey) => void;
+  onSort: (k: RunSortKey) => void;
 }): JSX.Element {
   const active = sort === k;
   return (
-    <th
-      className={num === true ? "num sortable" : "sortable"}
-      onClick={() => onSort(k)}
-      aria-sort={active ? (desc ? "descending" : "ascending") : "none"}
-    >
-      {label}
-      <span className="sort-mark">{active ? (desc ? "\u25BE" : "\u25B4") : ""}</span>
+    <th className={num === true ? "num sortable" : "sortable"} aria-sort={active ? (desc ? "descending" : "ascending") : "none"}>
+      <button type="button" onClick={() => onSort(k)}>
+        {label}
+        <span className="sort-mark">{active ? (desc ? "\u25BE" : "\u25B4") : "\u2195"}</span>
+      </button>
     </th>
   );
 }
 
-/**
- * A URL shown without its scheme.
- *
- * Every target in this table is http(s), so the prefix is eight characters of noise repeated on
- * every row — and it pushes the one column that identifies a row off the side of a wide table.
- * The full URL stays in the title, because a shortened identifier a reader cannot recover is a
- * different problem from a long one.
- */
 function Page({ url }: { url: string }): JSX.Element {
   return (
     <span className="dim" title={url}>

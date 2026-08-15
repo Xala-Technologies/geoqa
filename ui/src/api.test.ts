@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getJson, postJson, signIn, signOut } from "./api.ts";
+import { getJson, postJson, sendJson, signIn, signOut } from "./api.ts";
 
 /** A `Response` with only the parts this module touches. */
 const response = (init: { status: number; body?: unknown; text?: string }): Response =>
@@ -181,5 +181,43 @@ describe("postJson — the verb is the safety property", () => {
     stubFetch(() => Promise.reject(new TypeError("Failed to fetch")));
     const result = await postJson("/api/dashboard/rebuild");
     expect(result.ok === false && result.signedOut === false && result.error).toContain("could not reach the server");
+  });
+});
+
+describe("sendJson — a body, and a verb the caller chose", () => {
+  it("PUTs a JSON body and returns the value", async () => {
+    const calls: RequestInit[] = [];
+    stubFetch((_url, init) => {
+      calls.push(init ?? {});
+      return Promise.resolve(response({ status: 200, body: { enabled: true } }));
+    });
+    const result = await sendJson<{ enabled: boolean }>("/api/watch", "PUT", { enabled: true });
+    expect(result).toEqual({ ok: true, value: { enabled: true } });
+    expect(calls[0]?.method).toBe("PUT");
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({ enabled: true });
+  });
+
+  it("omits the body when the caller did not supply one", async () => {
+    const calls: RequestInit[] = [];
+    stubFetch((_url, init) => {
+      calls.push(init ?? {});
+      return Promise.resolve(response({ status: 200, body: { started: true } }));
+    });
+    await sendJson("/api/watch/start", "POST");
+    expect(calls[0]?.body).toBeUndefined();
+  });
+
+  it("reports 401 as signed out, a refusal as the server's words, and a transport failure as itself", async () => {
+    stubFetch(() => Promise.resolve(response({ status: 401, body: { error: "not signed in" } })));
+    expect(await sendJson("/api/watch", "PUT", {})).toEqual({ ok: false, signedOut: true });
+    stubFetch(() => Promise.resolve(response({ status: 409, body: { error: "a sweep is already in flight" } })));
+    const refused = await sendJson("/api/watch/start", "POST");
+    expect(refused.ok === false && refused.signedOut === false && refused.error).toContain("in flight");
+    stubFetch(() => Promise.resolve(response({ status: 200, text: "<html>" })));
+    const html = await sendJson("/api/watch", "GET");
+    expect(html.ok === false && html.signedOut === false && html.error).toContain("not JSON");
+    stubFetch(() => Promise.reject(new TypeError("Failed to fetch")));
+    const down = await sendJson("/api/watch", "GET");
+    expect(down.ok === false && down.signedOut === false && down.error).toContain("could not reach the server");
   });
 });

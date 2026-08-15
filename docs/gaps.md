@@ -228,12 +228,24 @@ Still open, and each is a different kind of open:
   browser context and, on agent-browser, a whole Chrome. `MatrixResult.concurrency`
   records both the limit and the peak actually reached, so the number EXP-007 needs
   is being collected while the guess stands.
-- **Nothing schedules it on a clock.** `geoqa matrix run` is a command a human
-  types. 16 profiles × 6 journeys is **96 scenarios**, and at human pacing
-  ([R-58](prd.md#behaving-like-a-visitor)) that is an overnight job — which is
-  exactly the shape that wants a scheduler and a self-hosted runner on the office
-  connection (`infra/README.md`: a CI runner is in a datacentre and silently loses
-  the Norwegian egress).
+- **CLOSED: the server can schedule it.** `src/watch/` is the operator surface —
+  a YAML spec under `tenants/<id>/watch.yaml`, a pure `decideTick`, and a live
+  board. `geoqa server` ticks it every five seconds and launches `matrixRun`
+  when due. Periodic measures from the last start; continuous from the last
+  finish. Continuous samples the coverage matrix through a persisted cursor
+  (`maxConcurrent`, default 2) instead of launching the cartesian product
+  every tick. Periodic still runs the selected axes in full — the operator
+  named that subset on purpose. Each sweep mints new run ids, which become
+  new proxy session ids, so the residential pool rotates the exit. The
+  console Watch view writes the spec; Live shows frames while sessions are
+  in flight. `geoqa run --json` streams one event per line (`observedIp`,
+  `liveUrl`, `confidence`) for an external console; it calls `journeyRun`,
+  it is not a second runtime.
+  Residue: there is still no Temporal cron and no durable schedule. A process
+  that dies mid-sweep loses the in-flight board (the evidence packages remain).
+  The last start and last finish are persisted under the evidence root, so a
+  restart does not look like a first sweep. The CLI `matrix run` is unchanged
+  — a human can still type the command.
 - **On Playwright, N concurrent scenarios launch N browsers.** `buildRuntime`
   opens one browser per run, so the per-context proxy that made concurrency
   possible is not yet being spent on sharing one browser. That is where the real

@@ -14,6 +14,7 @@
  */
 import { useState, type FormEvent, type JSX } from "react";
 import { signIn } from "./api.ts";
+import { Logo } from "./Logo.tsx";
 
 export function Login({ onSignedIn }: { onSignedIn: () => void }): JSX.Element {
   const [user, setUser] = useState("admin");
@@ -43,7 +44,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }): JSX.Element {
     <div className="signin">
       <form className="signin-card" onSubmit={submit}>
         <div className="signin-brand">
-          geo<b>qa</b>
+          <Logo size={36} lockup />
         </div>
         <p className="signin-lede">
           Geographic QA console. Every reading behind this screen was taken from inside the market it claims.

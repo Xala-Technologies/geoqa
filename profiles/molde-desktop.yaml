@@ -1,0 +1,16 @@
+# Molde on the wide layout, so a west-coast weather or festival module keyed on Trondheim has somewhere to show the wrong fjord.
+id: molde-desktop
+label: Molde, desktop
+market:
+  id: molde
+  country: NO
+  city: Molde
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [62.7372, 7.1607]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

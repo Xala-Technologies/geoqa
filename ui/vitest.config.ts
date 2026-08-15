@@ -18,7 +18,7 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     coverage: {
       provider: "v8",
-      include: ["src/api.ts"],
+      include: ["src/api.ts", "src/views/run-list.ts"],
       /**
        * 100% across the board, matching the engine's gate.
        *

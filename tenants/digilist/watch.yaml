@@ -1,0 +1,49 @@
+# Operator-controlled watch. The console writes this file; do not put credentials here.
+# Markets must be ones the tenant listed. A writes journey needs allowWrites: true.
+tenantId: digilist
+enabled: false
+mode: continuous
+everyMinutes: 30
+restSeconds: 60
+markets:
+  - oslo
+  - bergen
+  - trondheim
+  - stavanger
+  - tromso
+  - svolvaer
+  - drammen
+  - fredrikstad
+  - sandnes
+  - skien
+  - tonsberg
+  - haugesund
+  - sandefjord
+  - arendal
+  - kristiansand
+  - alesund
+  - bodo
+  - porsgrunn
+  - lillehammer
+  - harstad
+  - alta
+  - narvik
+  - kongsberg
+  - hamar
+  - sarpsborg
+  - molde
+devices:
+  - mobile
+  - desktop
+journeys:
+  - landing-page
+  - browse
+  - returning-visitor
+  - search
+targets:
+  - https://digilist.no
+  - https://app.digilist.no
+  - https://dev.digilist.no
+  - https://xala.no
+maxConcurrent: 2
+allowWrites: true

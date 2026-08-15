@@ -214,6 +214,14 @@ describe("tenantOwnsTarget", () => {
     expect(tenantOwnsTarget(tenant(), "not a url")).toBe(false);
   });
 
+  it("accepts an extra origin the operator added on a watch, without rewriting the tenant file", () => {
+    // The console writes watch.yaml, not tenants/digilist.yaml. Ownership must
+    // see both lists or a URL added in the UI is refused the moment a sweep starts.
+    const t = tenant({ targets: ["https://acme.example"] });
+    expect(tenantOwnsTarget(t, "https://app.acme.example/")).toBe(false);
+    expect(tenantOwnsTarget(t, "https://app.acme.example/", ["https://app.acme.example"])).toBe(true);
+  });
+
   it("ignores an unparseable entry in the allowlist rather than failing open", () => {
     // A malformed target must not authorise everything, and must not crash a run.
     const t = tenant({ targets: ["::::", "https://acme.example"] });
@@ -228,7 +236,8 @@ describe("loadTenant", () => {
     if (!loaded.ok) throw new Error(loaded.errors.join("\n"));
     expect(loaded.value.id).toBe("digilist");
     expect(loaded.value.markets).toContain("oslo");
-    expect(loaded.value.targets).toEqual(["https://digilist.no"]);
+    expect(loaded.value.targets).toContain("https://digilist.no");
+    expect(loaded.value.targets).toContain("https://xala.no");
     // A NAME or null, never a value. A tenant file that held a secret would be the
     // .env mistake moved somewhere with worse odds.
     expect(loaded.value.proxyCredentials).toBeNull();

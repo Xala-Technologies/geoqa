@@ -1,0 +1,16 @@
+# Kongsberg on the wide layout, where a jobs or campus map pinned on Oslo has the room to miss the town that is actually hiring.
+id: kongsberg-desktop
+label: Kongsberg, desktop
+market:
+  id: kongsberg
+  country: NO
+  city: Kongsberg
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.6686, 9.6502]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

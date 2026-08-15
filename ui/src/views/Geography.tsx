@@ -13,7 +13,6 @@ export function Geography({ view }: { view: DashboardView }): JSX.Element {
   return (
     <>
       <div className="head">
-        <h2>Geography</h2>
         <p className="hint">
           The same page, measured from inside each market. A latency spread is not a slow site — it
           is a site that is slow <em>somewhere</em>, which is a different problem with a different fix.

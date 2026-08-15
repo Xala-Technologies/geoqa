@@ -71,6 +71,34 @@ export async function postJson<T>(path: string): Promise<ApiResult<T>> {
   }
 }
 
+/**
+ * Send JSON with an explicit method and an optional body.
+ *
+ * Separate from `postJson` because the watch endpoints take a body, and a
+ * POST that cannot say what to add is not a POST that can add a target.
+ */
+export async function sendJson<T>(path: string, method: string, body?: unknown): Promise<ApiResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method,
+      credentials: "same-origin",
+      ...(body === undefined
+        ? {}
+        : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    });
+  } catch (cause) {
+    return { ok: false, signedOut: false, error: `could not reach the server: ${String(cause)}` };
+  }
+  if (response.status === 401) return { ok: false, signedOut: true };
+  if (!response.ok) return { ok: false, signedOut: false, error: await reasonFrom(response) };
+  try {
+    return { ok: true, value: (await response.json()) as T };
+  } catch {
+    return { ok: false, signedOut: false, error: `${path} answered with something that is not JSON` };
+  }
+}
+
 /** Sign in. Returns the session, a rejection, or a transport failure. */
 export async function signIn(user: string, password: string): Promise<ApiResult<{ user: string; expiresAt: number }>> {
   let response: Response;

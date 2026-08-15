@@ -152,6 +152,22 @@ export interface MatrixOptions {
    * only the returned array is diffable.
    */
   onScenario?: (outcome: MatrixScenarioResult) => void;
+  /**
+   * Fires when a scenario is about to be planned, before the browser opens.
+   *
+   * The live board needs to show a session the moment it is claimed, not the
+   * moment it finishes — `onScenario` is completion order and is too late for
+   * screening.
+   */
+  onStart?: (scenario: MatrixScenario) => void;
+  /**
+   * Run these instead of expanding `axes`.
+   *
+   * Continuous sampling walks a cursor through the cartesian product and
+   * hands a slice here. Expanding `axes` from that slice would re-form the
+   * rectangle and launch combinations the cursor had not reached.
+   */
+  scenarios?: MatrixScenario[];
 }
 
 /**
@@ -227,7 +243,7 @@ export async function runMatrix(options: MatrixOptions): Promise<MatrixResult> {
   const now = options.now ?? Date.now;
   const run = options.run ?? executeRun;
   const limit = resolveConcurrency(options.concurrency);
-  const scenarios = expandMatrix(options.axes);
+  const scenarios = options.scenarios ?? expandMatrix(options.axes);
   const startedMs = now();
 
   /**
@@ -240,6 +256,7 @@ export async function runMatrix(options: MatrixOptions): Promise<MatrixResult> {
   const attempt = async (scenario: MatrixScenario): Promise<MatrixScenarioResult> => {
     const scenarioStartedMs = now();
     const startedAt = new Date(scenarioStartedMs).toISOString();
+    options.onStart?.(scenario);
     try {
       const result = await run(await options.plan(scenario));
       return {

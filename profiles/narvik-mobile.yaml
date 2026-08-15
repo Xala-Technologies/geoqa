@@ -1,0 +1,22 @@
+# Ofotfjord, the iron-ore port. A Swedish-border town on the Ofoten line — the place a geo-redirect keyed on proximity to Sweden fires inside Norway.
+id: narvik-mobile
+label: Narvik, mobile
+market:
+  id: narvik
+  country: NO
+  city: Narvik
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [68.4384, 17.4272]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+  # A real mobile identity WITHOUT a device descriptor — see `oslo-mobile.yaml` for the
+  # measurement. `isMobile` is the only descriptor option that costs viewport control
+  # (980 vs 390 on a page with no viewport meta tag), and it is the one not set here.
+  userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  hasTouch: true
+  deviceScaleFactor: 3
+visitorType: anonymous

@@ -68,6 +68,21 @@ function isNegativeVisibility(outcome: ExecOutcome<unknown>): boolean {
 /** How long to settle before re-checking an element that appeared absent. */
 export const DEFAULT_ABSENCE_SETTLE_MS = 600;
 
+/**
+ * Darwin `sockaddr_un` is 104 bytes including NUL. macOS `$TMPDIR` is already
+ * `/var/folders/…/T/` (~49). A matrix run id
+ * `run_<ms>_alesund-desktop-browse-0` made the socket 107, and Live recorded
+ * ERROR before the page opened — every screenshot, viewport and navigation
+ * failed as "session name too long". `/tmp/geoqa-ab` leaves room for the
+ * longest current slug (`kristiansand-desktop-returning-visitor-430`).
+ */
+export const DEFAULT_AGENT_BROWSER_SOCKET_DIR = "/tmp/geoqa-ab";
+
+export function withAgentBrowserSocketDir(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (env.AGENT_BROWSER_SOCKET_DIR) return env;
+  return { ...env, AGENT_BROWSER_SOCKET_DIR: DEFAULT_AGENT_BROWSER_SOCKET_DIR };
+}
+
 /** Injectable transport, so the adapter is testable without a browser. */
 export type ExecFn = (args: string[], env: NodeJS.ProcessEnv) => Promise<ExecOutcome<unknown>>;
 
@@ -111,7 +126,7 @@ export class AgentBrowserRuntime implements BrowserRuntime {
     // The session's env wins: `TZ` is the only mechanism that actually moves
     // the browser's clock (measured in EXP-000 — `--args --lang` does not work,
     // `TZ` does), so a profile must be able to override an ambient value.
-    this.env = { ...(options.env ?? process.env), ...(config.env ?? {}) };
+    this.env = withAgentBrowserSocketDir({ ...(options.env ?? process.env), ...(config.env ?? {}) });
     this.absenceSettleMs = options.absenceSettleMs ?? DEFAULT_ABSENCE_SETTLE_MS;
     this.exec =
       options.exec ??

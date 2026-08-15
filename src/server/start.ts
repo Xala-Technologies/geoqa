@@ -11,7 +11,7 @@
 import path from "node:path";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { hashPassword, readAuthConfig } from "./auth.js";
+import { hashPassword, readAuthConfig, TOKEN_ENV } from "./auth.js";
 import { assetReader, createGeoqaServer } from "./listen.js";
 import { buildSettings } from "./settings.js";
 import { loadTenant } from "../tenant/registry.js";
@@ -19,6 +19,9 @@ import { loadJourney } from "../journeys/spec.js";
 import { loadConfig, configPath } from "../config/load.js";
 import { dashboardBuild } from "../cli/commands.js";
 import { nodeHistoryFs } from "../history/store.js";
+import { attachWatch } from "./watch-loop.js";
+import { watchableMarkets } from "../watch/store.js";
+import { loadEvidencePackage, loadEvidenceShot, type PackageFs } from "../evidence/package.js";
 
 export interface StartOptions {
   repoRoot: string;
@@ -31,6 +34,13 @@ export interface StartOptions {
   secure: boolean;
   log: (line: string) => void;
 }
+
+const nodePackageFs: PackageFs = {
+  readText: (p) => readFileSync(p, "utf8"),
+  exists: existsSync,
+  list: (dir) => (existsSync(dir) ? readdirSync(dir) : []),
+  readBytes: (p) => readFileSync(p),
+};
 
 /** Every journey on disk, with what a caller must supply to run it. */
 function journeys(repoRoot: string): { id: string; title: string; writes: boolean; requiredVars: string[] }[] {
@@ -60,6 +70,26 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
   if (!loaded.ok) return { ok: false, error: loaded.errors.join("\n") };
 
   const markets = marketsOnDisk(options.repoRoot);
+  const tenants = tenantsOnDisk(options.repoRoot);
+  const listedJourneys = journeys(options.repoRoot);
+  const tenant = tenants[0];
+  const watch =
+    tenant === undefined
+      ? null
+      : attachWatch({
+          repoRoot: options.repoRoot,
+          evidenceRoot: options.evidenceRoot,
+          tenant,
+          markets: watchableMarkets(tenant.markets, markets),
+          journeys: listedJourneys,
+          config: loaded.value.config,
+          env: options.env,
+          log: options.log,
+          now: Date.now,
+          rebuild: () => {
+            dashboardBuild({ evidenceRoot: options.evidenceRoot, historyFs: nodeHistoryFs, now: Date.now });
+          },
+        });
   const server = createGeoqaServer({
     auth: auth.config,
     now: Date.now,
@@ -80,11 +110,14 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
       const { view } = dashboardBuild({ evidenceRoot: options.evidenceRoot, historyFs: nodeHistoryFs, now: Date.now });
       return { generatedAt: view.generatedAt, total: view.summary.total, warnings: view.warnings };
     },
+    evidence: (runId) => loadEvidencePackage(options.evidenceRoot, runId, nodePackageFs),
+    evidenceShot: (runId, label) => loadEvidenceShot(options.evidenceRoot, runId, label, nodePackageFs),
+    ...(watch !== null ? { control: watch.control } : {}),
     settings: () =>
       buildSettings({
-        tenants: tenantsOnDisk(options.repoRoot),
+        tenants,
         markets,
-        journeys: journeys(options.repoRoot),
+        journeys: listedJourneys,
         config: loaded.value.config,
         // Which file is in force, said out loud. A run on defaults because the file sits one
         // directory up otherwise looks identical to a run that honoured it.
@@ -98,8 +131,17 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
     options.log(`geoqa server on http://127.0.0.1:${options.port}`);
     options.log(`  serving ${options.uiRoot}`);
     options.log(`  evidence ${options.evidenceRoot}`);
+    if (tenant === undefined) {
+      options.log("  watch: no tenant on disk — Watch and Live are unavailable");
+    }
   });
-  return { ok: true, close: () => server.close() };
+  return {
+    ok: true,
+    close: () => {
+      watch?.stop();
+      server.close();
+    },
+  };
 }
 
 /**
@@ -146,6 +188,10 @@ export function renderHash(password: string): string {
     "And a signing secret for session cookies:",
     "",
     `  export GEOQA_SESSION_SECRET='${randomSecret()}'`,
+    "",
+    "Optional, for machine clients (Authorization: Bearer …). Cookie sign-in works without it:",
+    "",
+    `  export ${TOKEN_ENV}='${randomSecret()}'`,
   ].join("\n");
 }
 

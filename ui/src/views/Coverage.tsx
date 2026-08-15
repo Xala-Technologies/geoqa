@@ -22,7 +22,6 @@ export function Coverage({ view }: { view: DashboardView }): JSX.Element {
   return (
     <>
       <div className="head">
-        <h2>Coverage</h2>
         <p className="hint">
           Which pages were measured in which markets. An empty cell is not a passing cell: a page
           nobody measured in a market is not a page that works there, and a report that showed only

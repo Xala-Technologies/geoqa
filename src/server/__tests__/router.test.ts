@@ -28,6 +28,8 @@ const withSession = (d: RouterDeps, user = "admin"): Record<string, string> => (
   cookie: `geoqa_session=${signSession({ user, expiresAt: d.now() + 10_000 }, SECRET)}`,
 });
 
+const asText = (body: string | Buffer): string => (typeof body === "string" ? body : body.toString("utf8"));
+
 describe("authentication", () => {
   it("signs in with the right password and sets an HttpOnly cookie", () => {
     const d = deps();
@@ -41,8 +43,8 @@ describe("authentication", () => {
     // Distinguishing "no such user" from "wrong password" is a user enumeration oracle.
     const out = route(req({ method: "POST", path: "/api/session", body: JSON.stringify({ user: "nobody", password: "wrong" }) }), deps());
     expect(out.status).toBe(401);
-    expect(out.body).toContain("sign-in failed");
-    expect(out.body).not.toContain("password");
+    expect(asText(out.body)).toContain("sign-in failed");
+    expect(asText(out.body)).not.toContain("password");
     expect(out.headers["set-cookie"]).toBeUndefined();
   });
 
@@ -100,7 +102,7 @@ describe("the dashboard's data is protected like every other reading", () => {
     const d = deps({ dashboard: () => null });
     const out = route(req({ path: "/dashboard.json", headers: withSession(d) }), d);
     expect(out.status).toBe(404);
-    expect(JSON.parse(out.body).error).toContain("dashboard build");
+    expect(JSON.parse(asText(out.body)).error).toContain("dashboard build");
   });
 });
 
@@ -124,7 +126,7 @@ describe("rebuilding the dashboard from the console", () => {
     const d = deps();
     const out = route(req({ path: "/api/dashboard/rebuild", method: "POST", headers: withSession(d) }), d);
     expect(out.status).toBe(200);
-    expect(JSON.parse(out.body)).toEqual({ generatedAt: "2026-08-14T10:00:00.000Z", total: 3, warnings: [] });
+    expect(JSON.parse(asText(out.body))).toEqual({ generatedAt: "2026-08-14T10:00:00.000Z", total: 3, warnings: [] });
   });
 
   it("passes the builder's warnings through rather than swallowing them", () => {
@@ -132,14 +134,14 @@ describe("rebuilding the dashboard from the console", () => {
     // it is the one thing the reader must see to know the number is not the whole story.
     const d = deps({ rebuild: () => ({ generatedAt: "2026-08-14T10:00:00.000Z", total: 0, warnings: ["4 unparseable index line(s) skipped"] }) });
     const out = route(req({ path: "/api/dashboard/rebuild", method: "POST", headers: withSession(d) }), d);
-    expect(JSON.parse(out.body).warnings).toEqual(["4 unparseable index line(s) skipped"]);
+    expect(JSON.parse(asText(out.body)).warnings).toEqual(["4 unparseable index line(s) skipped"]);
   });
 });
 
 describe("default deny", () => {
   it("REFUSES every API route without a session", () => {
     const d = deps();
-    for (const path of ["/api/settings", "/api/whoami", "/api/anything"]) {
+    for (const path of ["/api/settings", "/api/whoami", "/api/watch", "/api/live", "/api/run", "/api/evidence/run_1", "/api/anything"]) {
       const out = route(req({ path }), d);
       expect(out.status, path).toBe(401);
     }
@@ -149,7 +151,7 @@ describe("default deny", () => {
     const d = deps();
     const out = route(req({ path: "/api/settings", headers: withSession(d) }), d);
     expect(out.status).toBe(200);
-    expect(JSON.parse(out.body)).toEqual({ tenants: [] });
+    expect(JSON.parse(asText(out.body))).toEqual({ tenants: [] });
   });
 
   it("404s an unknown API route rather than falling through to a file", () => {
@@ -169,7 +171,7 @@ describe("default deny", () => {
     for (const path of ["/", "/runs", "/login", "/settings"]) {
       const out = route(req({ path }), deps());
       expect(out.status, path).toBe(200);
-      expect(out.body, path).toContain("app");
+      expect(asText(out.body), path).toContain("app");
     }
   });
 
@@ -218,12 +220,24 @@ describe("static assets", () => {
     const d = deps();
     const out = route(req({ path: "/findings", headers: withSession(d) }), d);
     expect(out.status).toBe(200);
-    expect(out.body).toContain("app");
+    expect(asText(out.body)).toContain("app");
   });
 
   it("404s a missing file instead of throwing", () => {
     const d = deps({ readAsset: () => null });
     expect(route(req({ path: "/missing.css", headers: withSession(d) }), d).status).toBe(404);
+  });
+
+  it("passes a PNG through as bytes, not as utf-8 text", () => {
+    // A favicon decoded as utf-8 is how a tab icon becomes noise while the SVG next to it
+    // looks fine. The reader hands back a Buffer; this route must not stringify it.
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const d = deps({ readAsset: (p) => (p === "/favicon.png" ? { body: png, type: "image/png" } : null) });
+    const out = route(req({ path: "/favicon.png" }), d);
+    expect(out.status).toBe(200);
+    expect(out.headers["content-type"]).toBe("image/png");
+    expect(Buffer.isBuffer(out.body)).toBe(true);
+    expect(out.body).toEqual(png);
   });
 
   it("never caches the data or the document, and does cache fingerprinted assets", () => {
@@ -240,7 +254,97 @@ describe("static assets", () => {
     const out = route(req({ path: "/", headers: withSession(d) }), d);
     expect(out.headers["content-security-policy"]).toContain("default-src 'self'");
     expect(out.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    // Frames load as data URLs (the session cookie is on the JSON fetch, not
+    // on <img src>). default-src 'self' alone blocks those, so the visit page
+    // showed a broken icon next to a complete step log.
+    expect(out.headers["content-security-policy"]).toContain("img-src 'self' data:");
     expect(out.headers["x-content-type-options"]).toBe("nosniff");
+  });
+});
+
+describe("watch and live, behind the same session as every other reading", () => {
+  it("404s with a reason when the console has no control plane", () => {
+    const d = deps();
+    const out = route(req({ path: "/api/watch", headers: withSession(d) }), d);
+    expect(out.status).toBe(404);
+    expect(JSON.parse(asText(out.body)).error).toContain("geoqa server");
+  });
+
+  it("serves the watch when a control plane is wired", () => {
+    const d = deps({
+      control: {
+        watch: () => ({ enabled: true }),
+        saveWatch: () => ({ ok: true, value: { enabled: true } }),
+        addTarget: () => ({ ok: true, value: {} }),
+        removeTarget: () => ({ ok: true, value: {} }),
+        startNow: () => ({ ok: true, value: { started: true } }),
+        live: () => ({ sessions: [] }),
+        liveFrame: () => null,
+        liveSession: () => null,
+        runNow: () => ({ ok: true, value: { started: true } }),
+        runStatus: () => ({ inFlight: 0, events: [] }),
+      },
+    });
+    const out = route(req({ path: "/api/watch", headers: withSession(d) }), d);
+    expect(out.status).toBe(200);
+    expect(JSON.parse(asText(out.body))).toEqual({ enabled: true });
+    const run = route(req({ path: "/api/run", headers: withSession(d) }), d);
+    expect(run.status).toBe(200);
+  });
+
+  it("accepts a bearer token when one is configured, so a machine client does not need a cookie", () => {
+    const token = "t".repeat(32);
+    const d = deps({
+      auth: { passwordHash: hashPassword(PASSWORD), secret: SECRET, apiToken: token },
+      control: {
+        watch: () => ({ enabled: false }),
+        saveWatch: () => ({ ok: true, value: {} }),
+        addTarget: () => ({ ok: true, value: {} }),
+        removeTarget: () => ({ ok: true, value: {} }),
+        startNow: () => ({ ok: true, value: {} }),
+        live: () => ({ sessions: [] }),
+        liveFrame: () => null,
+        liveSession: () => null,
+        runNow: () => ({ ok: true, value: { started: true } }),
+        runStatus: () => ({ inFlight: 0, events: [] }),
+      },
+    });
+    const out = route(req({ path: "/api/run", headers: { authorization: `Bearer ${token}` } }), d);
+    expect(out.status).toBe(200);
+    expect(route(req({ path: "/api/run", headers: { authorization: "Bearer wrong-token-is-not-long-enough" } }), d).status).toBe(401);
+  });
+});
+
+describe("evidence for one run", () => {
+  it("404s with a reason when nothing can read the evidence tree", () => {
+    const d = deps();
+    const out = route(req({ path: "/api/evidence/run_1_bergen-mobile", headers: withSession(d) }), d);
+    expect(out.status).toBe(404);
+    expect(JSON.parse(asText(out.body)).error).toContain("not available on this console");
+  });
+
+  it("serves the step log for a run, and a screenshot as bytes", () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const d = deps({
+      evidence: (runId) =>
+        runId === "run_1_bergen-mobile"
+          ? { ok: true, value: { runId, steps: [{ action: "click", detail: "click #go ok" }], screenshots: [{ label: "landing", present: true }] } }
+          : { ok: false, error: "no evidence package for this run" },
+      evidenceShot: (runId, label) => (runId === "run_1_bergen-mobile" && label === "landing" ? { body: png, type: "image/png" } : null),
+    });
+    const pack = route(req({ path: "/api/evidence/run_1_bergen-mobile", headers: withSession(d) }), d);
+    expect(pack.status).toBe(200);
+    expect(JSON.parse(asText(pack.body)).steps[0].detail).toBe("click #go ok");
+
+    const missing = route(req({ path: "/api/evidence/run_nope", headers: withSession(d) }), d);
+    expect(missing.status).toBe(404);
+
+    const shot = route(req({ path: "/api/evidence/run_1_bergen-mobile/shot/landing", headers: withSession(d) }), d);
+    expect(shot.status).toBe(200);
+    expect(JSON.parse(asText(shot.body))).toEqual({ mime: "image/png", data: png.toString("base64") });
+
+    const noShot = route(req({ path: "/api/evidence/run_1_bergen-mobile/shot/secret", headers: withSession(d) }), d);
+    expect(noShot.status).toBe(404);
   });
 });
 
@@ -248,6 +352,6 @@ describe("whoami", () => {
   it("reports the signed-in user and when the session ends", () => {
     const d = deps();
     const out = route(req({ path: "/api/whoami", headers: withSession(d, "ada") }), d);
-    expect(JSON.parse(out.body)).toMatchObject({ user: "ada" });
+    expect(JSON.parse(asText(out.body))).toMatchObject({ user: "ada" });
   });
 });

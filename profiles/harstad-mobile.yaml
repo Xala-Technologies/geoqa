@@ -1,0 +1,22 @@
+# South Troms, not Tromso. Two northern cities 300km apart; a CDN that has one North Norway POP treats them as the same visitor and this is where the latency gap shows.
+id: harstad-mobile
+label: Harstad, mobile
+market:
+  id: harstad
+  country: NO
+  city: Harstad
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [68.7981, 16.5417]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+  # A real mobile identity WITHOUT a device descriptor — see `oslo-mobile.yaml` for the
+  # measurement. `isMobile` is the only descriptor option that costs viewport control
+  # (980 vs 390 on a page with no viewport meta tag), and it is the one not set here.
+  userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  hasTouch: true
+  deviceScaleFactor: 3
+visitorType: anonymous

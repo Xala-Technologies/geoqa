@@ -1,0 +1,16 @@
+# Drammen at desktop width, where a regional banner spanning the Oslofjord still names Oslo in the hero while the rest of the page has moved.
+id: drammen-desktop
+label: Drammen, desktop
+market:
+  id: drammen
+  country: NO
+  city: Drammen
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.7439, 10.2045]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

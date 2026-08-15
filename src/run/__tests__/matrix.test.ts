@@ -296,6 +296,35 @@ describe("runMatrix", () => {
     expect(keys(matrix.scenarios)).toEqual(["oslo/mobile/a", "oslo/mobile/b"]);
   });
 
+  it("runs an explicit slice instead of re-expanding the axes into a rectangle", async () => {
+    const seen: string[] = [];
+    const slice = [
+      { index: 0, key: "oslo/mobile/a", market: "oslo", device: "mobile", journey: "a", target: "https://a.test" },
+      { index: 1, key: "bergen/desktop/b", market: "bergen", device: "desktop", journey: "b", target: "https://b.test" },
+    ];
+    await runMatrix({
+      axes: { markets: ["oslo", "bergen"], devices: ["mobile", "desktop"], journeys: ["a", "b"] },
+      scenarios: slice,
+      plan: (scenario) => Promise.resolve({ spec: { runId: scenario.key } } as unknown as ExecuteOptions),
+      run: async (options) => {
+        seen.push(options.spec.runId);
+        return runResult(options.spec.runId, "PASS");
+      },
+    });
+    expect(seen).toEqual(["oslo/mobile/a", "bergen/desktop/b"]);
+  });
+
+  it("announces a scenario at START, before the browser opens", async () => {
+    const started: string[] = [];
+    await runMatrix({
+      axes: axes({ journeys: ["a"] }),
+      plan,
+      onStart: (scenario) => started.push(scenario.key),
+      run: () => Promise.resolve(runResult("x", "PASS")),
+    });
+    expect(started).toEqual(["oslo/mobile/a"]);
+  });
+
   it("times the matrix from the INJECTED clock, so no test waits on a wall clock", async () => {
     let tick = 1_700_000_000_000;
     const matrix = await runMatrix({

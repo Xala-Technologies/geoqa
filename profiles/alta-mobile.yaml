@@ -1,0 +1,22 @@
+# Finnmark, further north than Tromso and on a different coast. The market that makes we-tested-the-north mean something other than one Arctic city.
+id: alta-mobile
+label: Alta, mobile
+market:
+  id: alta
+  country: NO
+  city: Alta
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [69.9689, 23.2717]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+  # A real mobile identity WITHOUT a device descriptor — see `oslo-mobile.yaml` for the
+  # measurement. `isMobile` is the only descriptor option that costs viewport control
+  # (980 vs 390 on a page with no viewport meta tag), and it is the one not set here.
+  userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  hasTouch: true
+  deviceScaleFactor: 3
+visitorType: anonymous

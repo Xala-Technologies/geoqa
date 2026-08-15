@@ -151,6 +151,8 @@ describe("USAGE", () => {
       "experiment run",
       "evidence inspect",
       "evidence prune",
+      "geoqa server",
+      "geoqa run",
     ]) {
       expect(USAGE).toContain(word);
     }
@@ -176,6 +178,26 @@ describe("USAGE", () => {
     expect(USAGE).toContain("--delete-unreadable");
     expect(USAGE).toContain("SHORTENS");
     expect(USAGE).toContain("not a licence to delete");
+  });
+
+  it("says geoqa run streams JSONL and does not invent a second runtime", () => {
+    expect(USAGE).toContain("geoqa run");
+    expect(USAGE).toContain("Same runtime as journey run");
+    expect(USAGE).toContain("one event per line");
+    expect(USAGE).toContain("observedIp");
+    expect(USAGE).toContain("liveUrl");
+    expect(USAGE).toContain("{sessionduration}");
+  });
+
+  it("says the server is the operator console and that Live is not remote control", () => {
+    expect(USAGE).toContain("geoqa server");
+    expect(USAGE).toContain("Watch writes tenants/");
+    expect(USAGE).toContain("Settings stays read-only");
+    expect(USAGE).toContain("not remote control");
+    expect(USAGE).toContain("first sweep");
+    expect(USAGE).toContain("GEOQA_ADMIN_PASSWORD_HASH");
+    expect(USAGE).toContain("POST /api/run");
+    expect(USAGE).toContain("GEOQA_API_TOKEN");
   });
 });
 

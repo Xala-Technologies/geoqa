@@ -34,6 +34,17 @@ export interface RunView {
   vitals: { lcp: Measured<number>; cls: Measured<number>; ttfb: Measured<number>; inp: Measured<number> };
   geo: { requested: string; observed: string; country: string; city: string; egressHeld: string; agreement: string };
   latency: Measured<number>;
+  steps: {
+    index: number;
+    action: string;
+    label: string;
+    outcome: string;
+    detail: string;
+    expected: string | null;
+    observed: string | null;
+    durationMs: number;
+  }[];
+  screenshots: { label: string; file: string; present: boolean }[];
 }
 
 export interface Regression {

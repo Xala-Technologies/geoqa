@@ -17,6 +17,8 @@ steps:
   - { action: assert, check: no-http-5xx, severity: critical }
   - { action: assert, check: no-page-errors, severity: high }
   - { action: screenshot, label: hero }
+  - { action: scroll, direction: down, px: 900, label: scroll the landing }
+  - { action: screenshot, label: mid-page, fullPage: true }
   # Tighter than the shared 2500ms, on purpose.
   - { action: assert, check: lcp-below, value: 1200, severity: medium, label: fast for THIS tenant }
   - { action: assert, check: cls-below, value: 0.1, severity: low }

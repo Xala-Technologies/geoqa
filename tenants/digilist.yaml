@@ -8,12 +8,43 @@ name: Digilist AS
 # Profile market ids, not free text. A run for a market this tenant never asked
 # about is refused, which matters once quota is real: a typo that sweeps 16 markets
 # instead of 3 is a bill.
-markets: [oslo, bergen, trondheim]
+markets:
+  [
+    oslo,
+    bergen,
+    trondheim,
+    stavanger,
+    tromso,
+    bodo,
+    alesund,
+    kristiansand,
+    arendal,
+    porsgrunn,
+    sarpsborg,
+    drammen,
+    fredrikstad,
+    sandnes,
+    skien,
+    tonsberg,
+    haugesund,
+    sandefjord,
+    lillehammer,
+    hamar,
+    molde,
+    harstad,
+    alta,
+    narvik,
+    kongsberg,
+    svolvaer,
+  ]
 # An allowlist, and it is a security control rather than convenience. This engine
 # drives a real browser from residential IPs on a schedule; a target it was not
 # pointed at deliberately is either a mistake or somebody else's site.
 targets:
   - https://digilist.no
+  - https://app.digilist.no
+  - https://dev.digilist.no
+  - https://xala.no
 # The NAME of an environment variable, never a credential. R-26: credentials come
 # from the environment only. null means "use the shared default", which is what this
 # tenant does today — its own Decodo sub-user is slice 7.

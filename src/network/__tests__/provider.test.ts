@@ -91,6 +91,24 @@ describe("resolveProxyUrl", () => {
     expect(url).toBe("http://u-no-oslo-oslo:p@gw:1?c=NO&city=Oslo");
   });
 
+  it("substitutes {sessionduration} so a control-plane --session-duration reaches the vendor username", () => {
+    const url = resolveProxyUrl(
+      OSLO,
+      { GEOQA_PROXY_TEMPLATE: "http://u-cc-{countryLower}-sessid-{session}-sesstime-{sessionduration}:pw@gw.vendor.net:7777" },
+      "abc123",
+      10,
+    );
+    expect(url).toBe("http://u-cc-no-sessid-abc123-sesstime-10:pw@gw.vendor.net:7777");
+    expect(
+      resolveProxyUrl(
+        OSLO,
+        { GEOQA_PROXY_TEMPLATE: "http://u-sesstime-{sessionduration}:pw@gw:1" },
+        "s",
+        15,
+      ),
+    ).toBe("http://u-sesstime-15:pw@gw:1");
+  });
+
   it("substitutes {session} into a template, which is how a residential vendor is told to be sticky", () => {
     const url = resolveProxyUrl(
       OSLO,
@@ -296,6 +314,33 @@ describe("httpProxyProvider health", () => {
 });
 
 describe("httpProxyProvider sessions", () => {
+  it("fills {sessionduration} from the option, then GEOQA_SESSION_DURATION, then 10", async () => {
+    const template = { GEOQA_PROXY_TEMPLATE: "http://u-sesstime-{sessionduration}:pw@gw:1" };
+    const asked = await httpProxyProvider({
+      env: template,
+      sessionDurationMinutes: 15,
+      newSessionId: () => "s",
+    }).createSession(OSLO, 5);
+    if (!asked.ok) throw new Error("expected ok");
+    expect(asked.session.proxyUrl).toBe("http://u-sesstime-15:pw@gw:1");
+    const fromEnv = await httpProxyProvider({
+      env: { ...template, GEOQA_SESSION_DURATION: "20" },
+      newSessionId: () => "s",
+    }).createSession(OSLO, 5);
+    if (!fromEnv.ok) throw new Error("expected ok");
+    expect(fromEnv.session.proxyUrl).toBe("http://u-sesstime-20:pw@gw:1");
+    const fallback = await httpProxyProvider({ env: template, newSessionId: () => "s" }).createSession(OSLO, 5);
+    if (!fallback.ok) throw new Error("expected ok");
+    expect(fallback.session.proxyUrl).toBe("http://u-sesstime-10:pw@gw:1");
+    const ignored = await httpProxyProvider({
+      env: { ...template, GEOQA_SESSION_DURATION: "nope" },
+      sessionDurationMinutes: 0,
+      newSessionId: () => "s",
+    }).createSession(OSLO, 5);
+    if (!ignored.ok) throw new Error("expected ok");
+    expect(ignored.session.proxyUrl).toBe("http://u-sesstime-10:pw@gw:1");
+  });
+
   it("creates a session carrying the resolved proxy URL", async () => {
     const out = await httpProxyProvider({ env: { GEOQA_PROXY_NO: "http://u:p@gw.io:7777" } }).createSession(OSLO, 5);
     if (!out.ok) throw new Error("expected ok");

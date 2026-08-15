@@ -1,0 +1,16 @@
+# Sandefjord at desktop width, where a ferry timetable or duty-free strip has the room to render in the wrong currency.
+id: sandefjord-desktop
+label: Sandefjord, desktop
+market:
+  id: sandefjord
+  country: NO
+  city: Sandefjord
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.1313, 10.2166]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

@@ -54,7 +54,10 @@ experience on this page, and can we prove it?**
   explicitly deferred (see [§8](#8-external-prd-anchors)).
 - Search/SERP observation.
 - Fixing anything it finds.
-- Scheduling. A matrix is a command a human types; nothing runs on a clock.
+- Interactive remote control of a live browser. The Live view is a screening
+  feed: you watch the frame and the step, you do not drive the journey. Putting
+  an operator in the middle of a seeded run would make the evidence
+  unreproducible.
 
 Concurrency **left** this list. It was out of scope for Phase 0 because one
 profile was one whole Chrome; the per-context proxy made it possible and the

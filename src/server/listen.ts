@@ -35,14 +35,21 @@ const TYPES: Record<string, string> = {
  * is about the filesystem, and a symlink turns a clean-looking path into an escape. Containment
  * by `path.relative`, never `startsWith`: `/evidence-old` starts with `/evidence`.
  */
-export function assetReader(root: string): (p: string) => { body: string; type: string } | null {
+export function assetReader(root: string): (p: string) => { body: string | Buffer; type: string } | null {
   const base = path.resolve(root);
   return (requested) => {
     const resolved = path.resolve(base, `.${requested}`);
     const relative = path.relative(base, resolved);
     if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
     if (!existsSync(resolved) || !statSync(resolved).isFile()) return null;
-    return { body: readFileSync(resolved, "utf8"), type: TYPES[path.extname(resolved)] ?? "application/octet-stream" };
+    const ext = path.extname(resolved);
+    const type = TYPES[ext] ?? "application/octet-stream";
+    const raw = readFileSync(resolved);
+    // PNG/ICO must stay bytes. utf-8 decoding a favicon is how a tab icon becomes noise
+    // while the SVG next to it looks fine — the same class of defect as reading evidence
+    // as text and then wondering why the screenshot would not open.
+    const binary = type.startsWith("image/") && ext !== ".svg";
+    return { body: binary ? raw : raw.toString("utf8"), type };
   };
 }
 

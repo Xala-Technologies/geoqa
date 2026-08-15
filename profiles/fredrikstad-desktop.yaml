@@ -1,0 +1,16 @@
+# Fredrikstad on the wide layout, where a depot map has room to pin the wrong side of the Glomma and still look authoritative.
+id: fredrikstad-desktop
+label: Fredrikstad, desktop
+market:
+  id: fredrikstad
+  country: NO
+  city: Fredrikstad
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.2181, 10.9298]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

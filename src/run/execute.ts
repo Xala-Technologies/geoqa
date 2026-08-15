@@ -34,6 +34,13 @@ import {
   verifyEnvironment,
 } from "./stages.js";
 
+export interface RunLabel {
+  market: string;
+  device: string;
+  journey: string;
+  target: string;
+}
+
 export interface ExecuteOptions {
   spec: RunSpec;
   provider: GeoNetworkProvider;
@@ -75,6 +82,37 @@ export interface ExecuteOptions {
    * fills with sampler runs makes a real trend harder to see, not easier.
    */
   recordHistory?: boolean;
+  /**
+   * Who this run is, for a live board that must not parse the run id.
+   *
+   * A run id is `run_<ms>_<market>-<device>-<journey>…`. Inferring the axes
+   * with `id.includes("oslo")` is how Sandnes-oslo collisions and a desktop
+   * slug that also contains "mobile" become the wrong card. The planner
+   * already knows; it writes the label here.
+   */
+  label?: RunLabel;
+  /**
+   * Progress for a live board. Fires at phase changes and after every journey step.
+   *
+   * Optional, and a no-op when absent: the CLI does not have a board, and a
+   * missing hook must not change the run.
+   */
+  onProgress?: (event: RunProgress) => void;
+  /**
+   * Where to write the latest screening frame during the journey.
+   *
+   * Overwritten after each step so the console can show what the visitor sees
+   * *now*, not what the evidence package kept. A failed capture is a warning,
+   * never a failed run — a missing frame is not a site defect.
+   */
+  liveFramePath?: string;
+}
+
+export interface RunProgress {
+  phase: "device" | "verify" | "journey" | "evidence" | "done";
+  stepLabel?: string;
+  stepIndex?: number;
+  stepsTotal?: number;
 }
 
 export interface PrepareResult {
@@ -167,6 +205,7 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
   try {
     // Before anything is observed: a profile that never applied its device
     // measures a different layout than the one it claims to.
+    options.onProgress?.({ phase: "device" });
     for (const warning of await applyDeviceProfile(runtime, profile)) log(`warning: ${warning}`);
 
     // Record a trace from the start and keep it only if the verdict earns one.
@@ -182,6 +221,7 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
     const tracing = await runtime.traceStart();
     if (!tracing.ok) log(`warning: tracing unavailable — ${tracing.failure.detail}`);
 
+    options.onProgress?.({ phase: "verify" });
     log(`geo: verifying both axes for ${profile.id}`);
     const geo = await verifyEnvironment(runtime, profile, options.spec.verifyEndpoint, options.spec.corroborateGeo);
     log(`geo: confidence ${geo.confidence}${geo.trustworthy ? "" : " (not fully verified)"}`);
@@ -223,7 +263,19 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
     // The SHARED implementation, which `runJourneyActivity` also calls. It used to live here and
     // was hand-mirrored on the durable side — badly, which is how that path came to run one
     // attempt per scenario while this one ran N (gaps B-4, and gaps D-5 for the pattern).
-    const ran = await repeatJourney(runtime, options.spec, journey, repeat, log);
+    const frame = options.liveFramePath;
+    const onStep = async (step: { label: string; index: number }): Promise<void> => {
+      options.onProgress?.({
+        phase: "journey",
+        stepLabel: step.label,
+        stepIndex: step.index,
+        stepsTotal: journey.steps.length,
+      });
+      if (frame === undefined) return;
+      const shot = await runtime.screenshot(frame);
+      if (!shot.ok) log(`warning: live frame unavailable — ${shot.failure.detail}`);
+    };
+    const ran = await repeatJourney(runtime, options.spec, journey, repeat, log, onStep);
 
     // One journey must be one network session. Confirm that it was, before the verdict is used
     // to pick a retention tier — and through the same shared function the durable path calls,
@@ -243,6 +295,7 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
     // otherwise print an empty line, and an `unverified` closing probe is not news.
     if (verifiedGeo.network.egressHeld.verdict === "mismatch") log(`egress: ${verifiedGeo.network.egressHeld.reasons.join("; ")}`);
 
+    options.onProgress?.({ phase: "evidence" });
     log(`evidence: collecting for verdict ${result.verdict}`);
     manifest = await collectEvidence(runtime, {
       spec: options.spec,
@@ -301,6 +354,7 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
       if (problem !== null) log(`warning: ${problem}`);
     }
 
+    options.onProgress?.({ phase: "done" });
     return assembled;
   } finally {
     if (!options.keepOpen) {

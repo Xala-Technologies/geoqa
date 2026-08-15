@@ -591,4 +591,44 @@ describe("the things executeRun says OUT LOUD", () => {
     await executeRun({ spec: prepared.spec, provider: directProvider(), log: out.log });
     expect(out.all.some((l) => l.includes("removed an unlisted network.har"))).toBe(true);
   });
+
+  it("reports progress phases and writes a live frame after each journey step", async () => {
+    const phases: string[] = [];
+    const frames: string[] = [];
+    await withFakeBrowser({
+      screenshot: (p: string) => {
+        frames.push(p);
+        return Promise.resolve(ok(null));
+      },
+    });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    await executeRun({
+      spec: prepared.spec,
+      provider: directProvider(),
+      liveFramePath: path.join(root, "live.png"),
+      onProgress: (event) => phases.push(event.phase),
+    });
+    expect(phases[0]).toBe("device");
+    expect(phases).toContain("verify");
+    expect(phases).toContain("journey");
+    expect(phases.at(-1)).toBe("done");
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames[0]).toBe(path.join(root, "live.png"));
+  });
+
+  it("warns when a live frame cannot be captured, and does not fail the run", async () => {
+    const out = lines();
+    await withFakeBrowser({
+      screenshot: (p: string) => (p.endsWith("live.png") ? Promise.resolve(bad()) : Promise.resolve(ok(null))),
+    });
+    const prepared = await prepareRun(base(), directProvider(), 0);
+    const result = await executeRun({
+      spec: prepared.spec,
+      provider: directProvider(),
+      liveFramePath: path.join(root, "live.png"),
+      log: out.log,
+    });
+    expect(result.verdict).toBe("PASS");
+    expect(out.all.some((l) => l.includes("live frame unavailable"))).toBe(true);
+  });
 });

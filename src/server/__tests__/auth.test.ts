@@ -12,6 +12,9 @@ import {
   verifyPassword,
   PASSWORD_ENV,
   SECRET_ENV,
+  TOKEN_ENV,
+  readBearer,
+  verifyApiToken,
 } from "../auth.js";
 
 const SECRET = "a".repeat(64);
@@ -152,6 +155,27 @@ describe("readAuthConfig", () => {
     const out = readAuthConfig({ [PASSWORD_ENV]: "pbkdf2:1:a:b", [SECRET_ENV]: SECRET });
     expect(out.ok).toBe(true);
     expect(out.ok === true && out.config.secret).toBe(SECRET);
+    expect(out.ok === true && out.config.apiToken).toBeUndefined();
+  });
+
+  it("accepts a long API token and REFUSES a short one", () => {
+    const token = "k".repeat(32);
+    const ok = readAuthConfig({ [PASSWORD_ENV]: "pbkdf2:1:a:b", [SECRET_ENV]: SECRET, [TOKEN_ENV]: token });
+    expect(ok.ok === true && ok.config.apiToken).toBe(token);
+    const short = readAuthConfig({ [PASSWORD_ENV]: "pbkdf2:1:a:b", [SECRET_ENV]: SECRET, [TOKEN_ENV]: "short" });
+    expect(short.ok).toBe(false);
+  });
+});
+
+describe("bearer tokens", () => {
+  it("reads a Bearer header and compares it in constant time", () => {
+    expect(readBearer("Bearer abc")).toBe("abc");
+    expect(readBearer("bearer abc")).toBe("abc");
+    expect(readBearer("Basic abc")).toBeNull();
+    expect(readBearer(undefined)).toBeNull();
+    expect(verifyApiToken("a".repeat(32), "a".repeat(32))).toBe(true);
+    expect(verifyApiToken("a".repeat(32), "b".repeat(32))).toBe(false);
+    expect(verifyApiToken("short", "a".repeat(32))).toBe(false);
   });
 });
 

@@ -26,6 +26,8 @@ import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypt
 export const PASSWORD_ENV = "GEOQA_ADMIN_PASSWORD_HASH";
 /** The env var holding the HMAC key that signs session tokens. */
 export const SECRET_ENV = "GEOQA_SESSION_SECRET";
+/** Optional bearer token for machine clients (Electron, MCP, curl). */
+export const TOKEN_ENV = "GEOQA_API_TOKEN";
 
 /**
  * PBKDF2 rather than a bare hash, and the parameters are part of the stored format.
@@ -140,6 +142,8 @@ export function readSession(token: string, secret: string, nowMs: number): Sessi
 export interface AuthConfig {
   passwordHash: string;
   secret: string;
+  /** Present only when GEOQA_API_TOKEN is set. Absent means cookie-only. */
+  apiToken?: string;
 }
 
 /**
@@ -168,7 +172,26 @@ export function readAuthConfig(env: NodeJS.ProcessEnv): { ok: true; config: Auth
   if (secret.length < 32) {
     return { ok: false, error: `${SECRET_ENV} is shorter than 32 characters. A guessable signing key forges sessions.` };
   }
+  const apiToken = env[TOKEN_ENV];
+  if (apiToken !== undefined && apiToken !== "") {
+    if (apiToken.length < 32) {
+      return { ok: false, error: `${TOKEN_ENV} is shorter than 32 characters. A guessable API token is a session.` };
+    }
+    return { ok: true, config: { passwordHash, secret, apiToken } };
+  }
   return { ok: true, config: { passwordHash, secret } };
+}
+
+/** The token from `Authorization: Bearer …`, or null. */
+export function readBearer(header: string | undefined): string | null {
+  if (header === undefined) return null;
+  const match = /^Bearer\s+(\S+)$/i.exec(header.trim());
+  return match?.[1] ?? null;
+}
+
+/** Timing-safe compare against the configured token. Length mismatch is false, not a throw. */
+export function verifyApiToken(presented: string, configured: string): boolean {
+  return safeEqual(presented, configured);
 }
 
 /** The cookie a browser gets. `HttpOnly` so script cannot read it; `SameSite=Strict` so a

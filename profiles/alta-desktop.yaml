@@ -1,0 +1,16 @@
+# Alta on desktop, where a midnight-sun or northern-lights module shown to every NO visitor has the width to look like product rather than garnish.
+id: alta-desktop
+label: Alta, desktop
+market:
+  id: alta
+  country: NO
+  city: Alta
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [69.9689, 23.2717]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

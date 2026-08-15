@@ -124,6 +124,7 @@ export async function executeJourney(
   journey: Journey,
   log?: (line: string) => void,
   seed?: number,
+  onStep?: (step: StepResult) => void | Promise<void>,
 ): Promise<JourneyResult> {
   const vars = { target: spec.target, ...spec.vars };
   const resolved = { ...journey, steps: resolveSteps(journey.steps, vars) };
@@ -131,6 +132,7 @@ export async function executeJourney(
     screenshotDir: runEvidenceDir(spec),
     seed: seed ?? spec.seed,
     ...(log ? { log } : {}),
+    ...(onStep ? { onStep } : {}),
   });
 }
 
@@ -476,11 +478,12 @@ export async function repeatJourney(
   journey: Journey,
   repeat = 1,
   log: (line: string) => void = () => undefined,
+  onStep?: (step: StepResult) => void | Promise<void>,
 ): Promise<RepeatedJourney> {
   const times = Math.max(1, Math.floor(repeat));
   const attempt = async (index: number): Promise<JourneyResult> => {
     const seed = spec.seed + index;
-    const outcome = await executeJourney(runtime, { ...spec, seed }, journey, log);
+    const outcome = await executeJourney(runtime, { ...spec, seed }, journey, log, seed, onStep);
     if (times > 1) log(`journey: attempt ${index + 1}/${times} (seed ${seed}) → ${outcome.verdict}`);
     return outcome;
   };

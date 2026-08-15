@@ -58,7 +58,30 @@ describe("AgentBrowserRuntime", () => {
       { exec: rec.exec, env: { TZ: "Europe/Oslo", PATH: "/usr/bin" } },
     );
     await rt.getTitle();
-    expect(rec.envs[0]).toEqual({ TZ: "Europe/Berlin", PATH: "/usr/bin" });
+    expect(rec.envs[0]).toMatchObject({ TZ: "Europe/Berlin", PATH: "/usr/bin" });
+  });
+
+  it("pins AGENT_BROWSER_SOCKET_DIR to a short path when the operator did not", async () => {
+    // macOS sockaddr_un is 104 bytes including NUL. $TMPDIR is already
+    // `/var/folders/…/T/` (~49). A matrix run id
+    // `run_<ms>_alesund-desktop-browse-0` made the socket 107 and every
+    // Live session ERRORed before the page opened.
+    const rec = recorder();
+    const rt = new AgentBrowserRuntime({ sessionId: "run_1786798536472_alesund-desktop-browse-0" }, { exec: rec.exec, env: { PATH: "/usr/bin" } });
+    await rt.getTitle();
+    const dir = rec.envs[0]?.AGENT_BROWSER_SOCKET_DIR;
+    expect(dir).toBe("/tmp/geoqa-ab");
+    expect(`${dir}/run_1786798536472_kristiansand-desktop-returning-visitor-430.sock`.length).toBeLessThanOrEqual(103);
+  });
+
+  it("keeps an operator-set AGENT_BROWSER_SOCKET_DIR rather than overwriting it", async () => {
+    const rec = recorder();
+    const rt = new AgentBrowserRuntime(
+      { sessionId: "run1" },
+      { exec: rec.exec, env: { AGENT_BROWSER_SOCKET_DIR: "/tmp/mine", PATH: "/usr/bin" } },
+    );
+    await rt.getTitle();
+    expect(rec.envs[0]?.AGENT_BROWSER_SOCKET_DIR).toBe("/tmp/mine");
   });
 
   it("rebuilds the launch flags on every command, so a later call cannot hit a different browser", async () => {

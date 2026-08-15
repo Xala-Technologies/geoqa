@@ -73,6 +73,38 @@ describe("toRunView", () => {
     expect(view.geo.city).toBe("unverified");
     // The seed, so a run in the UI can be replayed from it.
     expect(view.seed).toBe(7);
+    expect(view.steps).toEqual([]);
+    expect(view.screenshots).toEqual([]);
+  });
+
+  it("carries the journey log when one was read from run.json", () => {
+    const view = toRunView(record(), {
+      runId: "run_1000_oslo-desktop",
+      target: "https://a.test/x",
+      journeyId: "landing-page",
+      verdict: "PASS",
+      seed: 7,
+      writes: false,
+      steps: [
+        {
+          index: 0,
+          action: "open",
+          label: "open target",
+          outcome: "passed",
+          detail: "open https://a.test/x ok",
+          expected: null,
+          observed: "https://a.test/x",
+          durationMs: 10,
+          severity: "info",
+        },
+      ],
+      screenshots: [{ label: "hero", file: "hero.png", present: true }],
+      issues: [],
+      console: [],
+      brief: "",
+    });
+    expect(view.steps).toHaveLength(1);
+    expect(view.screenshots[0]?.label).toBe("hero");
   });
 
   it("marks INP unmeasured with the reason that explains it, rather than showing 0", () => {

@@ -1,0 +1,22 @@
+# Buskerud's largest city, 40km from Oslo. Close enough that a nearest-store algorithm keyed on the capital still looks right — until it names Oslo for a Drammen visitor.
+id: drammen-mobile
+label: Drammen, mobile
+market:
+  id: drammen
+  country: NO
+  city: Drammen
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.7439, 10.2045]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+  # A real mobile identity WITHOUT a device descriptor — see `oslo-mobile.yaml` for the
+  # measurement. `isMobile` is the only descriptor option that costs viewport control
+  # (980 vs 390 on a page with no viewport meta tag), and it is the one not set here.
+  userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  hasTouch: true
+  deviceScaleFactor: 3
+visitorType: anonymous

@@ -19,6 +19,7 @@ import {
   experimentRun,
   journeyList,
   journeyPath,
+  controlRun,
   journeyRun,
   loadProfileOrThrow,
   loadUrlList,
@@ -440,6 +441,101 @@ describe("proxyVerify", () => {
   });
 });
 
+describe("controlRun", () => {
+  it("is journey run with events, not a second runtime", async () => {
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      o.onProgress?.({ phase: "journey", stepLabel: "Opened listing" });
+      return {
+        runId: "run_1",
+        verdict: "PASS",
+        geo: { network: { observed: { ip: "84.210.1.1" } } },
+        confidence: { overall: 96 },
+        evidenceId: "ev_1",
+      } as unknown as GeoQaRunResult;
+    });
+    const { result, events } = await controlRun(deps({ runOnce }), {
+      url: "https://digilist.no",
+      profileId: "bergen-mobile",
+      journeyId: "landing-page",
+      locale: "nb-NO",
+      timezone: "Europe/Oslo",
+      rotateIp: true,
+      evidence: true,
+    });
+    expect(result.verdict).toBe("PASS");
+    expect(runOnce).toHaveBeenCalledTimes(1);
+    expect(events.some((e) => e.liveUrl === "http://127.0.0.1:4848")).toBe(true);
+    expect(events.some((e) => e.message === "Opened listing")).toBe(true);
+    expect(events.some((e) => e.observedIp === "84.210.1.1")).toBe(true);
+    expect(events.at(-1)).toMatchObject({ level: "success", confidence: 96 });
+  });
+
+  it("REFUSES a locale that is not the profile's, rather than silently running as the profile", async () => {
+    await expect(
+      controlRun(deps(), {
+        url: "https://digilist.no",
+        profileId: "bergen-mobile",
+        journeyId: "landing-page",
+        locale: "sv-SE",
+      }),
+    ).rejects.toThrow(/nb-NO/);
+  });
+
+  it("calls onEvent as the run progresses, and names no dashboard on Playwright", async () => {
+    const seen: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      o.onProgress?.({ phase: "verify" });
+      return {
+        runId: "run_1",
+        verdict: "PASS",
+        geo: { network: { observed: { ip: null } } },
+        confidence: { overall: 80 },
+        evidenceId: null,
+      } as unknown as GeoQaRunResult;
+    });
+    const { events } = await controlRun(deps({ runOnce }), {
+      url: "https://digilist.no",
+      profileId: "bergen-mobile",
+      journeyId: "landing-page",
+      engine: "playwright",
+      evidence: true,
+      onEvent: (event) => seen.push(event.message),
+    });
+    expect(events.some((e) => e.liveUrl !== undefined)).toBe(false);
+    expect(seen).toContain("verify phase");
+  });
+
+  it("REFUSES --evidence=false and a timezone that is not the profile's", async () => {
+    await expect(
+      controlRun(deps(), {
+        url: "https://digilist.no",
+        profileId: "bergen-mobile",
+        journeyId: "landing-page",
+        evidence: false,
+      }),
+    ).rejects.toThrow(/evidence/);
+    await expect(
+      controlRun(deps(), {
+        url: "https://digilist.no",
+        profileId: "bergen-mobile",
+        journeyId: "landing-page",
+        timezone: "Europe/Stockholm",
+      }),
+    ).rejects.toThrow(/Europe\/Oslo/);
+  });
+
+  it("REFUSES --rotate-ip=false, because a new run always mints a new session", async () => {
+    await expect(
+      controlRun(deps(), {
+        url: "https://digilist.no",
+        profileId: "bergen-mobile",
+        journeyId: "landing-page",
+        rotateIp: false,
+      }),
+    ).rejects.toThrow(/rotate-ip/);
+  });
+});
+
 describe("journeyRun", () => {
   it("prepares, runs and returns the warnings alongside the result", async () => {
     const logged: string[] = [];
@@ -465,6 +561,17 @@ describe("journeyRun", () => {
     });
     await journeyRun(deps({ runOnce }), { url: "https://x", profileId: "oslo-mobile", journeyId: "landing-page" });
     expect((captured as ExecuteOptions | null)?.repeat).toBe(1);
+  });
+
+  it("plumbs sessionDurationMinutes into the provider so {sessionduration} is not an inert flag", async () => {
+    const runOnce = vi.fn(async () => ({ runId: "r", verdict: "PASS" }) as GeoQaRunResult);
+    await journeyRun(deps({ runOnce }), {
+      url: "https://x",
+      profileId: "oslo-mobile",
+      journeyId: "landing-page",
+      sessionDurationMinutes: 10,
+    });
+    expect(runOnce).toHaveBeenCalledTimes(1);
   });
 
   it("plumbs --repeat through, so flakiness is measured rather than retried away", async () => {
@@ -749,6 +856,56 @@ describe("matrixRun", () => {
 
     const allowed = await matrixRun(deps({ runOnce }), { ...options, allowWrites: true });
     expect(allowed.result?.counts.total).toBe(4);
+  });
+
+  it("runs a pick as that slice, not as the rectangle those markets would expand to", async () => {
+    const seen: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      seen.push(`${o.label?.market}/${o.label?.device}/${o.label?.journey}`);
+      return passing(o.spec.runId);
+    });
+    const result = await matrixRun(deps({ runOnce }), {
+      url: "https://x",
+      markets: ["oslo", "bergen"],
+      devices: ["mobile", "desktop"],
+      journeys: ["landing-page"],
+      pick: [
+        { market: "oslo", device: "mobile", journey: "landing-page", target: "https://digilist.no" },
+        { market: "bergen", device: "desktop", journey: "landing-page", target: "https://xala.no" },
+      ],
+    });
+    expect(result.scenarios).toHaveLength(2);
+    expect(seen).toEqual(["oslo/mobile/landing-page", "bergen/desktop/landing-page"]);
+    expect(result.result?.counts.total).toBe(2);
+  });
+
+  it("REFUSES an empty pick — that is zero evidence", async () => {
+    await expect(
+      matrixRun(deps(), { url: "https://x", markets: ["oslo"], journeys: ["landing-page"], pick: [] }),
+    ).rejects.toThrow(/pick is empty/);
+  });
+
+  it("carries the scenario identity on ExecuteOptions so a live board does not parse the run id", async () => {
+    const seen: ExecuteOptions[] = [];
+    const started: string[] = [];
+    const runOnce = vi.fn(async (o: ExecuteOptions) => {
+      seen.push(o);
+      return passing(o.spec.runId);
+    });
+    await matrixRun(deps({ runOnce }), {
+      url: "https://example.test/page",
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page"],
+      onStart: (scenario) => started.push(scenario.key),
+    });
+    expect(started).toEqual(["oslo/desktop/landing-page"]);
+    expect(seen[0]?.label).toEqual({
+      market: "oslo",
+      device: "desktop",
+      journey: "landing-page",
+      target: "https://example.test/page",
+    });
   });
 
   it("runs every scenario through the injected runner and returns them in expansion order", async () => {

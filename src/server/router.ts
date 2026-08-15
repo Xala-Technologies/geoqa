@@ -29,7 +29,8 @@
  * rather than about this file — nothing may be placed in the UI root that is not intended
  * for every browser that asks. It is build output; that is already true of it.
  */
-import { clearedCookie, cookieValue, readSession, sessionCookie, signSession, verifyPassword, SESSION_MS, type AuthConfig } from "./auth.js";
+import { clearedCookie, cookieValue, readBearer, readSession, sessionCookie, signSession, verifyApiToken, verifyPassword, SESSION_MS, type AuthConfig } from "./auth.js";
+import { routeControl, type ControlDeps } from "./control.js";
 
 export interface ServerRequest {
   method: string;
@@ -43,7 +44,8 @@ export interface ServerRequest {
 export interface ServerResponse {
   status: number;
   headers: Record<string, string>;
-  body: string;
+  /** Text for JSON/HTML; a Buffer for PNG/ICO so a utf-8 decode cannot corrupt the bytes. */
+  body: string | Buffer;
 }
 
 export interface RouterDeps {
@@ -52,7 +54,7 @@ export interface RouterDeps {
   /** True when the server is reachable over TLS, which decides the `Secure` cookie attribute. */
   secure: boolean;
   /** Reads a static asset. Returns null when there is none — never throws for a missing file. */
-  readAsset: (path: string) => { body: string; type: string } | null;
+  readAsset: (path: string) => { body: string | Buffer; type: string } | null;
   /** Everything the settings page shows. Injected so the router does no filesystem work. */
   settings: () => unknown;
   /**
@@ -78,6 +80,20 @@ export interface RouterDeps {
    * evidence either way. The worst outcome of calling it twice is that it runs twice.
    */
   rebuild: () => { generatedAt: string; total: number; warnings: string[] };
+  /**
+   * The watch / live control plane. Absent on a static console, which has no
+   * server to start a sweep. Routes that need it 404 with a reason rather than
+   * pretending the watch is empty.
+   */
+  control?: ControlDeps;
+  /**
+   * One run's evidence package. Absent when this process has no evidence tree
+   * (the static console). A missing run is a 404 from the function, not from
+   * the route being unknown.
+   */
+  evidence?: (runId: string) => { ok: true; value: unknown } | { ok: false; error: string };
+  /** One screenshot from that package, as bytes. Null when the journey never took it. */
+  evidenceShot?: (runId: string, label: string) => { body: Buffer; type: string } | null;
 }
 
 const json = (status: number, value: unknown, headers: Record<string, string> = {}): ServerResponse => ({
@@ -109,6 +125,10 @@ export function route(request: ServerRequest, deps: RouterDeps): ServerResponse 
     // link preview or a prefetching browser can trigger without anybody asking for it.
     if (path === "/api/dashboard/rebuild" && method === "POST") return json(200, deps.rebuild());
     if (path === "/api/whoami" && method === "GET") return json(200, { user: session.user, expiresAt: session.expiresAt });
+    if (path.startsWith("/api/watch") || path.startsWith("/api/live") || path === "/api/run") {
+      return routeControl(request, deps.control);
+    }
+    if (path.startsWith("/api/evidence/")) return routeEvidence(request, deps);
     return json(404, { error: `no such endpoint: ${method} ${path}` });
   }
 
@@ -148,6 +168,10 @@ function login(request: ServerRequest, deps: RouterDeps): ServerResponse {
 }
 
 function currentSession(request: ServerRequest, deps: RouterDeps): { user: string; expiresAt: number } | null {
+  const bearer = readBearer(request.headers["authorization"]);
+  if (bearer !== null && deps.auth.apiToken !== undefined && verifyApiToken(bearer, deps.auth.apiToken)) {
+    return { user: "api", expiresAt: deps.now() + SESSION_MS };
+  }
   const token = cookieValue(request.headers["cookie"]);
   if (token === null) return null;
   return readSession(token, deps.auth.secret, deps.now());
@@ -177,12 +201,41 @@ export function asset(path: string, deps: RouterDeps): ServerResponse {
       // runs while claiming to be live is the one failure a monitoring tool cannot have.
       "cache-control": wanted.endsWith(".json") || wanted === "/index.html" ? "no-store" : "public, max-age=3600",
       // The app is self-contained: no CDN, no inline event handlers, no framing.
-      "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+      // img-src must name data: — frames are data URLs after a credentialed
+      // JSON fetch, and default-src 'self' blocked those as a third-party
+      // image. The visit page then showed a broken icon next to a full log.
+      "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer",
     },
     body: file.body,
   };
+}
+
+const EVIDENCE = /^\/api\/evidence\/(run_[A-Za-z0-9._-]+)(?:\/shot\/([A-Za-z0-9._-]+))?$/;
+
+function routeEvidence(request: ServerRequest, deps: RouterDeps): ServerResponse {
+  if (request.method !== "GET") return json(404, { error: `no such endpoint: ${request.method} ${request.path}` });
+  const match = EVIDENCE.exec(request.path);
+  if (match === null) return json(404, { error: `no such endpoint: ${request.method} ${request.path}` });
+  const runId = match[1] ?? "";
+  const label = match[2];
+  if (label !== undefined) {
+    if (deps.evidenceShot === undefined) {
+      return json(404, { error: "evidence is not available on this console — run `geoqa server`" });
+    }
+    const shot = deps.evidenceShot(runId, label);
+    if (shot === null) return json(404, { error: "no screenshot with that label" });
+    // JSON like a live frame, not raw bytes: an <img src> to this URL drops the
+    // session cookie in some loads and the picture never appears. The console
+    // already fetches JSON with credentials; a data URL is the same path.
+    return json(200, { mime: shot.type, data: shot.body.toString("base64") });
+  }
+  if (deps.evidence === undefined) {
+    return json(404, { error: "evidence is not available on this console — run `geoqa server`" });
+  }
+  const pack = deps.evidence(runId);
+  return pack.ok ? json(200, pack.value) : json(404, { error: pack.error });
 }
 
 const safeJson = (raw: string): Record<string, unknown> | null => {
