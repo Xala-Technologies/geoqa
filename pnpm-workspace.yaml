@@ -1,8 +1,13 @@
 # The UI is its own package, and that is deliberate rather than incidental.
 #
 # It keeps React, Vite and the DOM lib out of the engine's dependency tree and out of its
-# tsconfig — the engine is a Node CLI and nothing in `src/` should be able to import a
-# component by accident. It also keeps `ui/` outside `coverage.include: ["src/**/*.ts"]`
-# without needing an exclusion entry, so the 100% gate stays about the engine.
+# tsconfig — the engine is a Node CLI and nothing in `packages/engine/src` should be able
+# to import a component by accident. It also keeps `apps/ui` outside the engine's
+# `coverage.include: ["src/**/*.ts"]` without needing an exclusion entry, so the 100%
+# gate stays about the engine.
+#
+# `apps/console` is the operator process (`pnpm dev`): load .env, refuse without auth,
+# spawn the engine server and Vite together. It is not a second copy of `src/server`.
 packages:
-  - "ui"
+  - "apps/*"
+  - "packages/*"

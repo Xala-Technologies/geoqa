@@ -1,0 +1,44 @@
+{
+  "name": "@geoqa/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "geoqa": "./bin/geoqa.mjs"
+  },
+  "exports": {
+    "./server/auth.js": "./src/server/auth.ts",
+    "./repo.js": "./src/repo.ts"
+  },
+  "scripts": {
+    "geoqa": "tsx src/cli/index.ts",
+    "worker": "tsx src/temporal/worker.ts",
+    "typecheck": "tsc --noEmit",
+    "boundaries": "depcruise src --output-type err-long",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "browser:install": "agent-browser install",
+    "playwright:install": "playwright install chromium"
+  },
+  "dependencies": {
+    "@temporalio/activity": "^1.21.1",
+    "@temporalio/client": "^1.21.1",
+    "@temporalio/worker": "^1.21.1",
+    "@temporalio/workflow": "^1.21.1",
+    "playwright": "^1.62.1",
+    "yaml": "^2.8.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@temporalio/testing": "^1.21.1",
+    "@types/node": "^22.16.5",
+    "@vitest/coverage-v8": "^2.1.9",
+    "agent-browser": "^0.34.0",
+    "dependency-cruiser": "^18.2.0",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^2.1.9"
+  }
+}

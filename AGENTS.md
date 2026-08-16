@@ -35,15 +35,15 @@ pnpm test:watch
 pnpm test:coverage          # enforces the 100% gate; this is what CI runs
 pnpm test:e2e               # REAL Chromium + real HTTP server + real evidence
 
-pnpm geoqa <args>           # tsx src/cli/index.ts
+pnpm geoqa <args>           # @geoqa/engine — tsx src/cli/index.ts
 pnpm worker                 # Temporal worker (connects and polls forever)
 ```
 
 Single test file / single test:
 
 ```bash
-pnpm vitest run src/journeys/__tests__/engine.test.ts
-pnpm vitest run src/journeys/__tests__/engine.test.ts -t "some test name"
+pnpm --filter @geoqa/engine exec vitest run src/journeys/__tests__/engine.test.ts
+pnpm --filter @geoqa/engine exec vitest run src/journeys/__tests__/engine.test.ts -t "some test name"
 ```
 
 CLI surface (`pnpm geoqa --help` is authoritative):
@@ -62,12 +62,14 @@ pnpm geoqa matrix run --url <url> --market <a,b,…> --journey <a,b,…> \
                       [--dry-run] [--allow-writes] [--seed <n>] [--repeat <n>]
 pnpm geoqa experiment run EXP-001 --samples 10 [--geo …] [--url …]
 pnpm geoqa evidence inspect <runId>
+pnpm geoqa assist explain <runId> # claude -p after judgement; Max login, not API
 pnpm geoqa evidence prune [--apply] [--max-age <tier>=<days|null>]... \
                           [--max-total <bytes>] [--privacy-days <days|off>] \
                           [--sweep-tiers pass,warning] [--delete-unreadable]
 pnpm geoqa server [--port <n>]          # Watch + Live + POST /api/run (needs auth env)
 pnpm geoqa server hash <password>       # prints GEOQA_ADMIN_PASSWORD_HASH + SESSION_SECRET
-pnpm ui:dev                             # Vite HMR on :5173, proxies /api to geoqa server :4180
+pnpm dev                                # API :4180 + Vite :5173 together (loads .env; needs auth env)
+pnpm ui:dev                             # Vite HMR only; proxies /api to an already-running :4180
 ```
 
 Every command accepts `--json`, and **the JSON shape is the integration
@@ -101,10 +103,13 @@ neither — the whole suite runs against an injected fake runtime.
 
 ## Layer map
 
+The engine lives in `packages/engine/src`. `apps/ui` is the Vite console.
+`apps/console` is `pnpm dev` (loads `.env`, refuses without auth, spawns API + UI).
 Dependencies point one way; each layer knows only the one below it.
 
 ```
 cli/          parse → dispatch → print (index.ts is thin; commands.ts holds the judgement)
+assist/       claude -p AFTER judgement (explain a brief). Never imported by run/journeys/geo
 config/       geoqa.config.json: schema + credential guard + IMPORTED defaults
 watch/        operator surface: YAML spec → tick (when to start) → live board
 run/          context (RunSpec) → stages → execute (one run) → matrix (many, bounded)
@@ -124,17 +129,20 @@ fixtures/     a local HTTP server: deliberately broken pages, a contact form, an
 `network/` and `evidence/` — never the other way round, because a default must come
 from the module that owns it.
 
-**These arrows are enforced.** `pnpm boundaries` fails the build on six of them;
+**These arrows are enforced.** `pnpm boundaries` fails the build on seven of them;
 the rationale for each is in the rule's own `comment` in
-`.dependency-cruiser.mjs`, so the CI log explains the invariant rather than naming
+`packages/engine/.dependency-cruiser.mjs`, so the CI log explains the invariant rather than naming
 a rule. It caught a real violation on its first run against this tree
 ([gaps B-9](docs/gaps.md#b-9--closed-the-boundary-lints-first-catch)), which is why
 `browser/engines.ts` exists: the layer above the seam may name an *engine*, never a
 launcher.
 
-Root-level `profiles/*.yaml` and `journeys/*.yaml` are inputs; `infra/` provisions
+`inputs/profiles/*.yaml` and `inputs/journeys/*.yaml` are the shared run inputs;
+`inputs/tenants/` is per-customer data; `inputs/experiments/` is the Phase 0
+experiment record; `inputs/imports/` is third-party dumps. `var/evidence` and `var/secrets` are local
+output (gitignored). `infra/` provisions
 one country-correct exit per market (read its README before spending anything);
-`evidence/` and `experiments/*/results.jsonl` are gitignored run output. The matrix
+`inputs/experiments/*/results.jsonl` is gitignored run output. The matrix
 is **data, not code**: one profile pair per market × device. `geoqa matrix run`
 executes a selection under a bounded pool; `geoqa server` can also run it on a
 clock from the Watch view ([gaps A-3](docs/gaps.md#a-3--the-matrix-runs-in-process-now-nothing-schedules-it-and-the-bound-is-a-guess)).
@@ -472,7 +480,7 @@ because it opens no browser.
   `exists`. `pruneFs` is not a convenience: without it a test for
   `evidence prune` would be pointed at the repo's real `evidence/`.
 - **Coverage gate: 100% lines/statements/functions**, enforced in CI. Exclusions
-  live in `vitest.config.ts` and **every exclusion must carry a comment naming
+  live in `packages/engine/vitest.config.ts` and **every exclusion must carry a comment naming
   why**. Prefer narrowing a type to make a switch genuinely exhaustive over
   adding an unreachable `default` arm (see `ActableStep` in `journeys/engine.ts`).
 - Verify by execution, not inspection: mapper tests use payloads captured from
@@ -506,8 +514,8 @@ because it opens no browser.
   property. Follow the idiom rather than widening the type to `| undefined`.
 - `verbatimModuleSyntax` + ESM: relative imports carry a `.js` extension even
   though the source is `.ts`. Type-only imports need `import type`.
-- The `@geoqa/*` path alias is declared in **both** `tsconfig.json` and
-  `vitest.config.ts`. Change one, change both, or tests break.
+- The `@geoqa/*` path alias is declared in **both** `packages/engine/tsconfig.json` and
+  `packages/engine/vitest.config.ts`. Change one, change both, or tests break.
 
 ## Wiring checklists
 
@@ -532,7 +540,7 @@ runtime failure rather than a compile error.
 
 **A new experiment:** an `ExperimentSpec` in `experiments/definitions.ts` (and
 its export list) → a `{sample, summarise}` pair in `cli/samplers.ts` registered
-in `SAMPLERS` → an `experiments/<id>/` directory with `hypothesis.json`,
+  in `SAMPLERS` → an `inputs/experiments/<id>/` directory with `hypothesis.json`,
 `configuration.json`, `README.md`. If the sampler takes an option, it needs a field
 on `ExperimentOptions` (`cli/commands.ts`) **and** a flag in `cli/index.ts` **and** a
 line in `USAGE`, or the option is unreachable — which is invariant 17 in a new

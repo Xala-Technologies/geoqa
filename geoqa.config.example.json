@@ -21,7 +21,7 @@
 
   "evidence": {
     "$comment": "root is resolved relative to the repo root, exactly as --evidence-root is. A retention tier you name REPLACES the default list for that tier, so a tier can be widened or narrowed; tiers you omit keep their defaults (evidence/manifest.ts RETENTION). Tiers are asymmetric on purpose: a passing run keeps almost nothing because a trace per green run costs gigabytes to prove what nobody will read, and an ERROR run maps to `investigation` — that is the case where we know least and need most.",
-    "root": "evidence",
+    "root": "var/evidence",
     "retention": {
       "pass": ["metadata", "screenshot", "vitals"],
       "warning": ["metadata", "screenshot", "vitals", "console", "network"],

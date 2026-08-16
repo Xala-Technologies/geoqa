@@ -8,9 +8,12 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
     "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["e2e/**/*.ts"]
+  "include": ["src/**/*.ts", "vitest.config.ts"]
 }

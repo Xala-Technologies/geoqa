@@ -125,7 +125,7 @@ reported as unmeasured on a page that simply had no layout shift.
 ## Layout
 
 ```
-src/
+packages/engine/src/
   browser/     the seam over two engines; nothing above it knows which one ran
   network/     GeoNetworkProvider (direct, http-proxy) + a cooldown store
   geo/         profiles, two-axis observation and verification
@@ -138,7 +138,10 @@ src/
   temporal/    the same stages as durable Activities
   experiments/ the harness; cli/samplers.ts holds the per-experiment logic
   fixtures/    a local server of deliberately broken pages
-profiles/  journeys/  experiments/  evidence/  e2e/  infra/
+apps/ui/   apps/console/
+inputs/    profiles, journeys, tenants, experiments, imports
+var/       evidence, secrets  (local, gitignored)
+e2e/  infra/
 ```
 
 ## Rules this codebase holds itself to

@@ -561,7 +561,7 @@ The harness (`experiments/harness.ts`) enforces the honesty rules:
   `redactDeep` first.
 
 The Phase 0 results, including the one recorded as `unmeasured` and why, are in
-[`prd.md`](prd.md#5-acceptance-targets) and `experiments/*/README.md`.
+[`prd.md`](prd.md#5-acceptance-targets) and `inputs/experiments/*/README.md`.
 
 ## 11. Testing architecture
 

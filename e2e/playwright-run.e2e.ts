@@ -21,17 +21,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { startFixtureServer, type FixtureServer } from "../src/fixtures/server.js";
-import { loadJourney } from "../src/journeys/spec.js";
-import { directProvider } from "../src/network/provider.js";
-import { executeRun } from "../src/run/execute.js";
-import { traceArtifactFormat } from "../src/run/stages.js";
-import type { RunSpec } from "../src/run/context.js";
-import type { GeoQaRunResult } from "../src/findings/types.js";
+import { startFixtureServer, type FixtureServer } from "../packages/engine/src/fixtures/server.js";
+import { loadJourney } from "../packages/engine/src/journeys/spec.js";
+import { directProvider } from "../packages/engine/src/network/provider.js";
+import { executeRun } from "../packages/engine/src/run/execute.js";
+import { traceArtifactFormat } from "../packages/engine/src/run/stages.js";
+import type { RunSpec } from "../packages/engine/src/run/context.js";
+import type { GeoQaRunResult } from "../packages/engine/src/findings/types.js";
+import { findRepoRoot, journeysRoot, profilesRoot } from "../packages/engine/src/repo.js";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const profilesDir = path.join(repoRoot, "profiles");
-const journeysDir = path.join(repoRoot, "journeys");
+const repoRoot = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
+const profilesDir = profilesRoot(repoRoot);
+const journeysDir = journeysRoot(repoRoot);
 
 let fixtures: FixtureServer;
 let evidenceRoot: string;
@@ -546,7 +547,7 @@ describe("one browser, two network identities", () => {
    * navigation, in both contexts.
    */
   it("applies a proxy to one context without touching the other", async () => {
-    const { launchBrowser, openContext } = await import("../src/browser/playwright-launch.js");
+    const { launchBrowser, openContext } = await import("../packages/engine/src/browser/playwright-launch.js");
     const browser = await launchBrowser(false);
     const base = {
       proxyBypass: null,

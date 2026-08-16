@@ -22,15 +22,16 @@ import { fileURLToPath } from "node:url";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { startFixtureServer, type FixtureServer } from "../src/fixtures/server.js";
-import * as activities from "../src/temporal/activities.js";
-import { durableMatrix, type TemporalConnector } from "../src/temporal/client.js";
-import { TASK_QUEUE } from "../src/temporal/constants.js";
-import type { GeoQaRunInput } from "../src/temporal/workflows.js";
-import type { RunSpec } from "../src/run/context.js";
+import { startFixtureServer, type FixtureServer } from "../packages/engine/src/fixtures/server.js";
+import * as activities from "../packages/engine/src/temporal/activities.js";
+import { durableMatrix, type TemporalConnector } from "../packages/engine/src/temporal/client.js";
+import { TASK_QUEUE } from "../packages/engine/src/temporal/constants.js";
+import type { GeoQaRunInput } from "../packages/engine/src/temporal/workflows.js";
+import type { RunSpec } from "../packages/engine/src/run/context.js";
+import { findRepoRoot, journeysRoot, profilesRoot } from "../packages/engine/src/repo.js";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const workflowsPath = path.join(repoRoot, "src", "temporal", "workflows.ts");
+const repoRoot = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
+const workflowsPath = path.join(repoRoot, "packages", "engine", "src", "temporal", "workflows.ts");
 
 let env: TestWorkflowEnvironment;
 let fixtures: FixtureServer;
@@ -54,8 +55,8 @@ const baseSpec = (runId: string, target: string): GeoQaRunInput["base"] => ({
   seed: 7,
   corroborateGeo: false,
   target,
-  profilePath: path.join(repoRoot, "profiles", "oslo-mobile.yaml"),
-  journeyPath: path.join(repoRoot, "journeys", "landing-page.yaml"),
+  profilePath: path.join(profilesRoot(repoRoot), "oslo-mobile.yaml"),
+  journeyPath: path.join(journeysRoot(repoRoot), "landing-page.yaml"),
   evidenceRoot,
   vars: {},
   headed: false,
