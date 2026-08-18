@@ -32,7 +32,7 @@ import { bindAssistComplete, type AssistOutcome } from "../assist/claude.js";
 import { nodeClaudeSpawn } from "../assist/claude-spawn.js";
 import { nodeRepairExec } from "../assist/repair-exec.js";
 import { defaultRepairClaude, jobsFromFiled, repairOne, type RepairExec, type RepairJob, type RepairOneResult } from "../assist/repair.js";
-import { loadRepairedKeys, saveRepairedKeys } from "../assist/repair-store.js";
+import { loadRepairedItems, saveRepairedItems } from "../assist/repair-store.js";
 import { buildExplainPrompt } from "../assist/prompt.js";
 import { loadEvidencePackage, type PackageFs } from "../evidence/package.js";
 import { readManifest } from "../evidence/store.js";
@@ -88,6 +88,7 @@ import {
   type ContentRecord,
 } from "../analysis/content.js";
 import { toDashboardView, type DashboardView } from "../report/view.js";
+import { ticketsForView } from "../report/tickets.js";
 import { readJourneyFromRunJson } from "../evidence/package.js";
 import {
   filterHistory,
@@ -1805,6 +1806,16 @@ export function renderPruneResult(result: EvidencePruneResult): string {
 
 // ── dashboard data ───────────────────────────────────────────────────────
 
+const toTicketRun = (record: RunRecord): TicketRun => ({
+  runId: record.runId,
+  target: record.target,
+  profileId: record.profileId,
+  journeyId: record.journeyId,
+  verdict: record.verdict,
+  findings: record.findings,
+  geo: record.geo,
+});
+
 /**
  * The view model the UI consumes, written next to the evidence it describes.
  *
@@ -1827,7 +1838,14 @@ export function dashboardBuild(
   const selected = filterHistory(records, filter);
   const fs = historyFsOf(deps);
   const journeys = Object.fromEntries(selected.map((r) => [r.runId, readJourneyFromRunJson(deps.evidenceRoot, r.runId, fs)]));
-  const view = toDashboardView(selected, new Date(deps.now()).toISOString(), warnings, journeys);
+  const filed = loadFiledIssues(deps.evidenceRoot, fs);
+  const repaired = loadRepairedItems(deps.evidenceRoot, fs);
+  const tickets = ticketsForView(
+    draftsFromRuns(selected.map(toTicketRun)),
+    filed.ok ? filed.issues : [],
+    repaired.ok ? repaired.items : [],
+  );
+  const view = toDashboardView(selected, new Date(deps.now()).toISOString(), warnings, journeys, tickets);
   const file = path.join(deps.evidenceRoot, DASHBOARD_FILE);
   fs.mkdir(deps.evidenceRoot);
   fs.write(file, JSON.stringify(view, null, 2));
@@ -1835,16 +1853,6 @@ export function dashboardBuild(
 }
 
 export const DASHBOARD_FILE = "dashboard.json";
-
-const toTicketRun = (record: RunRecord): TicketRun => ({
-  runId: record.runId,
-  target: record.target,
-  profileId: record.profileId,
-  journeyId: record.journeyId,
-  verdict: record.verdict,
-  findings: record.findings,
-  geo: record.geo,
-});
 
 /**
  * File the current index as GitHub issues.
@@ -1861,7 +1869,7 @@ export async function findingsFile(
   const drafts = draftsFromRuns(records.map(toTicketRun), {
     ...(deps.env.GEOQA_CONSOLE_URL ? { consoleBase: deps.env.GEOQA_CONSOLE_URL } : {}),
   });
-  return fileTickets({
+  const result = await fileTickets({
     drafts,
     evidenceRoot: deps.evidenceRoot,
     env: deps.env,
@@ -1872,6 +1880,8 @@ export async function findingsFile(
     ...(options.addLabels !== undefined ? { addLabels: options.addLabels } : {}),
     ...(options.store !== undefined ? { store: options.store } : {}),
   });
+  if (options.dryRun !== true && result.skipped === "none") dashboardBuild(deps);
+  return result;
 }
 
 function loadSiteRepos(deps: CommandDeps): SiteRepo[] {
@@ -1911,7 +1921,7 @@ export async function findingsRepair(
   const claude = options.claude ?? defaultRepairClaude(deps.env);
   const store = options.store ?? nodeFiledStore;
   const loaded = loadFiledIssues(deps.evidenceRoot, store);
-  const remembered = loadRepairedKeys(deps.evidenceRoot, store);
+  const remembered = loadRepairedItems(deps.evidenceRoot, store);
   if (!loaded.ok || !remembered.ok) return { ...empty, skipped: "store-unreadable" };
 
   const { records } = readHistory(deps.evidenceRoot, historyFsOf(deps));
@@ -1919,7 +1929,7 @@ export async function findingsRepair(
     ...(deps.env.GEOQA_CONSOLE_URL ? { consoleBase: deps.env.GEOQA_CONSOLE_URL } : {}),
   });
   const fallbackRepo = `${fallback.owner}/${fallback.name}`;
-  const done = new Set(remembered.keys);
+  const done = new Set(remembered.items.map((item) => item.key));
   const jobs = jobsFromFiled(drafts, loaded.issues, loadSiteRepos(deps), fallbackRepo).filter((job) => {
     if (done.has(job.key)) return false;
     if (options.onlyKeys !== undefined) return options.onlyKeys.includes(job.key);
@@ -1934,7 +1944,7 @@ export async function findingsRepair(
 
   const repaired: RepairOneResult[] = [];
   const failed: RepairOneResult[] = [];
-  const kept = [...remembered.keys];
+  const kept = [...remembered.items];
   for (const job of jobs) {
     const result = await repairOne(job, { exec, claude, workRoot: path.join(deps.evidenceRoot, "repair"), token, env: deps.env });
     if (result.status === "failed") {
@@ -1942,9 +1952,15 @@ export async function findingsRepair(
       continue;
     }
     repaired.push(result);
-    kept.push(job.key);
-    saveRepairedKeys(deps.evidenceRoot, kept, store);
+    kept.push({
+      key: job.key,
+      status: result.status,
+      at: new Date(deps.now()).toISOString(),
+      ...(result.prUrl !== undefined ? { prUrl: result.prUrl } : {}),
+    });
+    saveRepairedItems(deps.evidenceRoot, kept, store);
   }
+  dashboardBuild(deps);
   return { skipped: "none", repaired, failed, wouldRepair: [] };
 }
 

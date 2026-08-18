@@ -73,8 +73,8 @@ const VIEWS: {
     id: "findings",
     label: "To fix",
     mode: "work",
-    purpose: "Checks that failed. Same defect across many visits is one row.",
-    hint: "Distinct checks",
+    purpose: "Checks that failed. One row per site — the same grouping as the GitHub issue.",
+    hint: "Tickets to fix",
     icon: "book",
   },
   {

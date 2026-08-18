@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,6 +95,10 @@ describe("findingsRepair", () => {
     expect(first.repaired[0]?.status).toBe("opened");
     expect(first.repaired[0]?.prUrl).toContain("Digilist/pull/1");
     expect(renderFindingsRepair(first)).toContain("opened");
+    const board = JSON.parse(readFileSync(path.join(evidenceRoot, "dashboard.json"), "utf8")) as {
+      tickets: { site: string; pr: { measured: boolean } }[];
+    };
+    expect(board.tickets.some((t) => t.site === "app.digilist.no" && t.pr.measured)).toBe(true);
 
     const second = await findingsRepair(d, {
       exec: okExec(),

@@ -283,9 +283,11 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       live.prune(options.now(), KEEP_LIVE_MS);
       void findingsFile(deps).then(async (filed) => {
         options.log(renderFindingsFile(filed));
+        options.rebuild();
         if (filed.filed.length === 0) return;
         const repaired = await findingsRepair(deps, { onlyKeys: filed.filed.map((item) => item.key) });
         options.log(renderFindingsRepair(repaired));
+        options.rebuild();
       });
     }
   };

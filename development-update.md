@@ -19,6 +19,18 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-18 — The Findings page is the ticket board
+
+`#/findings` is the same grouping as GitHub: one row per check × host,
+with the issue and the PR as `Measured` values. Not filed is an
+absence, not a blank. `dashboard build` reads `filed-issues.json` and
+`repaired-issues.json`, and a file or repair rebuilds the dashboard so
+the console does not stay on yesterday's tickets.
+
+Where: `report/tickets.ts`, `report/view.ts`, `apps/ui/src/views/Findings.tsx`.
+
+---
+
 ## 2026-08-18 — Findings tag the site and open a PR
 
 A finding now carries `site:<host>` so the GitHub filter is the page the

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,6 +62,12 @@ describe("findingsFile", () => {
     });
     expect(first.filed).toHaveLength(1);
     expect(first.filed[0]?.number).toBe(42);
+    const board = JSON.parse(readFileSync(path.join(evidenceRoot, "dashboard.json"), "utf8")) as {
+      tickets: { site: string; issue: { measured: boolean; text: string } }[];
+    };
+    expect(board.tickets[0]?.site).toBe("xala.no");
+    expect(board.tickets[0]?.issue.measured).toBe(true);
+    expect(board.tickets[0]?.issue.text).toBe("#42");
     const rendered = renderFindingsFile(first);
     expect(rendered).toContain("#42");
     const second = await findingsFile(d, {

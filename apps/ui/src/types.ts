@@ -101,5 +101,18 @@ export interface DashboardView {
     widestLatencyGaps: PageAcrossMarkets[];
     warnings: string[];
   };
+  /** Same grouping as the GitHub tickets: one row per check × host. */
+  tickets: FindingTicket[];
   warnings: string[];
+}
+
+export interface FindingTicket {
+  key: string;
+  title: string;
+  site: string;
+  hosts: string[];
+  urgent: boolean;
+  runIds: string[];
+  issue: Measured<{ number: number; url: string }>;
+  pr: Measured<{ url: string }>;
 }

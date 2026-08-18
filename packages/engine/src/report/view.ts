@@ -21,6 +21,9 @@ import { analyseSite, marketOf, type SiteReport } from "../analysis/site.js";
 import { findRegressions, summariseHistory, type Regression } from "../history/store.js";
 import { buildConfidenceSeries, buildSeries, notableTrends, type TrendSeries } from "./trends.js";
 import { measured, ms, ratio, score, unmeasured, type Measured } from "./measured.js";
+import type { FindingTicket } from "./tickets.js";
+
+export type { FindingTicket } from "./tickets.js";
 
 // Re-exported so `report/view.js` stays the single import for a consumer assembling a view —
 // the split exists to break a cycle, not to make callers know about it.
@@ -151,6 +154,12 @@ export interface DashboardView {
   };
   regressions: Regression[];
   site: SiteReport;
+  /**
+   * One row per GitHub ticket — site check × host, or one urgent key.
+   * The Findings page renders this rather than re-aggregating labels, so
+   * the console and the issues agree.
+   */
+  tickets: FindingTicket[];
   /** Said out loud in the UI, not swallowed. */
   warnings: string[];
 }
@@ -167,6 +176,7 @@ export function toDashboardView(
   generatedAt: string,
   warnings: string[] = [],
   journeys: Record<string, EvidencePackage | null> = {},
+  tickets: FindingTicket[] = [],
 ): DashboardView {
   const summary = summariseHistory(records);
   // Every trendable metric. `confidence` goes through its own builder because lower is
@@ -197,6 +207,7 @@ export function toDashboardView(
     },
     regressions: findRegressions(records),
     site: analyseSite(records),
+    tickets,
     warnings: [...warnings, ...analyseSite(records).warnings],
   };
 }

@@ -1,74 +1,21 @@
 /**
- * What is wrong, aggregated across every run — the page a QA product exists to have.
+ * What is wrong, aggregated the same way GitHub issues are.
  *
- * The Runs view answers "what happened"; this answers "what should I fix first", which is a
- * different question and the one somebody actually opens a console to ask. A check that failed
- * once in twelve runs and a check that failed twelve times out of twelve are the same row in a
- * run list and completely different pieces of news.
- *
- * **Aggregated by check LABEL**, because that is the unit a person fixes. "has a search box"
- * failing in two markets across nine runs is one job. Nine rows saying the same thing is a list
- * somebody scrolls past.
- *
- * Severity comes from the runs the label appears in rather than being stored per label: the run
- * index keeps counts by severity and the labels that produced a finding, not a mapping between
- * them. So a label's severity here is the WORST severity present in the runs it failed in, which
- * is stated in the column header rather than implied — an inference presented as a fact is the
- * thing this whole codebase refuses.
+ * A check that failed on three hosts is three rows. Collapsing them hid
+ * that xala.no and digilist.no are different repos. Severity still comes
+ * from the runs a ticket names; the issue and PR are Measured — not filed
+ * is an absence, not a blank.
  */
 import { useMemo, useState, type JSX } from "react";
-import type { DashboardView, RunView } from "../types.ts";
+import type { DashboardView, FindingTicket, RunView } from "../types.ts";
 
 const SEVERITY_RANK = ["critical", "high", "medium", "low", "info"];
 
-interface Aggregate {
-  label: string;
-  runs: number;
-  markets: string[];
-  journeys: string[];
-  pages: string[];
-  worstSeverity: string;
-  lastSeen: string;
-  /** Runs where this label appeared, newest first — the drill-down target. */
-  runIds: string[];
-  /** How many of the runs that COULD have produced it did. */
-  rate: number;
-}
-
-function aggregate(runs: RunView[]): Aggregate[] {
-  const byLabel = new Map<string, RunView[]>();
-  for (const run of runs) {
-    for (const label of run.findings.labels) {
-      byLabel.set(label, [...(byLabel.get(label) ?? []), run]);
-    }
-  }
-  // The denominator is runs of the same JOURNEY, not all runs. A check that only exists in the
-  // search journey has not "failed 4 of 32 times" — it failed 4 of the 4 times it ran, which is
-  // a completely different claim and the one a reader would act on.
-  const byJourney = new Map<string, number>();
-  for (const run of runs) byJourney.set(run.journeyId, (byJourney.get(run.journeyId) ?? 0) + 1);
-
-  return [...byLabel.entries()]
-    .map(([label, where]) => {
-      const journeys = [...new Set(where.map((r) => r.journeyId))];
-      const possible = journeys.reduce((sum, j) => sum + (byJourney.get(j) ?? 0), 0);
-      const severities = where.flatMap((r) => Object.keys(r.findings.bySeverity));
-      const worst = SEVERITY_RANK.find((s) => severities.includes(s)) ?? "unknown";
-      const sorted = [...where].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-      return {
-        label,
-        runs: where.length,
-        markets: [...new Set(where.map((r) => r.marketId))].sort(),
-        journeys,
-        pages: [...new Set(where.map((r) => r.target))],
-        worstSeverity: worst,
-        lastSeen: sorted[0]?.startedAt ?? "",
-        runIds: sorted.map((r) => r.runId),
-        rate: possible === 0 ? 0 : where.length / possible,
-      };
-    })
-    .sort((a, b) => SEVERITY_RANK.indexOf(a.worstSeverity) - SEVERITY_RANK.indexOf(b.worstSeverity) || b.runs - a.runs);
-}
+const worstSeverity = (ticket: FindingTicket, runs: RunView[]): string => {
+  const named = new Set(ticket.runIds);
+  const severities = runs.filter((run) => named.has(run.runId)).flatMap((run) => Object.keys(run.findings.bySeverity));
+  return SEVERITY_RANK.find((s) => severities.includes(s)) ?? (ticket.urgent ? "high" : "unknown");
+};
 
 const TONE: Record<string, string> = { critical: "bad", high: "bad", medium: "warn", low: "unknown", info: "unknown" };
 
@@ -77,34 +24,41 @@ export function Findings({ view }: { view: DashboardView }): JSX.Element {
   const [q, setQ] = useState("");
 
   const runs = view.runs.filter((r) => market === "" || r.marketId === market);
-  const rows = useMemo(() => aggregate(runs), [runs]).filter(
-    (a) => q === "" || `${a.label} ${a.pages.join(" ")}`.toLowerCase().includes(q.toLowerCase()),
+  const visible = new Set(runs.map((r) => r.runId));
+  const rows = useMemo(
+    () =>
+      view.tickets.filter((ticket) => {
+        if (!ticket.runIds.some((id) => visible.has(id))) return false;
+        if (q === "") return true;
+        const hay = `${ticket.title} ${ticket.site} ${ticket.hosts.join(" ")}`.toLowerCase();
+        return hay.includes(q.toLowerCase());
+      }),
+    [view.tickets, visible, q],
   );
   const markets = [...new Set(view.runs.map((r) => r.marketId))].sort();
 
-  const total = rows.reduce((n, r) => n + r.runs, 0);
-  const persistent = rows.filter((r) => r.rate >= 0.99).length;
-  const intermittent = rows.filter((r) => r.rate < 0.99 && r.rate > 0).length;
+  const filed = rows.filter((r) => r.issue.measured).length;
+  const prs = rows.filter((r) => r.pr.measured).length;
+  const urgent = rows.filter((r) => r.urgent).length;
 
   return (
     <>
       <div className="head">
         <p className="hint">
-          Grouped by the check that produced them, because that is the unit somebody fixes. A
-          check failing every time it runs and a check failing once are the same row in a run list
-          and completely different news.
+          One row per site and check — the same grouping as the GitHub issue.
+          An issue or PR that has not been opened renders as not measured.
         </p>
       </div>
 
       <div className="gauges">
-        <Gauge k="Distinct problems" v={String(rows.length)} sub="checks with at least one finding" />
-        <Gauge k="Always fails" v={String(persistent)} sub="fails every run of its journey" tone={persistent > 0 ? "var(--fail)" : undefined} />
-        <Gauge k="Intermittent" v={String(intermittent)} sub="fails some runs — flakiness, or a real intermittent defect" tone={intermittent > 0 ? "var(--warn)" : undefined} />
-        <Gauge k="Total occurrences" v={String(total)} sub="across every run in this data" />
+        <Gauge k="To fix" v={String(rows.length)} sub="distinct tickets in this data" />
+        <Gauge k="Urgent" v={String(urgent)} sub="Decodo or a run that could not be measured" tone={urgent > 0 ? "var(--fail)" : undefined} />
+        <Gauge k="Filed" v={String(filed)} sub="open on GitHub" />
+        <Gauge k="Pull requests" v={String(prs)} sub="Claude opened a PR" />
       </div>
 
       <div className="filters">
-        <input type="search" placeholder="filter by check or page…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter findings" />
+        <input type="search" placeholder="filter by check or site…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter findings" />
         <select value={market} onChange={(e) => setMarket(e.target.value)} aria-label="all markets">
           <option value="">all markets</option>
           {markets.map((m) => (
@@ -113,7 +67,7 @@ export function Findings({ view }: { view: DashboardView }): JSX.Element {
             </option>
           ))}
         </select>
-        <span className="spacer">{rows.length} checks</span>
+        <span className="spacer">{rows.length} tickets</span>
       </div>
 
       <div className="panel">
@@ -127,51 +81,74 @@ export function Findings({ view }: { view: DashboardView }): JSX.Element {
             <table>
               <thead>
                 <tr>
-                  <th>Worst severity</th>
+                  <th>Site</th>
                   <th>Check</th>
-                  <th className="num">Fails</th>
-                  <th>Rate</th>
-                  <th>Markets</th>
-                  <th>Journey</th>
-                  <th>Page</th>
+                  <th>Issue</th>
+                  <th>PR</th>
+                  <th className="num">Runs</th>
                   <th>Last seen</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((a) => (
-                  <tr key={a.label}>
-                    <td>
-                      <span className={`pill ${TONE[a.worstSeverity] ?? "unknown"}`}>{a.worstSeverity}</span>
-                    </td>
-                    <td>{a.label}</td>
-                    <td className="num">{a.runs}</td>
-                    <td>
-                      {/* Rate as form and number: "always" reads before the percentage does. */}
-                      <span className="mkt">
-                        <span className="mkt-bar">
-                          <span style={{ width: `${Math.round(a.rate * 100)}%`, background: a.rate >= 0.99 ? "var(--fail)" : "var(--warn)" }} />
+                {rows.map((ticket) => {
+                  const latest = ticket.runIds[0];
+                  const seen = view.runs.find((r) => r.runId === latest);
+                  const severity = worstSeverity(ticket, view.runs);
+                  return (
+                    <tr key={ticket.key}>
+                      <td>
+                        <span className={`pill ${ticket.urgent ? "bad" : (TONE[severity] ?? "unknown")}`}>
+                          {ticket.urgent ? "geoqa" : ticket.site}
                         </span>
-                        <span className="measured">{Math.round(a.rate * 100)}%</span>
-                      </span>
-                    </td>
-                    <td className="dim">{a.markets.join(", ")}</td>
-                    <td className="dim">{a.journeys.join(", ")}</td>
-                    <td className="dim" title={a.pages.join("\n")}>
-                      {a.pages.length === 1 ? (a.pages[0] ?? "").replace(/^https?:\/\//, "") : `${a.pages.length} pages`}
-                    </td>
-                    <td className="dim">
-                      <a className="tag" href={`#/run/${a.runIds[0] ?? ""}`}>
-                        {a.lastSeen.slice(0, 10)} &rarr;
-                      </a>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td>
+                        {ticket.title}
+                        {ticket.hosts.length > 1 ? <div className="dim">{ticket.hosts.join(", ")}</div> : null}
+                      </td>
+                      <td>
+                        <LinkOrAbsence measured={ticket.issue} label={(v) => `#${v.number}`} href={(v) => v.url} />
+                      </td>
+                      <td>
+                        <LinkOrAbsence measured={ticket.pr} label={() => "PR"} href={(v) => v.url} />
+                      </td>
+                      <td className="num">{ticket.runIds.length}</td>
+                      <td className="dim">
+                        <a className="tag" href={`#/run/${latest ?? ""}`}>
+                          {(seen?.startedAt ?? "").slice(0, 10)} &rarr;
+                        </a>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
     </>
+  );
+}
+
+function LinkOrAbsence<T>({
+  measured,
+  label,
+  href,
+}: {
+  measured: { measured: true; value: T; text: string } | { measured: false; reason: string; text: "not measured" };
+  label: (value: T) => string;
+  href: (value: T) => string;
+}): JSX.Element {
+  if (!measured.measured) {
+    return (
+      <span className="unmeasured" title={measured.reason}>
+        {measured.text}
+      </span>
+    );
+  }
+  return (
+    <a className="tag" href={href(measured.value)} target="_blank" rel="noreferrer">
+      {label(measured.value)}
+    </a>
   );
 }
 
