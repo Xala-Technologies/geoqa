@@ -18,6 +18,15 @@ import { z } from "zod";
 
 export const WatchModeSchema = z.enum(["periodic", "continuous"]);
 
+/**
+ * How a periodic sweep chooses journeys from the list the operator ticked.
+ *
+ * `all` is the cartesian product — every selected journey on every cell.
+ * `seeded` draws one journey per market × device × URL from that list, using
+ * UTC-hour + market + url. Continuous ignores this and still walks a cursor.
+ */
+export const JourneyPickSchema = z.enum(["all", "seeded"]);
+
 export const WatchSpecSchema = z
   .object({
     tenantId: z.string().min(1),
@@ -53,10 +62,12 @@ export const WatchSpecSchema = z
      */
     maxConcurrent: z.number().int().min(1).max(16).default(2),
     allowWrites: z.boolean().default(false),
+    journeyPick: JourneyPickSchema.default("all"),
   })
   .strict();
 
 export type WatchMode = z.infer<typeof WatchModeSchema>;
+export type JourneyPick = z.infer<typeof JourneyPickSchema>;
 export type WatchSpec = z.infer<typeof WatchSpecSchema>;
 
 export type ParseResult<T> = { ok: true; value: T } | { ok: false; errors: string[] };

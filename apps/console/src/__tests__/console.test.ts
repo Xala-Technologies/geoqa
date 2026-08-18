@@ -6,6 +6,7 @@ import {
   parseDotenv,
   planDev,
   startDev,
+  waitUntilHealthy,
   type DevChild,
   type DevSpawn,
 } from "../console.js";
@@ -84,13 +85,14 @@ describe("startDev", () => {
       read: () => "",
       spawn,
       log: () => {},
+      probe: async () => true,
     });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.error).toContain(PASSWORD_ENV);
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("loads .env when present, then spawns both children", () => {
+  it("loads .env when present, then spawns both children", async () => {
     const kids = [child(), child()];
     let i = 0;
     const spawn: DevSpawn = () => kids[i++] as DevChild;
@@ -101,10 +103,13 @@ describe("startDev", () => {
       read: () => `${PASSWORD_ENV}=hash\n${SECRET_ENV}=${"s".repeat(32)}\n`,
       spawn,
       log: () => {},
+      probe: async () => true,
     });
     expect(out.ok).toBe(true);
     if (!out.ok) throw new Error("expected ok");
     expect(kids[0]?.killed).toEqual([]);
+    await out.ready;
+    expect(i).toBe(2);
     out.stop();
     out.stop();
     expect(kids[0]?.killed.length).toBe(1);
@@ -112,7 +117,33 @@ describe("startDev", () => {
     kids[0]?.fire(0);
   });
 
-  it("kills the other child when one exits", () => {
+  it("does not start Vite until the API answers /health", async () => {
+    const kids = [child(), child()];
+    let i = 0;
+    let release!: (ok: boolean) => void;
+    const gate = new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+    const out = startDev({
+      repoRoot: "/repo",
+      env: auth,
+      exists: () => false,
+      read: () => "",
+      spawn: () => kids[i++] as DevChild,
+      log: () => {},
+      probe: () => gate,
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("expected ok");
+    expect(i).toBe(1);
+    release(true);
+    const ready = await out.ready;
+    expect(ready.ok).toBe(true);
+    expect(i).toBe(2);
+    out.stop();
+  });
+
+  it("stops the API and never starts Vite when /health never answers", async () => {
     const kids = [child(), child()];
     let i = 0;
     const out = startDev({
@@ -122,9 +153,75 @@ describe("startDev", () => {
       read: () => "",
       spawn: () => kids[i++] as DevChild,
       log: () => {},
+      probe: async () => false,
+      now: (() => {
+        let t = 0;
+        return () => (t += 30_000);
+      })(),
+      sleep: async () => undefined,
+      readyTimeoutMs: 20_000,
     });
     expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("expected ok");
+    const ready = await out.ready;
+    expect(ready.ok).toBe(false);
+    if (ready.ok) throw new Error("expected timeout");
+    expect(ready.error).toContain("4180");
+    expect(i).toBe(1);
+    expect(kids[0]?.killed.length).toBe(1);
+  });
+
+  it("kills the other child when one exits", async () => {
+    const kids = [child(), child()];
+    let i = 0;
+    const out = startDev({
+      repoRoot: "/repo",
+      env: auth,
+      exists: () => false,
+      read: () => "",
+      spawn: () => kids[i++] as DevChild,
+      log: () => {},
+      probe: async () => true,
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("expected ok");
+    await out.ready;
     kids[0]?.fire(1);
     expect(kids[1]?.killed.length).toBe(1);
+  });
+});
+
+describe("waitUntilHealthy", () => {
+  it("retries a refused port and then succeeds", async () => {
+    let attempts = 0;
+    const out = await waitUntilHealthy("http://127.0.0.1:4180/health", {
+      probe: async () => {
+        attempts += 1;
+        return attempts >= 3;
+      },
+      sleep: async () => undefined,
+      now: (() => {
+        let t = 0;
+        return () => t++;
+      })(),
+      timeoutMs: 10,
+      intervalMs: 1,
+    });
+    expect(out).toEqual({ ok: true });
+    expect(attempts).toBe(3);
+  });
+
+  it("times out rather than hanging when the API never binds", async () => {
+    const out = await waitUntilHealthy("http://127.0.0.1:4180/health", {
+      probe: async () => false,
+      sleep: async () => undefined,
+      now: (() => {
+        let t = 0;
+        return () => (t += 100);
+      })(),
+      timeoutMs: 50,
+      intervalMs: 1,
+    });
+    expect(out.ok).toBe(false);
   });
 });

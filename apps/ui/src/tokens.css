@@ -1,0 +1,143 @@
+/* Primitive hues — same values as grokbot-clone. Components use semantic tokens. */
+:root {
+  --hue-graphite-950: #0c0c0e;
+  --hue-graphite-900: #111216;
+  --hue-graphite-850: #141518;
+  --hue-graphite-800: #17181d;
+  --hue-graphite-750: #1c1d22;
+  --hue-graphite-600: #2c2e35;
+  --hue-graphite-400: #a4a8b0;
+  --hue-graphite-100: #eceef2;
+  --hue-graphite-50: #f4f4f5;
+  --hue-brass-300: #d0b07e;
+  --hue-brass-700: #8a6a32;
+  --hue-brass-950: #1a140c;
+  --hue-brass-50: #fff8ee;
+  --hue-linen-300: #efe8dc;
+  --hue-linen-200: #f3ece1;
+  --hue-linen-150: #f7f2e9;
+  --hue-linen-100: #fbf7f0;
+  --hue-linen-50: #fffdf8;
+  --hue-linen-400: #e7ddd0;
+  --hue-ink-900: #1c1914;
+  --hue-ink-800: #2a241c;
+  --hue-ink-500: #6d6558;
+  --hue-warn-400: #e0b089;
+  --hue-warn-700: #9a5a2a;
+  --hue-pass-400: #9db89a;
+  --hue-pass-700: #3f5a3c;
+  --hue-fail-400: #d48a7a;
+  --hue-fail-700: #8a4034;
+  --motion-fast: 160ms;
+  --motion-rise: 400ms;
+  --font-sans: "Familjen Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-label: 0.8125rem;
+  --text-label--line-height: 1.25rem;
+  --text-kicker: 0.875rem;
+  --text-kicker--line-height: 1.375rem;
+  --text-ui: 0.96875rem;
+  --text-ui--line-height: 1.5rem;
+  --text-body: 1.03125rem;
+  --text-body--line-height: 1.75rem;
+  --text-lede: 1.0625rem;
+  --text-lede--line-height: 2rem;
+  --text-title: 1.125rem;
+  --text-title--line-height: 1.4;
+  --text-headline: 1.25rem;
+  --text-headline--line-height: 1.3;
+  --text-display: 2.125rem;
+  --text-display--line-height: 1.15;
+  --tracking-snug: -0.02em;
+  --tracking-tight: -0.03em;
+  --tracking-display: -0.04em;
+  --tracking-caps: 0.14em;
+  --radius-avatar: 0.75rem;
+  --radius-blob: 1rem;
+  --radius-card: 1rem;
+  --radius-bubble: 1.375rem;
+  --spacing-mode-rail: 6.5rem;
+  --spacing-sidebar: 19rem;
+  --spacing-inspector: 23rem;
+  --spacing-avatar-sm: 2.5rem;
+  --spacing-avatar-md: 3rem;
+  --spacing-control: 2.75rem;
+  --spacing-header: 5rem;
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.25rem;
+  --s-6: 1.5rem;
+  --s-7: 2rem;
+  --s-8: 2.5rem;
+  --s-9: 3.5rem;
+}
+
+/* Semantic roles — only data-theme, never :root, so the first click can win. */
+[data-theme="dark"],
+html:not([data-theme="light"]) {
+  color-scheme: dark;
+  --bg-canvas: var(--hue-graphite-950);
+  --bg-surface: var(--hue-graphite-850);
+  --bg-elevated: var(--hue-graphite-750);
+  --bg-pane-from: var(--hue-graphite-800);
+  --bg-pane-to: var(--hue-graphite-900);
+  --bg-bubble: var(--hue-graphite-600);
+  --fg-primary: var(--hue-graphite-50);
+  --fg-body: var(--hue-graphite-100);
+  --fg-muted: var(--hue-graphite-400);
+  --fg-accent: var(--hue-brass-300);
+  --fg-on-accent: var(--hue-brass-950);
+  --fg-warning: var(--hue-warn-400);
+  --fg-pass: var(--hue-pass-400);
+  --fg-fail: var(--hue-fail-400);
+  --bg-hover: color-mix(in srgb, var(--fg-primary) 6%, transparent);
+  --bg-accent-soft: color-mix(in srgb, var(--fg-accent) 18%, transparent);
+  --stroke-default: color-mix(in srgb, var(--fg-primary) 10%, transparent);
+  --elev-lift: 0 18px 40px color-mix(in srgb, #000 28%, transparent);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg-canvas: var(--hue-linen-300);
+  --bg-surface: var(--hue-linen-150);
+  --bg-elevated: var(--hue-linen-50);
+  --bg-pane-from: var(--hue-linen-100);
+  --bg-pane-to: var(--hue-linen-200);
+  --bg-bubble: var(--hue-linen-400);
+  --fg-primary: var(--hue-ink-900);
+  --fg-body: var(--hue-ink-800);
+  --fg-muted: var(--hue-ink-500);
+  --fg-accent: var(--hue-brass-700);
+  --fg-on-accent: var(--hue-brass-50);
+  --fg-warning: var(--hue-warn-700);
+  --fg-pass: var(--hue-pass-700);
+  --fg-fail: var(--hue-fail-700);
+  --bg-hover: color-mix(in srgb, var(--fg-primary) 5%, transparent);
+  --bg-accent-soft: color-mix(in srgb, var(--fg-accent) 14%, transparent);
+  --stroke-default: color-mix(in srgb, var(--fg-primary) 12%, transparent);
+  --elev-lift: 0 16px 36px color-mix(in srgb, var(--hue-ink-900) 10%, transparent);
+}
+
+/* Verdict aliases used by geoqa views. Chrome uses the grokbot names above. */
+[data-theme="dark"],
+html:not([data-theme="light"]),
+html[data-theme="light"] {
+  --pass: var(--fg-pass);
+  --warn: var(--fg-warning);
+  --fail: var(--fg-fail);
+  --void: var(--fg-muted);
+  --signal: var(--fg-accent);
+  --readout: var(--fg-primary);
+  --label: var(--fg-muted);
+  --faint: var(--fg-muted);
+  --black: var(--bg-canvas);
+  --machine: var(--bg-surface);
+  --machine-2: var(--bg-elevated);
+  --machine-3: var(--bg-bubble);
+  --grid: var(--stroke-default);
+  --grid-soft: var(--stroke-default);
+}

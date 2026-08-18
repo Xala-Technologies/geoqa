@@ -14,9 +14,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:4180",
-      "/dashboard.json": "http://127.0.0.1:4180",
-      "/health": "http://127.0.0.1:4180",
+      "/api": { target: "http://127.0.0.1:4180", timeout: 10_000 },
+      "/dashboard.json": { target: "http://127.0.0.1:4180", timeout: 10_000 },
+      "/health": { target: "http://127.0.0.1:4180", timeout: 10_000 },
     },
   },
 });

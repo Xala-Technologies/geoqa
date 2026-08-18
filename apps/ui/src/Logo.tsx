@@ -27,10 +27,10 @@ export function Logo({ size = 22, lockup = false }: { size?: number; lockup?: bo
 export function Mark({ size = 22 }: { size?: number }): JSX.Element {
   return (
     <svg width={size} height={size} viewBox="0 0 22 22" fill="none" aria-hidden="true">
-      <rect x="1.5" y="1.5" width="19" height="19" stroke="var(--signal)" strokeWidth="1.25" opacity="0.5" />
-      <path d="M11 1.5v19M1.5 11h19" stroke="var(--signal)" strokeWidth="1" opacity="0.3" />
-      <rect x="7.5" y="7.5" width="7" height="7" stroke="var(--signal)" strokeWidth="1.25" opacity="0.7" />
-      <rect x="9.5" y="9.5" width="3" height="3" fill="var(--signal)" />
+      <rect x="1.5" y="1.5" width="19" height="19" stroke="var(--fg-accent)" strokeWidth="1.25" opacity="0.5" />
+      <path d="M11 1.5v19M1.5 11h19" stroke="var(--fg-accent)" strokeWidth="1" opacity="0.3" />
+      <rect x="7.5" y="7.5" width="7" height="7" stroke="var(--fg-accent)" strokeWidth="1.25" opacity="0.7" />
+      <rect x="9.5" y="9.5" width="3" height="3" fill="var(--fg-accent)" />
     </svg>
   );
 }

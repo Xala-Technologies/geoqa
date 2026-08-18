@@ -23,68 +23,99 @@ import { RunDetail } from "./views/RunDetail.tsx";
 import { Settings } from "./views/Settings.tsx";
 import { Watch } from "./views/Watch.tsx";
 import { Live } from "./views/Live.tsx";
-import { Logo } from "./Logo.tsx";
+import { Shell, type ModeId, type ShellLink, type ShellMode } from "./Shell.tsx";
+import type { NavIcon } from "./icons.tsx";
 
 type ViewId = "overview" | "live" | "runs" | "findings" | "geography" | "coverage" | "trends" | "watch" | "settings";
 
 /** A route is a view, or a drill-down into one run. */
 type Route = { view: ViewId; runId?: string; liveId?: string };
 
-const VIEWS: { id: ViewId; label: string; group: string; purpose: string; rail?: boolean }[] = [
+const MODES: ShellMode[] = [
+  { id: "work", href: "#/runs", label: "Work", icon: "workspace" },
+  { id: "compare", href: "#/geography", label: "Compare", icon: "people" },
+  { id: "setup", href: "#/watch", label: "Setup", icon: "gear" },
+];
+
+const VIEWS: {
+  id: ViewId;
+  label: string;
+  mode: ModeId;
+  purpose: string;
+  hint: string;
+  icon: NavIcon;
+}[] = [
   {
     id: "overview",
     label: "At a glance",
-    group: "Work",
+    mode: "work",
     purpose: "A briefing. The work is Visits.",
-    rail: false,
+    hint: "Briefing",
+    icon: "workspace",
   },
   {
     id: "live",
     label: "Now",
-    group: "Work",
+    mode: "work",
     purpose: "A visit happening right now. You watch. You do not drive.",
+    hint: "On screen now",
+    icon: "pulse",
   },
   {
     id: "runs",
     label: "Visits",
-    group: "Work",
+    mode: "work",
     purpose: "Every finished visit. Open one to see what it did and the frames it kept.",
+    hint: "Finished evidence",
+    icon: "ticket",
   },
   {
     id: "findings",
     label: "To fix",
-    group: "Work",
+    mode: "work",
     purpose: "Checks that failed. Same defect across many visits is one row.",
+    hint: "Distinct checks",
+    icon: "book",
   },
   {
     id: "geography",
     label: "By market",
-    group: "Compare",
+    mode: "compare",
     purpose: "The same page from different cities. Quiet until they disagree.",
+    hint: "Same page, different city",
+    icon: "people",
   },
   {
     id: "coverage",
     label: "Gaps",
-    group: "Compare",
+    mode: "compare",
     purpose: "Cities and pages nobody has visited yet.",
+    hint: "Never measured",
+    icon: "folder",
   },
   {
     id: "trends",
     label: "Over time",
-    group: "Compare",
+    mode: "compare",
     purpose: "Whether a number is getting better or worse. Needs several visits.",
+    hint: "Direction of a metric",
+    icon: "pulse",
   },
   {
     id: "watch",
     label: "Schedule",
-    group: "Setup",
+    mode: "setup",
     purpose: "When to visit, from where. Off until you turn it on.",
+    hint: "Cadence and URLs",
+    icon: "clock",
   },
   {
     id: "settings",
     label: "This machine",
-    group: "Setup",
+    mode: "setup",
     purpose: "What this install can do. Read-only — it reports the files a run already reads.",
+    hint: "Host report",
+    icon: "gear",
   },
 ];
 
@@ -151,16 +182,37 @@ export function App(): JSX.Element {
    * on two of them.
    */
   const load = useCallback((): void => {
+    const accept = (value: DashboardView): void => {
+      setView(value);
+      setNeedsSignIn(false);
+      setError(null);
+      void getJson<{ user: string }>("/api/whoami").then((who) => setServedWithSession(who.ok));
+    };
+
     void getJson<DashboardView>("./dashboard.json").then((result) => {
       if (result.ok) {
-        setView(result.value);
-        setNeedsSignIn(false);
-        setError(null);
-        void getJson<{ user: string }>("/api/whoami").then((who) => setServedWithSession(who.ok));
+        accept(result.value);
         return;
       }
       if (result.signedOut) {
         setNeedsSignIn(true);
+        return;
+      }
+      // A 404 here is not a failed password. Sign-in already succeeded; the index
+      // simply has not been written yet. Build it and read again, once.
+      if (result.error.includes("no dashboard has been built")) {
+        void postJson<{ total: number; warnings: string[] }>("/api/dashboard/rebuild").then((rebuilt) => {
+          if (!rebuilt.ok) {
+            if (rebuilt.signedOut) setNeedsSignIn(true);
+            else setError(rebuilt.error);
+            return;
+          }
+          void getJson<DashboardView>("./dashboard.json").then((again) => {
+            if (again.ok) accept(again.value);
+            else if (again.signedOut) setNeedsSignIn(true);
+            else setError(again.error);
+          });
+        });
         return;
       }
       setError(result.error);
@@ -255,100 +307,59 @@ export function App(): JSX.Element {
     coverage: view.site.coverageGaps.length > 0,
   };
 
-  const rail = VIEWS.filter((v) => v.rail !== false);
-  const groups = [...new Set(rail.map((v) => v.group))];
   const current = VIEWS.find((v) => v.id === route.view);
+  const mode = current?.mode ?? "work";
   const run = route.runId === undefined ? undefined : view.runs.find((r) => r.runId === route.runId);
+  const links: ShellLink[] = VIEWS.filter((item) => item.mode === mode).map((item) => ({
+    id: item.id,
+    href: `#/${item.id}`,
+    label: item.label,
+    hint: item.hint,
+    icon: item.icon,
+    current: route.view === item.id,
+    count: counts[item.id],
+    alert: alerts[item.id] === true,
+  }));
 
   return (
-    <div className="app">
-      <div className="brand">
-        <Logo />
-      </div>
-
-      <header className="bar">
-        <div className="bar-copy">
-          <span className="bar-title">
-            {run !== undefined ? run.journeyId : route.liveId !== undefined ? "LIVE" : (current?.label ?? "geoqa")}
-          </span>
-          <span className="bar-purpose">
-            {run !== undefined
-              ? "This one visit — what it did, the frames it kept, and whether we can trust it."
-              : route.liveId !== undefined
-                ? "Still on Now — the frame and the steps, as they happen."
-                : (current?.purpose ?? "")}
-          </span>
-        </div>
-        <div className="bar-stats">
-          <Stat k="runs" v={String(view.summary.total)} />
-          <Stat k="confidence" v={view.summary.meanConfidence.text} />
-          <Stat k="markets" v={String(view.site.markets.length)} />
-          <Stat k="built" v={new Date(view.generatedAt).toISOString().slice(0, 16).replace("T", " ")} />
-          {/* Only when there is a session to end. A static build has none, and a sign-out
-              control that cannot sign anything out is a button that reports a bug when
-              pressed. */}
-          {servedWithSession && (
-            <button className="btn btn-quiet" type="button" onClick={rebuild} disabled={rebuilding === "Rebuilding…"}>
-              {rebuilding ?? "Rebuild"}
-            </button>
-          )}
-          {servedWithSession && (
-            <button
-              className="btn btn-quiet"
-              type="button"
-              onClick={() => {
-                void signOut().then(() => setNeedsSignIn(true));
-              }}
-            >
-              Sign out
-            </button>
-          )}
-        </div>
-      </header>
-
-      <nav className="rail" aria-label="Views">
-        {groups.map((group) => (
-          <div key={group}>
-            <div className="rail-group">{group}</div>
-            {rail.filter((v) => v.group === group).map((v) => (
-              <a
-                key={v.id}
-                className="nav"
-                href={`#/${v.id}`}
-                aria-current={route.view === v.id && route.runId === undefined ? "page" : undefined}
-              >
-                {v.label}
-                {counts[v.id] > 0 && (
-                  <span className={`count${alerts[v.id] === true ? " alert" : ""}`}>{counts[v.id]}</span>
-                )}
-              </a>
-            ))}
-          </div>
-        ))}
-      </nav>
-
-      <main className="readout">
-        {route.runId !== undefined && <RunDetail view={view} runId={route.runId} />}
-        {route.runId === undefined && route.view === "overview" && <Overview view={view} />}
-        {route.runId === undefined && route.view === "live" && <Live selectedId={route.liveId} />}
-        {route.runId === undefined && route.view === "runs" && <Runs view={view} />}
-        {route.runId === undefined && route.view === "findings" && <Findings view={view} />}
-        {route.runId === undefined && route.view === "geography" && <Geography view={view} />}
-        {route.runId === undefined && route.view === "coverage" && <Coverage view={view} />}
-        {route.runId === undefined && route.view === "trends" && <Trends view={view} />}
-        {route.runId === undefined && route.view === "watch" && <Watch />}
-        {route.runId === undefined && route.view === "settings" && <Settings />}
-      </main>
-    </div>
+    <Shell
+      modes={MODES}
+      mode={mode}
+      title={mode === "work" ? "Work" : mode === "compare" ? "Compare" : "Setup"}
+      hint={liveCount ? `${liveCount} waking` : `${view.summary.total} visits`}
+      paneTitle={run !== undefined ? run.journeyId : route.liveId !== undefined ? "Now" : (current?.label ?? "geoqa")}
+      paneHint={
+        run !== undefined
+          ? "This one visit — what it did, the frames it kept, and whether we can trust it."
+          : route.liveId !== undefined
+            ? "Still on Now — the frame and the steps, as they happen."
+            : (current?.purpose ?? "")
+      }
+      links={links}
+      liveCount={liveCount}
+      stats={[
+        { k: "runs", v: String(view.summary.total) },
+        { k: "confidence", v: view.summary.meanConfidence.text },
+        { k: "markets", v: String(view.site.markets.length) },
+        { k: "built", v: new Date(view.generatedAt).toISOString().slice(0, 16).replace("T", " ") },
+      ]}
+      servedWithSession={servedWithSession}
+      rebuilding={rebuilding}
+      onRebuild={rebuild}
+      onSignOut={() => {
+        void signOut().then(() => setNeedsSignIn(true));
+      }}
+    >
+      {route.runId !== undefined && <RunDetail view={view} runId={route.runId} />}
+      {route.runId === undefined && route.view === "overview" && <Overview view={view} />}
+      {route.runId === undefined && route.view === "live" && <Live selectedId={route.liveId} />}
+      {route.runId === undefined && route.view === "runs" && <Runs view={view} />}
+      {route.runId === undefined && route.view === "findings" && <Findings view={view} />}
+      {route.runId === undefined && route.view === "geography" && <Geography view={view} />}
+      {route.runId === undefined && route.view === "coverage" && <Coverage view={view} />}
+      {route.runId === undefined && route.view === "trends" && <Trends view={view} />}
+      {route.runId === undefined && route.view === "watch" && <Watch />}
+      {route.runId === undefined && route.view === "settings" && <Settings />}
+    </Shell>
   );
 }
-
-function Stat({ k, v }: { k: string; v: string }): JSX.Element {
-  return (
-    <span className="stat">
-      <span className="stat-k">{k}</span>
-      <span className="stat-v">{v}</span>
-    </span>
-  );
-}
-

@@ -61,6 +61,14 @@ const result = startDev({
   log: (line) => {
     process.stderr.write(`${line}\n`);
   },
+  probe: async (url) => {
+    try {
+      const response = await fetch(url);
+      return response.ok;
+    } catch {
+      return false;
+    }
+  },
 });
 
 if (!result.ok) {
@@ -73,3 +81,10 @@ const shutdown = (): void => {
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+void result.ready.then((ready) => {
+  if (!ready.ok) {
+    process.stderr.write(`${ready.error}\n`);
+    process.exit(2);
+  }
+});

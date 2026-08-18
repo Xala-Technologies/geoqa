@@ -197,7 +197,17 @@ function SessionCard({
     >
       <div className="live-frame">
         {frame !== undefined ? <img src={frame} alt={`${session.market} ${session.target}`} /> : <div className="live-wait">awaiting frame</div>}
-        {session.status !== "done" ? <span className="live-pulse" aria-hidden="true" /> : null}
+        {session.status !== "done" ? (
+          <>
+            <span className="wake-layer" aria-hidden>
+              <span className="wake-ring wake-ring-a" />
+              <span className="wake-ring wake-ring-b" />
+              <span className="wake-ring wake-ring-c" />
+              <span className="avatar-orbit" style={{ position: "absolute", inset: "0.35rem", borderRadius: "999px" }} />
+            </span>
+            <span className="live-pulse" aria-hidden="true" />
+          </>
+        ) : null}
       </div>
       <div className="live-meta">
         <div className="live-k">

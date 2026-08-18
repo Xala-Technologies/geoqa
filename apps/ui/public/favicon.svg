@@ -1,8 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="geoqa">
-  <!-- Same mark as ui/src/Logo.tsx, on the machine black so a browser tab is not a white square. -->
-  <rect width="32" height="32" fill="#05070a"/>
-  <rect x="4.5" y="4.5" width="23" height="23" fill="none" stroke="#00e5ff" stroke-width="1.5" opacity="0.5"/>
-  <path d="M16 4.5v23M4.5 16h23" stroke="#00e5ff" stroke-width="1.15" opacity="0.3"/>
-  <rect x="11.25" y="11.25" width="9.5" height="9.5" fill="none" stroke="#00e5ff" stroke-width="1.5" opacity="0.75"/>
-  <rect x="14" y="14" width="4" height="4" fill="#00e5ff"/>
+  <rect width="32" height="32" fill="#0c0c0e"/>
+  <rect x="4.5" y="4.5" width="23" height="23" fill="none" stroke="#d0b07e" stroke-width="1.5" opacity="0.5"/>
+  <path d="M16 4.5v23M4.5 16h23" stroke="#d0b07e" stroke-width="1.15" opacity="0.3"/>
+  <rect x="11.25" y="11.25" width="9.5" height="9.5" fill="none" stroke="#d0b07e" stroke-width="1.5" opacity="0.75"/>
+  <rect x="14" y="14" width="4" height="4" fill="#d0b07e"/>
 </svg>

@@ -40,6 +40,8 @@ export type DevSpawn = (
   options: { cwd: string; env: NodeJS.ProcessEnv },
 ) => DevChild;
 
+export type HealthProbe = (url: string) => Promise<boolean>;
+
 export interface StartDevOptions {
   repoRoot: string;
   env: NodeJS.ProcessEnv;
@@ -47,6 +49,44 @@ export interface StartDevOptions {
   read: (p: string) => string;
   spawn: DevSpawn;
   log: (line: string) => void;
+  /** Injected so tests do not open a socket. Production probes `GET /health`. */
+  probe: HealthProbe;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  readyTimeoutMs?: number;
+}
+
+export const READY_TIMEOUT_MS = 20_000;
+export const READY_INTERVAL_MS = 150;
+
+export type WaitHealthy = { ok: true } | { ok: false; error: string };
+
+/**
+ * Poll until the API accepts connections, or the budget runs out.
+ *
+ * Vite is up in tens of milliseconds. `tsx` + watch attach is not. Starting both
+ * at once is how `/dashboard.json` hits ECONNREFUSED and the console looks broken
+ * while the server is still printing its boot lines.
+ */
+export async function waitUntilHealthy(
+  url: string,
+  options: {
+    probe: HealthProbe;
+    sleep: (ms: number) => Promise<void>;
+    now: () => number;
+    timeoutMs: number;
+    intervalMs: number;
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const deadline = options.now() + options.timeoutMs;
+  while (options.now() < deadline) {
+    if (await options.probe(url)) return { ok: true };
+    await options.sleep(options.intervalMs);
+  }
+  return {
+    ok: false,
+    error: `API at ${url} did not become ready within ${options.timeoutMs}ms. Is port ${DEV_API_PORT} already taken?`,
+  };
 }
 
 /**
@@ -103,7 +143,9 @@ export function planDev(_repoRoot: string): DevPlan {
 
 export function startDev(
   options: StartDevOptions,
-): { ok: true; stop: () => void } | { ok: false; error: string } {
+):
+  | { ok: true; stop: () => void; ready: Promise<WaitHealthy> }
+  | { ok: false; error: string } {
   const envPath = path.join(options.repoRoot, ".env");
   const fromFile = options.exists(envPath) ? parseDotenv(options.read(envPath)) : {};
   const env = mergeEnv(options.env, fromFile);
@@ -111,6 +153,10 @@ export function startDev(
   if (!auth.ok) return { ok: false, error: auth.error };
 
   const plan = planDev(options.repoRoot);
+  const api = plan.children[0];
+  const ui = plan.children[1];
+  if (api === undefined || ui === undefined) return { ok: false, error: "dev plan is missing a child" };
+
   options.log(`geoqa console — UI ${plan.urls.ui}  (API ${plan.urls.api})`);
 
   const children: DevChild[] = [];
@@ -121,13 +167,34 @@ export function startDev(
     for (const child of children) child.kill("SIGTERM");
   };
 
-  for (const spec of plan.children) {
-    const child = options.spawn(spec.command, spec.args, { cwd: options.repoRoot, env });
-    child.onExit(() => {
+  const child = options.spawn(api.command, api.args, { cwd: options.repoRoot, env });
+  child.onExit(() => {
+    if (!stopping) stop();
+  });
+  children.push(child);
+
+  const ready = (async (): Promise<WaitHealthy> => {
+    const health = await waitUntilHealthy(`${plan.urls.api}/health`, {
+      probe: options.probe,
+      sleep: options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+      now: options.now ?? Date.now,
+      timeoutMs: options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+      intervalMs: READY_INTERVAL_MS,
+    });
+    if (!health.ok) {
+      options.log(health.error);
+      stop();
+      return health;
+    }
+    if (stopping) return { ok: false, error: "stopped before the UI started" };
+    const vite = options.spawn(ui.command, ui.args, { cwd: options.repoRoot, env });
+    vite.onExit(() => {
       if (!stopping) stop();
     });
-    children.push(child);
-  }
+    children.push(vite);
+    options.log(`API is up — starting Vite on ${plan.urls.ui}`);
+    return { ok: true };
+  })();
 
-  return { ok: true, stop };
+  return { ok: true, stop, ready };
 }

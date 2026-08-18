@@ -114,7 +114,16 @@ export function LiveVisit({ runId }: { runId: string }): JSX.Element {
           </div>
           <div className="live-stage">
             {frame !== "" ? <img src={frame} alt={session.target} /> : <div className="live-wait">awaiting frame</div>}
-            {live ? <span className="live-pulse" aria-hidden="true" /> : null}
+            {live ? (
+              <>
+                <span className="wake-layer" aria-hidden>
+                  <span className="wake-ring wake-ring-a" />
+                  <span className="wake-ring wake-ring-b" />
+                  <span className="wake-ring wake-ring-c" />
+                </span>
+                <span className="live-pulse" aria-hidden="true" />
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -128,7 +128,7 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
       }),
   });
 
-  server.listen(options.port, () => {
+  server.listen(options.port, "127.0.0.1", () => {
     options.log(`geoqa server on http://127.0.0.1:${options.port}`);
     options.log(`  serving ${options.uiRoot}`);
     options.log(`  evidence ${options.evidenceRoot}`);
