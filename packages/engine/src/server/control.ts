@@ -37,6 +37,8 @@ export interface ControlDeps {
   addTarget: (body: unknown) => ControlOutcome<unknown>;
   removeTarget: (body: unknown) => ControlOutcome<unknown>;
   startNow: () => ControlOutcome<unknown>;
+  /** Persisted operator log — stalls, sweep failures. Survives a restart. */
+  watchLog: () => unknown;
   live: () => unknown;
   liveFrame: (id: string) => { mime: string; data: string } | null;
   /** One session, by board id or by the run id the engine named. */
@@ -86,6 +88,7 @@ export function routeControl(request: ControlRequest, control: ControlDeps | und
   const { method, path } = request;
 
   if (path === "/api/watch" && method === "GET") return json(200, control.watch());
+  if (path === "/api/watch/log" && method === "GET") return json(200, control.watchLog());
   if (path === "/api/watch" && method === "PUT") {
     const parsed = safeObject(request.body);
     if (parsed === null) return json(400, { error: "a watch patch must be a JSON object" });

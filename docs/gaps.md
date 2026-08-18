@@ -247,7 +247,9 @@ Still open, and each is a different kind of open:
   Residue: there is still no Temporal cron and no durable schedule. A process
   that dies mid-sweep loses the in-flight board (the evidence packages remain).
   The last start and last finish are persisted under the evidence root, so a
-  restart does not look like a first sweep. The CLI `matrix run` is unchanged
+  restart does not look like a first sweep. A hung session is named after 90s
+  (`watch/health.ts`) and written to `watch-log.jsonl`, which survives a
+  restart — the board itself is still memory. The CLI `matrix run` is unchanged
   — a human can still type the command.
 - **On Playwright, N concurrent scenarios launch N browsers.** `buildRuntime`
   opens one browser per run, so the per-context proxy that made concurrency

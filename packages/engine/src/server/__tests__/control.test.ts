@@ -7,6 +7,7 @@ const control = (over: Partial<ControlDeps> = {}): ControlDeps => ({
   addTarget: () => ({ ok: true, value: { targets: ["https://digilist.no"] } }),
   removeTarget: () => ({ ok: true, value: { targets: [] } }),
   startNow: () => ({ ok: true, value: { started: true } }),
+  watchLog: () => ({ events: [] }),
   live: () => ({ sessions: [], inFlight: 0 }),
   liveFrame: () => null,
   liveSession: () => null,
@@ -31,6 +32,7 @@ describe("routeControl", () => {
   it("returns the current watch and the live board", () => {
     const c = control();
     expect(JSON.parse(routeControl(req("/api/watch"), c).body)).toEqual({ enabled: false });
+    expect(JSON.parse(routeControl(req("/api/watch/log"), c).body)).toEqual({ events: [] });
     expect(JSON.parse(routeControl(req("/api/live"), c).body)).toEqual({ sessions: [], inFlight: 0 });
   });
 

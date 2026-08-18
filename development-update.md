@@ -19,6 +19,26 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-18 — The watch reports its own failures
+
+Live looking busy is not the same as a sweep that is moving. Chromium
+dropping proxy credentials left two sessions on "preparing" until the
+command timeout, and the only record was journalctl. The watch now
+assesses itself every tick: a session with no step, frame or phase
+change for 90 seconds is `stalled`; a sweep in flight with an empty
+board is `hung`; a throw is `failed`. Those findings go to
+`watch-log.jsonl` under the tenant evidence root — newest 400 lines,
+survives a restart — and to Watch and Live as a health reading.
+
+`GET /api/watch` carries `health` and `log`. `GET /api/watch/log` is
+the same ring for a machine client. `/health` stays `{ok:true}` so
+Caddy does not take the console down when a browser hangs.
+
+Where: `watch/health.ts`, `watch/log.ts`, `server/watch-loop.ts`,
+Watch and Live in `apps/ui`.
+
+---
+
 ## 2026-08-18 — The VPS ships from a GitHub Action
 
 The console on `geoqa.srv1212925.hstgr.cloud` can be updated without SSHing

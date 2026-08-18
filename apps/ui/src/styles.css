@@ -920,6 +920,11 @@ a.tag:hover {
   font-weight: 500;
 }
 
+.note.bad {
+  border-color: color-mix(in srgb, var(--fg-fail) 40%, transparent);
+  color: var(--fg-fail);
+}
+
 .empty {
   padding: 4rem 1.25rem;
   border: 1px dashed var(--stroke-default);

@@ -109,17 +109,21 @@ describe("tenant digilist", () => {
     }
   });
 
-  it("watch.yaml parses as the hourly seeded pulse, and every name it uses exists", () => {
+  it("watch.yaml parses as the seeded pulse, and every name it uses exists", () => {
     const watch = loadWatch(path.join(tenantsDir, "digilist", "watch.yaml"), (p) => readFileSync(p, "utf8"));
     if (!watch.ok) throw new Error(watch.errors.join("\n"));
     expect(watch.value.tenantId).toBe("digilist");
     expect(watch.value.journeyPick).toBe("seeded");
     expect(watch.value.allowWrites).toBe(false);
-    expect(watch.value.enabled).toBe(false);
+    expect(watch.value.enabled).toBe(true);
     expect(watch.value.mode).toBe("periodic");
-    expect(watch.value.everyMinutes).toBe(60);
-    expect(watch.value.devices).toEqual(["mobile"]);
-    expect(watch.value.targets).toEqual(["https://digilist.no", "https://app.digilist.no"]);
+    expect(watch.value.everyMinutes).toBe(90);
+    expect(watch.value.devices).toEqual(["desktop"]);
+    expect(watch.value.targets).toEqual([
+      "https://digilist.no",
+      "https://app.digilist.no",
+      "https://xala.no",
+    ]);
     expect(watch.value.markets).toEqual(tenant.value.markets);
     expect(watch.value.markets).toEqual(expect.arrayContaining([
       "moss",
@@ -151,9 +155,9 @@ describe("tenant digilist", () => {
       if (!watch.value.allowWrites) expect(writes.has(id), id).toBe(false);
     }
     // Audit 2026-08-18 §2: returning-visitor asserts a restored session as a
-    // site defect. The pulse is mobile + agent-browser; every profile there
-    // is anonymous, and that engine isolates cookies per run. Drawn once in
-    // five cells it would file ~326 fabricated high/functional findings a day.
+    // site defect. The pulse is desktop + agent-browser + anonymous; that
+    // engine isolates cookies per run. The journey still does not belong
+    // on this watch.
     expect(watch.value.journeys).not.toContain("returning-visitor");
 
     // cells × hours-per-day. A ceiling below that refuses mid-day and looks

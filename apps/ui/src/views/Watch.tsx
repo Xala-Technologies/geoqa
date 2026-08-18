@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useState, type FormEvent, type JSX } from "react";
 import { getJson, sendJson } from "../api.ts";
+import { WatchHealth, type WatchHealthView, type WatchLogLine } from "./WatchHealth.tsx";
 
 interface JourneyInfo {
   id: string;
@@ -39,6 +40,8 @@ interface WatchView {
   inFlight: number;
   nextDueAt: string | null;
   decision: { action: string; reason: string };
+  health?: WatchHealthView;
+  log?: WatchLogLine[];
 }
 
 export function Watch(): JSX.Element {
@@ -121,6 +124,8 @@ export function Watch(): JSX.Element {
       </div>
 
       {problem !== null && <div className="note">{problem}</div>}
+
+      {data.health !== undefined ? <WatchHealth health={data.health} log={data.log ?? []} /> : null}
 
       <div className="panel">
         <div className="panel-head">

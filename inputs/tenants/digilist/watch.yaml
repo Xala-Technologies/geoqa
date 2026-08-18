@@ -1,18 +1,16 @@
 # Operator-controlled watch. The console writes this file; do not put credentials here.
 # Markets must be ones the tenant listed. A writes journey needs allowWrites: true.
 #
-# Hourly VPS pulse: 34 cities × 2 URLs × 1 seeded journey = 68 runs/hour.
-# The draw is UTC-hour + market + url — not Math.random(). contact-form /
-# explore stay off until allowWrites is on. returning-visitor is off the
-# pool (audit 2026-08-18 §2): it needs a restored session and a returning
-# desktop profile; every watch cell is mobile + agent-browser + anonymous,
-# so a fifth of the pulse would file fabricated high/functional defects.
-# xala.no and dev.digilist.no are daily, not hourly.
-# Paused 2026-08-18: Decodo returns 407 on CONNECT.
+# 34 cities × 3 URLs × desktop × 1 seeded journey = 102 cells. Hourly that is 2,448
+# runs/day and ~73 GB/month against a 50 GB Decodo account, so the tick is
+# 90 minutes (16 sweeps/day → 1,632 runs, ~49 GB). The draw is UTC-hour +
+# market + url — not Math.random(). contact-form / explore stay off until
+# allowWrites is on. returning-visitor is off the pool (audit 2026-08-18 §2).
+# dev.digilist.no stays off this pulse (staging).
 tenantId: digilist
-enabled: false
+enabled: true
 mode: periodic
-everyMinutes: 60
+everyMinutes: 90
 restSeconds: 60
 markets:
   - oslo
@@ -50,7 +48,7 @@ markets:
   - lillestrom
   - sola
 devices:
-  - mobile
+  - desktop
 journeys:
   - landing-page
   - browse
@@ -59,6 +57,7 @@ journeys:
 targets:
   - https://digilist.no
   - https://app.digilist.no
+  - https://xala.no
 maxConcurrent: 2
 allowWrites: false
 journeyPick: seeded

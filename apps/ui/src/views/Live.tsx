@@ -50,10 +50,16 @@ interface LiveEvent {
   runId?: string;
 }
 
+interface WatchHealth {
+  status: string;
+  findings: { kind: string; message: string; sessionId?: string }[];
+}
+
 interface LiveBoard {
   sessions: LiveSession[];
   inFlight: number;
   events: LiveEvent[];
+  health?: WatchHealth;
 }
 
 interface Frame {
@@ -79,6 +85,7 @@ export function Live({ selectedId }: { selectedId: string | undefined }): JSX.El
             sessions: result.value.sessions,
             inFlight: result.value.inFlight,
             events: result.value.events ?? [],
+            ...(result.value.health !== undefined ? { health: result.value.health } : {}),
           });
           setProblem(null);
           for (const session of result.value.sessions) {
@@ -119,6 +126,8 @@ export function Live({ selectedId }: { selectedId: string | undefined }): JSX.El
   const active = board.sessions.filter((s) => s.status !== "done");
   const recent = board.sessions.filter((s) => s.status === "done");
   const log = [...board.events].reverse().slice(0, 16);
+  const stalled = new Set((board.health?.findings ?? []).flatMap((f) => (f.sessionId !== undefined ? [f.sessionId] : [])));
+  const watchProblem = board.health !== undefined && (board.health.status === "stalled" || board.health.status === "failed");
 
   return (
     <>
@@ -130,6 +139,12 @@ export function Live({ selectedId }: { selectedId: string | undefined }): JSX.El
         </p>
       </div>
 
+      {watchProblem ? (
+        <div className="note bad">
+          {board.health?.findings.map((f) => f.message).join(" · ") || `watch is ${board.health?.status}`}
+        </div>
+      ) : null}
+
       {selectedId !== undefined ? <LiveVisit runId={selectedId} /> : null}
 
       {active.length === 0 && recent.length === 0 && selectedId === undefined ? (
@@ -140,10 +155,10 @@ export function Live({ selectedId }: { selectedId: string | undefined }): JSX.El
       ) : (
         <div className="live-grid">
           {active.map((s) => (
-            <SessionCard key={s.id} session={s} frame={frames[s.id]} selected={selectedId === s.id || selectedId === s.runId} />
+            <SessionCard key={s.id} session={s} frame={frames[s.id]} selected={selectedId === s.id || selectedId === s.runId} stalled={stalled.has(s.id)} />
           ))}
           {recent.map((s) => (
-            <SessionCard key={s.id} session={s} frame={frames[s.id]} selected={selectedId === s.id || selectedId === s.runId} />
+            <SessionCard key={s.id} session={s} frame={frames[s.id]} selected={selectedId === s.id || selectedId === s.runId} stalled={false} />
           ))}
         </div>
       )}
@@ -175,10 +190,12 @@ function SessionCard({
   session,
   frame,
   selected,
+  stalled,
 }: {
   session: LiveSession;
   frame: string | undefined;
   selected: boolean;
+  stalled: boolean;
 }): JSX.Element {
   const step =
     session.stepLabel === null
@@ -212,7 +229,7 @@ function SessionCard({
       <div className="live-meta">
         <div className="live-k">
           {session.market} · {session.device}
-          {session.verdict !== null ? <span className={`pill ${verdictTone(session.verdict)}`}>{session.verdict}</span> : <span className="pill unknown">{session.status}</span>}
+          {stalled ? <span className="pill bad">stalled</span> : session.verdict !== null ? <span className={`pill ${verdictTone(session.verdict)}`}>{session.verdict}</span> : <span className="pill unknown">{session.status}</span>}
         </div>
         <div className="mono">{session.target.replace(/^https?:\/\//, "")}</div>
         <div className="dim">

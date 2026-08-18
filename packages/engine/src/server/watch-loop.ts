@@ -2,12 +2,13 @@
  * The in-process scheduler: tick the watch, launch a matrix, update the live board.
  *
  * Coverage-excluded with `start.ts`. Every decision it makes is in `watch/tick.ts`,
- * `watch/store.ts` and `watch/live.ts`, which are fully covered. This file binds a
- * timer, reads YAML, and calls `matrixRun` — exercising it means launching Chrome.
+ * `watch/store.ts`, `watch/live.ts`, `watch/health.ts` and `watch/log.ts`, which
+ * are fully covered. This file binds a timer, reads YAML, and calls `matrixRun`
+ * — exercising it means launching Chrome.
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { controlRun, DEFAULT_ENGINE, defaultDeps, matrixRun, resolveProfileId } from "../cli/commands.js";
+import { controlRun, defaultDeps, matrixRun, resolveProfileId } from "../cli/commands.js";
 import { liveDashboardUrl } from "../cli/events.js";
 import { loadJourney } from "../journeys/spec.js";
 import { acceptRun, type AcceptedRun } from "./accept-run.js";
@@ -22,6 +23,8 @@ import { journeysRoot, tenantsRoot } from "../repo.js";
 import { nextSlice } from "../watch/cursor.js";
 import { pickSeededCells } from "../watch/journey-pick.js";
 import { parseWatch, type WatchSpec } from "../watch/spec.js";
+import { assessWatch, findingKey, unreportedFindings, type WatchHealth } from "../watch/health.js";
+import { appendWatchEvent, eventFromFinding, readWatchLog, recentWatchEvents, type WatchLogEvent } from "../watch/log.js";
 import { expandMatrix } from "../run/matrix.js";
 import type { ControlDeps, ControlOutcome } from "./control.js";
 
@@ -45,6 +48,13 @@ export interface WatchLoop {
 
 const TICK_MS = 5_000;
 const KEEP_LIVE_MS = 30 * 60_000;
+/**
+ * Chromium's `--proxy-server` drops userinfo. agent-browser launches that
+ * way, so Decodo is reached and never authenticated — Live then sits on
+ * "preparing" until the command timeout. Playwright splits username/
+ * password onto the context (`playwrightProxy` in playwright-launch.ts).
+ */
+const WATCH_ENGINE = "playwright" as const;
 
 export function attachWatch(options: WatchLoopOptions): WatchLoop {
   const live = new LiveRegistry();
@@ -59,7 +69,42 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
   let lastFinishedMs: number | null = clock.lastFinishedMs;
   let cursor = clock.cursor;
   let inFlight = 0;
+  let lastSweepError: string | null = null;
+  const reported = new Set<string>();
   const persistClock = (): void => saveWatchClock(clockFile, { lastStartedMs, lastFinishedMs, cursor });
+
+  const record = (event: WatchLogEvent): void => {
+    const problem = appendWatchEvent(options.evidenceRoot, event);
+    if (problem !== null) options.log(`watch: ${problem}`);
+    if (event.level === "error" || event.level === "warning") {
+      options.log(`watch: ${event.kind} — ${event.message}`);
+    }
+  };
+
+  const snapshot = (): WatchHealth =>
+    assessWatch({
+      enabled: current().enabled,
+      nowMs: options.now(),
+      lastStartedMs,
+      lastFinishedMs,
+      inFlight,
+      sessions: live.list(),
+      lastSweepError,
+    });
+
+  const observe = (): WatchHealth => {
+    const health = snapshot();
+    const present = new Set(health.findings.map(findingKey));
+    for (const key of reported) {
+      if (!present.has(key)) reported.delete(key);
+    }
+    const at = new Date(options.now()).toISOString();
+    for (const finding of unreportedFindings(health.findings, reported)) {
+      record(eventFromFinding(finding, at));
+      reported.add(findingKey(finding));
+    }
+    return health;
+  };
 
   const allowed = (): WatchAllowed => ({
     markets: options.markets,
@@ -88,6 +133,8 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       inFlight,
       nextDueAt: decision.nextMs === null ? null : new Date(decision.nextMs).toISOString(),
       decision: { action: decision.action, reason: decision.reason },
+      health: snapshot(),
+      log: recentWatchEvents(readWatchLog(options.evidenceRoot).events),
     };
   };
 
@@ -97,13 +144,27 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
     const planned = planSweep(spec, options.tenant, options.journeys);
     if (!planned.ok) {
       options.log(`watch: refused ${planned.error}`);
+      lastSweepError = planned.error;
+      record({
+        at: new Date(options.now()).toISOString(),
+        level: "warning",
+        kind: "sweep-refused",
+        message: planned.error,
+      });
       return;
     }
     inFlight += 1;
+    lastSweepError = null;
     const startedMs = options.now();
     lastStartedMs = startedMs;
     persistClock();
     options.log(`watch: starting sweep (${reason}) — ${planned.axes.targets.length} url(s) × ${planned.axes.markets.length} market(s)`);
+    record({
+      at: new Date(startedMs).toISOString(),
+      level: "info",
+      kind: "sweep-started",
+      message: `starting sweep (${reason}) — ${planned.axes.targets.length} url(s) × ${planned.axes.markets.length} market(s)`,
+    });
     const deps = defaultDeps(options.repoRoot, {
       evidenceRoot: options.evidenceRoot,
       env: options.env,
@@ -193,11 +254,28 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
         targets: planned.axes.targets,
         providerName: options.config.network.provider,
         allowWrites: spec.allowWrites,
+        concurrency: spec.maxConcurrent,
+        engine: WATCH_ENGINE,
         ...(pick !== undefined ? { pick } : {}),
       });
       options.rebuild();
+      lastSweepError = null;
+      record({
+        at: new Date(options.now()).toISOString(),
+        level: "info",
+        kind: "sweep-finished",
+        message: "sweep finished",
+      });
     } catch (thrown) {
-      options.log(`watch: sweep failed — ${thrown instanceof Error ? thrown.message : String(thrown)}`);
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      lastSweepError = message;
+      options.log(`watch: sweep failed — ${message}`);
+      record({
+        at: new Date(options.now()).toISOString(),
+        level: "error",
+        kind: "sweep-failed",
+        message,
+      });
     } finally {
       inFlight = Math.max(0, inFlight - 1);
       lastFinishedMs = options.now();
@@ -240,6 +318,7 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
         profileId: accepted.profileId,
         journeyId: accepted.request.journey,
         providerName: options.config.network.provider,
+        engine: WATCH_ENGINE,
         ...(accepted.request.locale ? { locale: accepted.request.locale } : {}),
         ...(accepted.request.timezone ? { timezone: accepted.request.timezone } : {}),
         ...(accepted.request.sessionDurationMinutes !== undefined
@@ -293,18 +372,33 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
   };
 
   const timer = setInterval(() => {
+    observe();
     startIfDue(false);
   }, TICK_MS);
+
+  if (!loadedClock.ok) {
+    record({
+      at: new Date(options.now()).toISOString(),
+      level: "warning",
+      kind: "clock-unreadable",
+      message: loadedClock.errors.join("; "),
+    });
+  }
 
   const boot = current();
   options.log(
     `watch: ${boot.enabled ? "armed" : "paused"} for ${options.tenant.id} (${boot.mode}, ${boot.targets.length} url(s), ${boot.markets.length} market(s))`,
   );
+  observe();
 
   return {
     stop: () => clearInterval(timer),
     control: {
       watch: view,
+      watchLog: () => {
+        const read = readWatchLog(options.evidenceRoot);
+        return { events: recentWatchEvents(read.events), skipped: read.skipped };
+      },
       saveWatch: (body) => {
         const patched = applyWatchPatch(current(), body, allowed());
         if (!patched.ok) return fail(patched.errors.join("; "));
@@ -326,7 +420,6 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
         return { ok: true, value: view() };
       },
       startNow: () => startIfDue(true),
-      live: () => ({ sessions: live.list(), inFlight }),
       liveSession: (id) => {
         if (!live.safeId(id)) return null;
         return live.find(id) ?? null;
@@ -359,7 +452,7 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
         });
         if (!accepted.ok) return fail(accepted.error);
         void launchOne(accepted);
-        const liveUrl = liveDashboardUrl(options.env, DEFAULT_ENGINE);
+        const liveUrl = liveDashboardUrl(options.env, WATCH_ENGINE);
         return {
           ok: true,
           value: {
@@ -371,7 +464,8 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
           },
         };
       },
-      runStatus: () => ({ inFlight, events: live.events(), sessions: live.list() }),
+      live: () => ({ sessions: live.list(), inFlight, events: live.events(), health: snapshot() }),
+      runStatus: () => ({ inFlight, events: live.events(), sessions: live.list(), health: snapshot() }),
     },
   };
 }

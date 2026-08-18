@@ -139,7 +139,7 @@ cli/          parse → dispatch → print (index.ts is thin; commands.ts holds 
 assist/       claude -p AFTER judgement (explain a brief). Never imported by run/journeys/geo
 config/       geoqa.config.json: schema + credential guard + IMPORTED defaults
 tenant/       registry (who owns what) → quota (refuse before launch) → usage-probe (the vendor's figure)
-watch/        operator surface: YAML spec → tick (when to start) → journey-pick (seeded) → live board
+watch/        operator surface: YAML spec → tick (when to start) → journey-pick (seeded) → live board → health + log
 server/       the operator console's HTTP side: auth → router → accept-run → watch-loop
 run/          context (RunSpec) → stages → execute (one run) → matrix (many, bounded)
 gate/         publish.ts — may this page go live? allow / block / unknown, DEFAULT DENY

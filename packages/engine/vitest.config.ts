@@ -35,8 +35,9 @@ export default defineConfig({
         // Wiring: reads the filesystem, binds a port, prints. Its one decision — refusing to
         // start without a configured password — is `readAuthConfig`, which is pure and covered.
         "src/server/start.ts",
-        // Timer + matrixRun. Every decision is in watch/tick.ts, watch/store.ts and
-        // watch/live.ts, which are fully covered. Exercising this file launches Chrome.
+        // Timer + matrixRun. Every decision is in watch/tick.ts, watch/store.ts,
+        // watch/live.ts, watch/health.ts and watch/log.ts, which are fully
+        // covered. Exercising this file launches Chrome.
         "src/server/watch-loop.ts",
         // Connects to Temporal and polls forever. Nothing to assert.
         "src/temporal/worker.ts",
