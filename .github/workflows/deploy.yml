@@ -1,10 +1,27 @@
 name: Deploy
 
-# Manual until you want every green `main` to ship. A push of this file alone
-# would otherwise rsync origin/main over the VPS and drop machine-local inputs
-# that are not on `main` yet. Run it from the Actions tab.
+# Every green CI on `main` ships, and the Actions tab can still ship on demand.
+#
+# This was manual until 2026-08-18, for a reason that has since been handled: an
+# rsync of `main` over the VPS would drop machine-local inputs that are not in
+# git. `infra/deploy.exclude` is what makes it safe — `.env`, `geoqa.config.json`,
+# `var/`, `apps/ui/dist` and `watch.yaml` are all left in place by `--delete`, so
+# the box keeps its credentials, its config, its evidence and the watch spec the
+# console writes. Everything else on the box is supposed to be a copy of `main`.
+#
+# It is gated on the CI CONCLUSION, not merely on CI finishing: `workflow_run`
+# fires for a failed run too, and a deploy that ships a red build is worse than
+# no automation at all.
+#
+# The checkout takes the SHA **CI actually tested**, not whatever `main` points at
+# by the time this starts. Two merges in quick succession would otherwise deploy
+# a commit no green run ever covered.
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
 
 concurrency:
   group: deploy-production
@@ -12,6 +29,9 @@ concurrency:
 
 jobs:
   deploy:
+    # `workflow_dispatch` has no `workflow_run` payload, so the conclusion is
+    # empty there and the `||` arm is what lets a manual run through.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -20,6 +40,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: SSH key
         run: |
