@@ -65,8 +65,11 @@ proxyCredentials: null
 proxySubUser: GEOQA_SUBUSER_DIGILIST
 quota:
   # Sized for the hourly watch pulse: 34 cities × 2 URLs × 1 journey = 68
-  # runs/hour → 1,632/day. 1,800 leaves room for a console "Run now".
-  # Traffic is 1 MB per page load × 1,632 × 30 days ≈ 49 GB.
+  # runs/hour → 1,632/day. 1,800 leaves ~10% for a console "Run now".
+  # Traffic is 1 MB per page load × 1,632 × 30 days ≈ 49 GB against a
+  # 50 GB account (audit 2026-08-18 §3). The 2% traffic headroom is
+  # deliberate: this tenant is the pulse. A second tenant on the same
+  # sub-account cannot be bounded by a ceiling this one already claims.
   trafficMb: 50000
   runsPerDay: 1800
 retentionDays: 30

@@ -3,10 +3,14 @@
 #
 # Hourly VPS pulse: 34 cities × 2 URLs × 1 seeded journey = 68 runs/hour.
 # The draw is UTC-hour + market + url — not Math.random(). contact-form /
-# explore stay off until allowWrites is on. xala.no and dev.digilist.no are
-# daily, not hourly. Armed on the VPS 2026-08-18.
+# explore stay off until allowWrites is on. returning-visitor is off the
+# pool (audit 2026-08-18 §2): it needs a restored session and a returning
+# desktop profile; every watch cell is mobile + agent-browser + anonymous,
+# so a fifth of the pulse would file fabricated high/functional defects.
+# xala.no and dev.digilist.no are daily, not hourly.
+# Paused 2026-08-18: Decodo returns 407 on CONNECT.
 tenantId: digilist
-enabled: true
+enabled: false
 mode: periodic
 everyMinutes: 60
 restSeconds: 60
@@ -52,7 +56,6 @@ journeys:
   - browse
   - search
   - reader
-  - returning-visitor
 targets:
   - https://digilist.no
   - https://app.digilist.no

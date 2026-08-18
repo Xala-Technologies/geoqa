@@ -63,12 +63,16 @@ jobs:
       - name: Test with coverage
         run: pnpm test:coverage
 
-      # The console has its own gate, on the module that makes decisions rather than on the
-      # ones that draw. It is a separate package with its own vitest, so it needs its own step
-      # — and the integration it guards (sign in, then read data) is exactly the seam that
-      # shipped broken while every server test passed.
-      - name: Console tests with coverage
+      # apps/ui — the signed-in fetch seam. A blank page shipped while every
+      # server test passed; this is that module's own 100% gate.
+      - name: UI tests with coverage
         run: pnpm test:ui
+
+      # apps/console — the process that starts the API and waits for /health.
+      # CI used to run `pnpm test:ui` under the title "Console tests" and never
+      # touched this package (audit 2026-08-18 §4).
+      - name: Console tests
+        run: pnpm test:console
 
       # Type-checks the console and builds it. A UI that does not compile is a server serving
       # a stale bundle, which is how a fixed bug appears to still be there.

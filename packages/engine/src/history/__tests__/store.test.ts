@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { HISTORY_SCHEMA_VERSION, parseRunRecord, toRunRecord, type RunRecord } from "../records.js";
+import { HISTORY_SCHEMA_VERSION, parseRunRecord, recordFromRunJson, toRunRecord, type RunRecord } from "../records.js";
 import {
   appendRun,
   filterHistory,
@@ -132,6 +132,24 @@ describe("toRunRecord", () => {
     expect(r.geo.city).toBe("unverified");
     expect(r.geo.observedCity).toBe("Lysaker");
     expect(r.latencyMs).toBe(88);
+  });
+});
+
+describe("recordFromRunJson", () => {
+  it("returns null for anything that is not a run", () => {
+    expect(recordFromRunJson(null, "run_1")).toBeNull();
+    expect(recordFromRunJson([], "run_1")).toBeNull();
+    expect(recordFromRunJson({}, "run_1")).toBeNull();
+  });
+
+  it("keeps unverified when run.json has no geo, and does not invent a city", () => {
+    const r = recordFromRunJson({ runId: "run_1", profile: { id: 7 }, journey: { id: 1, seed: "x" } }, "run_1");
+    expect(r?.geo.country).toBe("unverified");
+    expect(r?.geo.observedCountry).toBeNull();
+    expect(r?.profileId).toBe("");
+    expect(r?.journeyId).toBe("");
+    expect(r?.seed).toBe(0);
+    expect(r?.latencyMs).toBeNull();
   });
 });
 

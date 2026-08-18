@@ -1804,11 +1804,20 @@ describe("tenant scoping", () => {
 })
 
 describe("enforceQuota", () => {
-  const digilist = (): Tenant => {
-    const loaded = resolveTenant(deps(), "digilist");
-    if (!loaded.ok || loaded.tenant === null) throw new Error("expected tenant zero");
-    return loaded.tenant;
-  };
+  // Synthetic. The live digilist.yaml is an operator file — its budget is
+  // raised when the watch pulse grows, and a test that read 5000 from it
+  // went red the day that happened (audit 2026-08-18 §1). Existence checks
+  // still load the real tenant; the arithmetic here states its own numbers.
+  const budgeted = (quota: Tenant["quota"] = { trafficMb: 5000, runsPerDay: 200 }): Tenant => ({
+    id: "acme",
+    name: "Synthetic",
+    markets: ["oslo"],
+    targets: ["https://example.test"],
+    proxyCredentials: null,
+    proxySubUser: "GEOQA_SUBUSER_DIGILIST",
+    quota,
+    retentionDays: 14,
+  });
 
   const withUsage = (over: Partial<CommandDeps>, traffic: number | null, subUserName = "sub-1"): CommandDeps =>
     deps({
@@ -1818,14 +1827,14 @@ describe("enforceQuota", () => {
     });
 
   it("allows a run that fits inside the tenant's budget", async () => {
-    const decision = await enforceQuota(withUsage({}, 10), digilist(), 5);
+    const decision = await enforceQuota(withUsage({}, 10), budgeted(), 5);
     expect(decision.state).toBe("within");
     expect(decision.estimateMb).toBe(5);
   });
 
   it("REFUSES a sweep that would not fit, with the real page count", async () => {
-    // Tenant zero's budget is 5000 MB. Already spent 4900, and 430 pages is ~430 MB.
-    const decision = await enforceQuota(withUsage({}, 4900), digilist(), 430);
+    // Budget 5000 MB, stated here. Already spent 4900, and 430 pages is ~430 MB.
+    const decision = await enforceQuota(withUsage({}, 4900), budgeted(), 430);
     expect(decision.state).toBe("refused");
     expect(decision.errors[0]).toContain("430 MB");
   });
@@ -1833,7 +1842,7 @@ describe("enforceQuota", () => {
   it("treats an unreadable vendor as UNMEASURED and says the guard is not in force", async () => {
     // Never zero. An unread figure read as nothing spent authorises exactly the
     // unbounded sweep this exists to prevent.
-    const decision = await enforceQuota(withUsage({}, null), digilist(), 100);
+    const decision = await enforceQuota(withUsage({}, null), budgeted(), 100);
     expect(decision.state).toBe("unknown");
     expect(decision.warnings.join(" ")).toContain("NOT being enforced");
   });
@@ -1842,7 +1851,7 @@ describe("enforceQuota", () => {
     // The tenant names a variable; an unset variable is the same state as naming none
     // — and both are distinct from measuring zero.
     const probe = vi.fn(() => Promise.resolve([]));
-    const decision = await enforceQuota(deps({ env: { DECODO_API_KEY: "key" }, usageProbe: probe }), digilist(), 1);
+    const decision = await enforceQuota(deps({ env: { DECODO_API_KEY: "key" }, usageProbe: probe }), budgeted(), 1);
     expect(decision.state).toBe("unknown");
     // Not even asked: there is nothing to attribute a figure to.
     expect(probe).not.toHaveBeenCalled();
@@ -1850,7 +1859,7 @@ describe("enforceQuota", () => {
 
   it("does not call the vendor without an API key", async () => {
     const probe = vi.fn(() => Promise.resolve([]));
-    const decision = await enforceQuota(deps({ env: { GEOQA_SUBUSER_DIGILIST: "sub-1" }, usageProbe: probe }), digilist(), 1);
+    const decision = await enforceQuota(deps({ env: { GEOQA_SUBUSER_DIGILIST: "sub-1" }, usageProbe: probe }), budgeted(), 1);
     expect(decision.state).toBe("unknown");
     expect(probe).not.toHaveBeenCalled();
   });
@@ -1865,10 +1874,10 @@ describe("enforceQuota", () => {
     // A directory that is not a run must not count.
     mkdirSync(path.join(root, "visitors"), { recursive: true });
     const scoped = withUsage({ evidenceRoot: root, now: () => now }, 10);
-    const decision = await enforceQuota(scoped, digilist(), 1);
+    const decision = await enforceQuota(scoped, budgeted(), 1);
     expect(decision.state).toBe("within");
 
-    const capped = { ...digilist(), quota: { trafficMb: 5000, runsPerDay: 3 } };
+    const capped = budgeted({ trafficMb: 5000, runsPerDay: 3 });
     const refused = await enforceQuota(scoped, capped, 1);
     expect(refused.state).toBe("refused");
     expect(refused.errors[0]).toContain("3 run(s) today");
@@ -1877,7 +1886,7 @@ describe("enforceQuota", () => {
   it("treats a tenant's first run as zero runs rather than an error", async () => {
     // The tenant's directory does not exist yet. Refusing here would make the quota
     // check the thing that stops a tenant ever starting.
-    const decision = await enforceQuota(withUsage({ evidenceRoot: path.join(evidenceRoot, "never-written") }, 10), digilist(), 1);
+    const decision = await enforceQuota(withUsage({ evidenceRoot: path.join(evidenceRoot, "never-written") }, 10), budgeted(), 1);
     expect(decision.state).toBe("within");
   });
 })
@@ -2092,6 +2101,35 @@ describe("runs history", () => {
   it("reports a run.json with no runId as not describing a run", () => {
     const scoped = withIndex("", { [evidenceRoot]: ["run_1_a"] }, { [path.join(evidenceRoot, "run_1_a", "run.json")]: "{}" });
     expect(runsRebuild(scoped).unreadable[0]).toContain("did not describe a run");
+  });
+
+  it("keeps geo verdicts that run.json already recorded, rather than rewriting them as unverified", () => {
+    // collectEvidence writes the verified geo onto run.json. A rebuild that
+    // discarded it left the overview saying every axis was unverified after
+    // `runs rebuild` — the exact lie the three-valued model exists to prevent.
+    const runJson = JSON.stringify({
+      runId: "run_1000_oslo-mobile",
+      target: "https://a.test/",
+      profile: { id: "oslo-mobile" },
+      journey: { id: "landing-page", verdict: "PASS", seed: 3 },
+      geo: {
+        network: {
+          requested: { country: "NO", city: "Oslo" },
+          observed: { ip: "1.2.3.4", country: "DE", city: "Frankfurt am Main", latencyMs: 50 },
+          country: { verdict: "mismatch", reasons: [] },
+          city: { verdict: "mismatch", reasons: [] },
+          egressHeld: { verdict: "match", reasons: [] },
+          agreement: { verdict: "unverified", reasons: [] },
+        },
+      },
+    });
+    const scoped = withIndex("", { [evidenceRoot]: ["run_1000_oslo-mobile"] }, { [path.join(evidenceRoot, "run_1000_oslo-mobile", "run.json")]: runJson });
+    runsRebuild(scoped);
+    const rebuilt = runsList(scoped).runs[0];
+    expect(rebuilt?.geo.country).toBe("mismatch");
+    expect(rebuilt?.geo.observedCountry).toBe("DE");
+    expect(rebuilt?.geo.observedCity).toBe("Frankfurt am Main");
+    expect(rebuilt?.latencyMs).toBe(50);
   });
 
   it("derives a rebuilt run's start time from its run id", () => {

@@ -153,6 +153,67 @@ export function toRunRecord(
 }
 
 /**
+ * Reduce a `run.json` document to an index record.
+ *
+ * `collectEvidence` writes the verified geo onto that file. A rebuild that
+ * discarded it rewrote every axis as `unverified` and every city as `?/?` —
+ * the three-valued model, undone by the cache that claims to reconstruct it.
+ * Confidence and vitals are still absent here: they are assembled after the
+ * write, so inventing them would be a different lie.
+ */
+export function recordFromRunJson(runJson: unknown, runId: string): RunRecord | null {
+  if (typeof runJson !== "object" || runJson === null) return null;
+  const doc = runJson as {
+    runId?: unknown;
+    target?: unknown;
+    profile?: { id?: unknown };
+    journey?: { id?: unknown; verdict?: unknown; seed?: unknown };
+    geo?: {
+      network?: {
+        requested?: { country?: unknown; city?: unknown };
+        observed?: { country?: unknown; city?: unknown; latencyMs?: unknown };
+        country?: { verdict?: unknown };
+        city?: { verdict?: unknown };
+        egressHeld?: { verdict?: unknown };
+        agreement?: { verdict?: unknown };
+      };
+    };
+  };
+  if (typeof doc.runId !== "string") return null;
+  const network = doc.geo?.network;
+  const axis = (value: unknown, fallback: string): string => (typeof value === "string" ? value : fallback);
+  const observed = (value: unknown): string | null => (typeof value === "string" ? value : null);
+  return {
+    schemaVersion: HISTORY_SCHEMA_VERSION,
+    runId: doc.runId,
+    tenantId: null,
+    target: typeof doc.target === "string" ? doc.target : "",
+    profileId: typeof doc.profile?.id === "string" ? doc.profile.id : "",
+    journeyId: typeof doc.journey?.id === "string" ? doc.journey.id : "",
+    verdict: (typeof doc.journey?.verdict === "string" ? doc.journey.verdict : "ERROR") as RunRecord["verdict"],
+    startedAt: new Date(Number(/^run_(\d+)_/.exec(runId)?.[1] ?? 0)).toISOString(),
+    durationMs: 0,
+    seed: typeof doc.journey?.seed === "number" ? doc.journey.seed : 0,
+    engine: "unknown",
+    evidenceId: null,
+    findings: { total: 0, bySeverity: {}, byCategory: {}, labels: [] },
+    confidence: { overall: 0, geo: 0, browser: 0, journey: 0, evidence: 0 },
+    geo: {
+      requestedCountry: axis(network?.requested?.country, ""),
+      requestedCity: axis(network?.requested?.city, ""),
+      observedCountry: observed(network?.observed?.country),
+      observedCity: observed(network?.observed?.city),
+      country: axis(network?.country?.verdict, "unverified"),
+      city: axis(network?.city?.verdict, "unverified"),
+      egressHeld: axis(network?.egressHeld?.verdict, "unverified"),
+      agreement: axis(network?.agreement?.verdict, "unverified"),
+    },
+    latencyMs: typeof network?.observed?.latencyMs === "number" ? network.observed.latencyMs : null,
+    vitals: { lcp: null, cls: null, ttfb: null, inp: null },
+  };
+}
+
+/**
  * Parse one index line.
  *
  * `null` for anything unreadable, and the caller reports how many lines it skipped.

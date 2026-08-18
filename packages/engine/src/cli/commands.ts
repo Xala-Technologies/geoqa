@@ -98,7 +98,7 @@ import {
   type HistorySummary,
   type Regression,
 } from "../history/store.js";
-import { HISTORY_SCHEMA_VERSION, type RunRecord } from "../history/records.js";
+import { recordFromRunJson, type RunRecord } from "../history/records.js";
 import type { Tenant } from "../tenant/types.js";
 import { executeRun, prepareRun, type RunProgress } from "../run/execute.js";
 import {
@@ -2177,45 +2177,7 @@ export function runsList(
 export function runsRebuild(deps: CommandDeps): { written: number; unreadable: string[] } {
   return rebuildHistory(
     deps.evidenceRoot,
-    (runJson, runId) => {
-      // `run.json` holds the run, the profile and the journey; a record needs the
-      // result shape, so the fields are read defensively rather than cast. A file that
-      // does not describe a run is reported by the caller, not guessed at.
-      const doc = runJson as { runId?: string; target?: string; profile?: { id?: string }; journey?: { id?: string; verdict?: string; seed?: number } };
-      if (typeof doc.runId !== "string") return null;
-      return {
-        schemaVersion: HISTORY_SCHEMA_VERSION,
-        runId: doc.runId,
-        tenantId: null,
-        target: typeof doc.target === "string" ? doc.target : "",
-        profileId: doc.profile?.id ?? "",
-        journeyId: doc.journey?.id ?? "",
-        // The JOURNEY's verdict, which is what run.json records. A rebuilt record is
-        // therefore slightly poorer than an appended one — run.json does not carry the
-        // assembled run verdict or the confidence report — and that is stated rather
-        // than papered over with defaults that would read as real readings.
-        verdict: (doc.journey?.verdict as RunRecord["verdict"] | undefined) ?? "ERROR",
-        startedAt: new Date(Number(/^run_(\d+)_/.exec(runId)?.[1] ?? 0)).toISOString(),
-        durationMs: 0,
-        seed: doc.journey?.seed ?? 0,
-        engine: "unknown",
-        evidenceId: null,
-        findings: { total: 0, bySeverity: {}, byCategory: {}, labels: [] },
-        confidence: { overall: 0, geo: 0, browser: 0, journey: 0, evidence: 0 },
-        geo: {
-          requestedCountry: "",
-          requestedCity: "",
-          observedCountry: null,
-          observedCity: null,
-          country: "unverified",
-          city: "unverified",
-          egressHeld: "unverified",
-          agreement: "unverified",
-        },
-        latencyMs: null,
-        vitals: { lcp: null, cls: null, ttfb: null, inp: null },
-      };
-    },
+    (runJson, runId) => recordFromRunJson(runJson, runId),
     historyFsOf(deps),
   );
 }

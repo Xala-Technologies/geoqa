@@ -150,6 +150,11 @@ describe("tenant digilist", () => {
       expect(journeyIds, id).toContain(id);
       if (!watch.value.allowWrites) expect(writes.has(id), id).toBe(false);
     }
+    // Audit 2026-08-18 §2: returning-visitor asserts a restored session as a
+    // site defect. The pulse is mobile + agent-browser; every profile there
+    // is anonymous, and that engine isolates cookies per run. Drawn once in
+    // five cells it would file ~326 fabricated high/functional findings a day.
+    expect(watch.value.journeys).not.toContain("returning-visitor");
 
     // cells × hours-per-day. A ceiling below that refuses mid-day and looks
     // like a broken proxy.

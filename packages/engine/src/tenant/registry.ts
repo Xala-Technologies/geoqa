@@ -147,6 +147,20 @@ export function tenantEvidenceRoot(evidenceRoot: string, tenantId: string): Pars
 }
 
 /**
+ * Where the console reads evidence when it is operating a tenant.
+ *
+ * `--tenant` already nests CLI runs under `<root>/<id>`. The server used to
+ * keep reading `<root>` itself, so Overview showed 0 visits next to a PASS
+ * written one directory down. An absent or illegal id stays on the shared
+ * root — nesting is a scope, not a guess.
+ */
+export function consoleEvidenceRoot(evidenceRoot: string, tenantId: string | undefined): string {
+  if (tenantId === undefined || tenantId === "") return evidenceRoot;
+  const nested = tenantEvidenceRoot(evidenceRoot, tenantId);
+  return nested.ok ? nested.value : evidenceRoot;
+}
+
+/**
  * May this tenant be run against this URL?
  *
  * Origin comparison, not prefix: `https://digilist.no.evil.test` starts with

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { containedPath, loadTenant, parseTenant, tenantEvidenceRoot, tenantOwnsTarget, TenantIdSchema } from "../registry.js";
+import { containedPath, consoleEvidenceRoot, loadTenant, parseTenant, tenantEvidenceRoot, tenantOwnsTarget, TenantIdSchema } from "../registry.js";
 import type { Tenant } from "../types.js";
 import { findRepoRoot, tenantsRoot } from "../../repo.js";
 
@@ -135,6 +135,25 @@ describe("containedPath — the containment primitive", () => {
     if (result.ok) throw new Error("expected a refusal");
     expect(result.errors[0]).toContain("is not inside");
     expect(result.errors[0]).toContain("cross-tenant read");
+  });
+});
+
+describe("consoleEvidenceRoot — the console reads the tenant it is operating", () => {
+  const root = "/var/geoqa/evidence";
+
+  it("nests under the first tenant, so a --tenant run is visible on the overview", () => {
+    // The console used to read the shared root while every real run wrote
+    // `<root>/<tenantId>/`. Overview then showed 0 visits next to a PASS on disk.
+    expect(consoleEvidenceRoot(root, "digilist")).toBe(path.resolve(root, "digilist"));
+  });
+
+  it("stays on the shared root when there is no tenant", () => {
+    expect(consoleEvidenceRoot(root, undefined)).toBe(root);
+    expect(consoleEvidenceRoot(root, "")).toBe(root);
+  });
+
+  it("refuses to nest a traversing id rather than following it", () => {
+    expect(consoleEvidenceRoot(root, "..")).toBe(root);
   });
 });
 

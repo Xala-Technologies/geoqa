@@ -19,7 +19,7 @@ the layering invariants were enforced by review only ([D-1](#d-1--the-layer-map-
 a Playwright trace was written to a `.json` path ([D-1c](#d-1c--closed-a-trace-carries-its-own-format));
 the JSON contract was unversioned ([D-3](#d-3--closed-the-json-contract-carries-a-version));
 nothing pruned evidence ([D-4](#d-4--closed-evidence-has-a-shelf-life-now));
-EXP-007 was cited and did not exist ([A-3b](#a-3b--exp-007-exists-now-and-has-never-been-run));
+EXP-007 was cited and did not exist ([A-3b](#a-3b--exp-007-has-been-run-once-peak-memory-is-still-unmeasured));
 and the matrix had no entrypoint ([D-2](#d-2--the-in-process-matrix-runs-the-durable-one-still-cannot-be-started)).
 
 Each entry says how it was established, so it can be re-checked rather than
@@ -27,10 +27,12 @@ believed. Items marked **verified now** were confirmed against files in the
 working tree while writing this document; they are not inherited from a report or
 from the README.
 
-**One entry is red right now** and will fail on the next run of the suite it
-belongs to:
-[B-10](#b-10--closed--the-e2e-derives-the-trace-filename).
-It is one filename. Start there.
+**This file's "start here" pointer used to name B-10, which is closed.**
+The fresher pass is [audit 2026-08-18](audit-2026-08-18.md). The suite
+coupling it called red (a quota test reading the live tenant file) is
+closed in the same change as this sentence. What is red *operationally*
+is Decodo CONNECT returning 407 from the VPS — that is not a gaps entry,
+it is a credential.
 
 Sections: [capability](#a-capability-gaps) · [defects](#b-defects-verified-now) ·
 [measurement](#c-measurement-gaps) · [tooling](#d-tooling-and-process-gaps)
@@ -254,40 +256,23 @@ Still open, and each is a different kind of open:
 
 Where: `run/matrix.ts`, `cli/commands.ts` (`matrixRun`, `scenarioSeed`).
 
-### A-3b · EXP-007 exists now, and has never been run
+### A-3b · EXP-007 has been run once; peak-memory is still unmeasured
 
-**Closed as a citation gap.** `EXP_007` is a real `ExperimentSpec` with five
-metrics, registered in `EXPERIMENTS`, with a `{sample, summarise}` pair in
-`SAMPLERS` and an `experiments/EXP-007-concurrency/` directory. One sample is a
-**solo control run first, alone**, then a batch of N at once — without the control
-"the batch agreed with itself" scores a meaningless 100%. Each batch session gets
-a distinct profile, and asking for more sessions than there are profiles
-**refuses**: a run id is `run_<ms>_<profileId>`, so two sessions on one profile in
-the same millisecond collide on the run id, hence on the agent-browser session
-name, and the daemon hands back the *same* browser — the batch would measure one
-browser twice while reporting two.
+**Closed as "never run" and as "the flag does not reach it".** The sampler,
+directory and flags exist. A run on 2026-08-13 is in
+`inputs/experiments/EXP-007-concurrency/summary.json`: 1 sample, completion /
+verdict-agreement / egress-held all 100%, wall-clock factor 0.92. `--concurrency`,
+`--stability-window` and `--stability-reads` are parsed by `experimentKnobs` and
+spread into `experimentRun` (`cli/index.ts`).
 
-Three things remain true, and the first is the one that matters:
+What remains:
 
-- **The experiment has not been run.** The directory documents an experiment that
-  has not happened: no `results.jsonl`, no `summary.json`, the verdict column reads
-  *not run*, and every machine-specific field in `configuration.json` is `null`
-  with a status line saying that filling one in from another run would be a
-  forgery.
-- **`--concurrency` does not reach it.** `ConcurrencyOptions` is declared in
-  `cli/samplers.ts` and intersected with `ExperimentOptions`, but
-  `ExperimentOptions` itself (`cli/commands.ts`) carries no `concurrency` field
-  and `cli/index.ts` passes none — **verified now** by reading the `experimentRun`
-  call site. So the experiment can only ever run at `DEFAULT_CONCURRENCY = 3`. Same
-  wiring as [C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it)
-  and [D-1b](#d-1b--the-engine-choice-is-uniform-except-for-the-experiment-samplers);
-  all three are the same three lines.
-- **`peak-memory-per-session` is declared and permanently `unmeasured`**
-  (`NO_MEMORY_PROBE_NOTE`), because the browser is out of process on both engines
-  and nothing samples the process tree. Consequence: EXP-007's overall verdict will
-  be `unmeasured` until a process-tree probe exists. That is deliberate — OOM is
-  the exact fear that kept concurrency at 1, so the target is declared and reported
-  honestly rather than omitted.
+- **`peak-memory-per-session` produced no reading**, so the overall verdict is
+  `unmeasured` (invariant 5). The browser is out of process on both engines and
+  nothing samples the process tree. That is deliberate — OOM is the fear that
+  kept concurrency at 1, so the target is declared and reported honestly rather
+  than omitted.
+- One sample is not a distribution. A fuller run still wants traffic.
 
 Where: `experiments/definitions.ts` (`EXP_007`), `cli/samplers.ts`
 (`sampleConcurrency`, `concurrencyProfiles`), `experiments/EXP-007-concurrency/`.
@@ -1128,19 +1113,12 @@ dependency and a much slower CI, paid on every push to catch a class of defect
 that code review currently catches. Recorded as a known limit of the gate rather
 than as work.
 
-### C-7 · One live target
+### C-7 · A third live target is still wanted
 
-Everything observed against production is `digilist.no` (`/blogg`, homepage). The
-journeys' selectors (`h1`, `a[href^='/']`) and thresholds are calibrated to it.
-There is no evidence about how the journeys behave on a site with a cookie wall, a
-client-side router, a login, or lazy-loaded content — all of which change what "the
-page settled" means.
-
-**The decision has been made: `xala.no` is the second site** (owner, 2026-08-13).
-That was the whole blocker — this needed permission and a name, not an
-implementation. What remains is the measuring, and the measuring is the point:
-`fixtures/server.ts` covers *known* defects on purpose and cannot substitute,
-because a fixture we wrote cannot surprise us.
+`digilist.no` was the only production target when this entry was written.
+`xala.no` is the second site (owner, 2026-08-13) and [C-16](#c-16--xalano-the-second-live-target-what-the-journeys-found)
+records what the journeys actually found there. The decision *and* the first
+measuring have happened.
 
 A third site is still wanted, and the shape that would teach the most is one this
 pair may not have: a cookie wall, a login, or heavy lazy-loading — each changes what
@@ -1982,7 +1960,7 @@ The original diagnosis, kept because it was accurate: the change was one field p
 five call sites — and it was the
 same `ExperimentOptions` edit that
 [C-1](#c-1--the-stability-window-is-a-parameter-and-a-flag-now-reaches-it) and
-[A-3b](#a-3b--exp-007-exists-now-and-has-never-been-run) are waiting on. An option
+[A-3b](#a-3b--exp-007-has-been-run-once-peak-memory-is-still-unmeasured) are waiting on. An option
 nothing reads is the defect [B-1](#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site)
 closed, so add the field and the call sites together or neither.
 
@@ -2273,7 +2251,8 @@ The first is not a priority call — it is a red suite. After that the order is
 3. ~~**One `ExperimentOptions` edit closes three entries**~~ — DONE. `engine`,
    `verifyEndpoint` and the stability knobs all reach the samplers through one
    `runtimeFor` helper; C-1 and D-1b are closed and EXP-002 has produced a real
-   measurement through a live exit. Only A-3b's full run still waits on traffic.
+   measurement through a live exit. A-3b has been run once; a fuller run and a
+   process-tree probe for peak-memory still wait.
 4. ~~**B-8**~~ — DONE 2026-08-13. Placeholders are replaced with an inert token
    before parsing, so a template can start a run; the reasoning was wrong where it
    counted, since placeholders live in the USERNAME and the gateway host and port
