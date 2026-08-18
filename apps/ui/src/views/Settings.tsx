@@ -5,8 +5,8 @@
  * whether a named environment variable is SET — a boolean derived from `name in env`, with
  * the value never read (R-26). Even a masked value would be wrong: masking is a display
  * decision applied to something that already travelled, and the safest thing to send a
- * browser is a fact about presence. "Is `GEOQA_PROXY_OSLO` configured on this host?" is the
- * question an operator actually has, and it is answerable without the secret.
+ * browser is a fact about presence. "Is `GEOQA_PROXY_TEMPLATE` configured on this host?" is the
+ * question an operator actually has. Cities share that one URL; `{city}` is substituted per run.
  *
  * This is a read-only screen on purpose. Everything it shows is derived from the files the
  * engine itself reads, so the page cannot drift from what a run would actually use — and a
@@ -147,7 +147,10 @@ export function Settings(): JSX.Element {
         <div className="panel-head">
           <h3>Credentials</h3>
           <p className="hint">
-            Variable names, and whether this host has them. The values are never read by the server and never sent here.
+            Variable names, and whether this host has them. Cities share{" "}
+            <code>GEOQA_PROXY_TEMPLATE</code> — Bergen and Tromsø do not each need their own
+            secret. A per-city <code>GEOQA_PROXY_OSLO</code> is an override, listed only when
+            set. Values are never read by the server and never sent here.
           </p>
         </div>
         <Credentials rows={[...data.credentials, ...data.tenants.flatMap((t) => t.credentials)]} />

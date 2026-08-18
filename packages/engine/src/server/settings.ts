@@ -7,8 +7,10 @@
  * masked value would be wrong here: masking is a display decision applied to something that
  * already travelled, and the safest thing to send a browser is a fact about presence.
  *
- * That is not a limitation to apologise for. "Is `GEOQA_PROXY_OSLO` configured on this host?" is
- * the question an operator actually has, and it is answerable without the secret. "What is it?"
+ * That is not a limitation to apologise for. "Is `GEOQA_PROXY_TEMPLATE` configured
+ * on this host?" is the question an operator actually has. Per-city
+ * `GEOQA_PROXY_OSLO` is an override, not a requirement — one template serves
+ * every market by substituting `{city}` and `{country}`. "What is the secret?"
  * is answerable on the host, by the person who set it, which is where it should be.
  *
  * Everything here is derived from files the engine already reads, so the settings page cannot
@@ -65,8 +67,43 @@ export interface SettingsView {
   server: { authenticated: true; sessionHours: number };
 }
 
-/** The shared proxy variables an operator is likely to need, by market. */
-export const sharedCredentialNames = (markets: string[]): string[] => markets.map((m) => `GEOQA_PROXY_${m.toUpperCase()}`);
+/**
+ * Variables this host actually uses. Not one row per city.
+ *
+ * Cities share `GEOQA_PROXY_TEMPLATE`; `{city}` / `{country}` are substituted
+ * per run. A set `GEOQA_PROXY_<MARKET>` or `GEOQA_PROXY_<COUNTRY>` is an
+ * override and is listed only when present, so 34 unset Oslo/Bergen rows
+ * cannot hide the template that is doing the work.
+ */
+const SHARED_CREDENTIALS: { name: string; purpose: string }[] = [
+  {
+    name: "GEOQA_PROXY_TEMPLATE",
+    purpose: "one residential URL for every city — {country} and {city} are substituted per run",
+  },
+  { name: "GEOQA_LOGIN_EMAIL", purpose: "identity for the e2e login journey" },
+  { name: "AGENTMAIL_API_KEY", purpose: "inbox used to read the login OTP" },
+  { name: "DECODO_API_KEY", purpose: "vendor usage figure, so quota can be measured" },
+  { name: "GEOQA_GITHUB_TOKEN", purpose: "file findings as issues" },
+  { name: "GEOQA_GITHUB_REPO", purpose: "instrumentation findings repo" },
+];
+
+export function sharedCredentials(env: NodeJS.ProcessEnv): CredentialStatus[] {
+  const listed = new Set(SHARED_CREDENTIALS.map((row) => row.name));
+  const rows: CredentialStatus[] = SHARED_CREDENTIALS.map((row) => ({
+    name: row.name,
+    present: env[row.name] !== undefined,
+    purpose: row.purpose,
+  }));
+  for (const name of Object.keys(env).sort()) {
+    if (!name.startsWith("GEOQA_PROXY_") || listed.has(name) || env[name] === undefined) continue;
+    rows.push({
+      name,
+      present: true,
+      purpose: "override for one market or country — city still works from the template without this",
+    });
+  }
+  return rows;
+}
 
 export interface SettingsInput {
   tenants: Tenant[];
@@ -128,11 +165,7 @@ export function buildSettings(input: SettingsInput): SettingsView {
       cooldownMs: input.config.network.cooldownMs,
       retention: input.config.evidence.retention,
     },
-    credentials: sharedCredentialNames(input.markets).map((name) => ({
-      name,
-      present: has(name),
-      purpose: "shared proxy credentials for this market",
-    })),
+    credentials: sharedCredentials(input.env),
     server: { authenticated: true, sessionHours: 8 },
   };
 }

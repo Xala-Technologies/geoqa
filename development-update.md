@@ -19,6 +19,18 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Watch clocks and honest settings
+
+Watch Cadence now has two numbers you can edit: geo pulse and e2e, each
+with its own next-due. Settings no longer lists `GEOQA_PROXY_OSLO` …
+`GEOQA_PROXY_SOLA` as missing. Those were never required. One
+`GEOQA_PROXY_TEMPLATE` serves every city; `{city}` and `{country}` are
+substituted per run. The page lists that template, login/OTP, Decodo
+usage, and GitHub — plus a per-market override only when it is actually
+set.
+
+---
+
 ## 2026-08-19 — E2E journeys have their own clock
 
 Login is no longer a sidecar on the geo pulse. Watch now has `e2e`:

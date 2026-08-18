@@ -152,6 +152,7 @@ describe("USAGE", () => {
       "evidence inspect",
       "assist explain",
       "evidence prune",
+      "digest send",
       "findings file",
       "findings repair",
       "geoqa server",
@@ -209,6 +210,14 @@ describe("USAGE", () => {
     expect(USAGE).toContain("GEOQA_ADMIN_PASSWORD_HASH");
     expect(USAGE).toContain("POST /api/run");
     expect(USAGE).toContain("GEOQA_API_TOKEN");
+  });
+
+  it("documents digest send as an AgentMail brief derived from the evidence", () => {
+    expect(USAGE).toContain("digest send");
+    expect(USAGE).toContain("GEOQA_DIGEST_TO");
+    expect(USAGE).toContain("AGENTMAIL_API_KEY");
+    expect(USAGE).toContain("Xala");
+    expect(USAGE).toContain("Never from a");
   });
 
   it("documents findings file as GitHub, and that a missing token does not fail a sweep", () => {

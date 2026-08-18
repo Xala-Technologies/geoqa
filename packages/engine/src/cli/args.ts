@@ -502,6 +502,19 @@ Multi-tenancy:
       verdict, not the assembled confidence report) and says so rather than filling the
       gaps with defaults that would read as real readings.
 
+  geoqa digest send [--to <email>] [--since 24h|ISO] [--dry-run] [--json]
+      Mail one operator brief from the last day's evidence: runs processed,
+      what failed, issues recorded, issues fixed, findings that must be
+      known, and suggestions derived from those numbers. Never from a
+      model. Rich HTML in the Xala palette, plus a text fallback.
+
+      From GEOQA_LOGIN_EMAIL (the AgentMail inbox). To --to, else
+      GEOQA_DIGEST_TO, else ibrahim@xala.no. AGENTMAIL_API_KEY required.
+      --since defaults to 24h; an ISO instant replays a missed day.
+      --dry-run assembles and does not send. Credentials never enter the
+      body. Exits 2 on a bad window, 1 when mail is unconfigured or
+      AgentMail refuses.
+
   geoqa findings file [--dry-run] [--json]
       Open GitHub issues from the run index. Site checks group by host
       and carry a site:<host> label. A mapped host files on that site's

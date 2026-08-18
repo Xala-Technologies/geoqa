@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSettings, sharedCredentialNames, type SettingsInput } from "../settings.js";
+import { buildSettings, sharedCredentials, type SettingsInput } from "../settings.js";
 import type { Tenant } from "../../tenant/types.js";
 
 const tenant = (over: Partial<Tenant> = {}): Tenant => ({
@@ -35,7 +35,7 @@ describe("buildSettings never exposes a credential", () => {
     // secret (R-26), and a settings page that echoed the value would move a credential from a
     // host into a browser, a proxy log and a screenshot.
     const secret = "user:hunter2@gw.example:7777";
-    const out = buildSettings(input({ env: { GEOQA_SUBUSER_DIGILIST: secret, GEOQA_PROXY_OSLO: secret } }));
+    const out = buildSettings(input({ env: { GEOQA_SUBUSER_DIGILIST: secret, GEOQA_PROXY_TEMPLATE: secret } }));
     const serialised = JSON.stringify(out);
     expect(serialised).not.toContain("hunter2");
     expect(serialised).not.toContain(secret);
@@ -93,8 +93,25 @@ describe("what the page shows", () => {
     expect(out.tenants[0]?.credentials.map((c) => c.name)).toContain("GEOQA_PROXY_DIGILIST");
   });
 
-  it("derives the shared proxy variable names from the markets on disk", () => {
-    expect(sharedCredentialNames(["oslo", "bodo"])).toEqual(["GEOQA_PROXY_OSLO", "GEOQA_PROXY_BODO"]);
+  it("lists the shared template and login vars, not one fake secret per city", () => {
+    const empty = sharedCredentials({});
+    expect(empty.map((c) => c.name)).toEqual([
+      "GEOQA_PROXY_TEMPLATE",
+      "GEOQA_LOGIN_EMAIL",
+      "AGENTMAIL_API_KEY",
+      "DECODO_API_KEY",
+      "GEOQA_GITHUB_TOKEN",
+      "GEOQA_GITHUB_REPO",
+    ]);
+    expect(empty.every((c) => !c.present)).toBe(true);
+    const set = sharedCredentials({ GEOQA_PROXY_TEMPLATE: "http://u:p@gw:1", GEOQA_PROXY_OSLO: "http://override" });
+    expect(set.find((c) => c.name === "GEOQA_PROXY_TEMPLATE")?.present).toBe(true);
+    expect(set.find((c) => c.name === "GEOQA_PROXY_OSLO")).toEqual({
+      name: "GEOQA_PROXY_OSLO",
+      present: true,
+      purpose: "override for one market or country — city still works from the template without this",
+    });
+    expect(set.some((c) => c.name === "GEOQA_PROXY_BERGEN")).toBe(false);
   });
 
   it("reports which config file is in force, so a run on defaults is not mistaken for one that honoured it", () => {

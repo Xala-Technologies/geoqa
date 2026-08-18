@@ -105,6 +105,10 @@ import {
 import { recordFromRunJson, type RunRecord } from "../history/records.js";
 import { draftsFromRuns, type TicketRun } from "../findings/tickets.js";
 import { fileTickets, loadFiledIssues, nodeFiledStore, parseGithubRepo, type FileTicketsResult, type FiledStore, type GitHubAddLabels, type GitHubCreate } from "../findings/github.js";
+import { assembleDigest, type Digest } from "../digest/assemble.js";
+import { parseDigestWindow, resolveDigestTo } from "../digest/window.js";
+import { renderDigestHtml, renderDigestText } from "../digest/html.js";
+import { sendAgentMail, type SendMailResult } from "../mail/send.js";
 import type { SiteRepo } from "../findings/repos.js";
 import type { Tenant } from "../tenant/types.js";
 import { executeRun, prepareRun, type RunProgress } from "../run/execute.js";
@@ -1993,6 +1997,86 @@ export function renderFindingsRepair(result: FindingsRepairResult): string {
   }
   for (const item of result.failed) lines.push(`  FAILED ${item.key}: ${item.detail ?? ""}`);
   return lines.join("\n");
+}
+
+export type DigestSendResult =
+  | { ok: false; skipped: "unconfigured" | "bad-window" | "store-unreadable"; detail: string }
+  | { ok: true; dryRun: true; to: string; from: string; subject: string; digest: Digest }
+  | { ok: true; dryRun: false; to: string; from: string; subject: string; digest: Digest; messageId: string; threadId: string }
+  | { ok: false; skipped: "send-failed"; detail: string; to: string; from: string; subject: string; digest: Digest };
+
+export interface DigestSendOptions {
+  to?: string;
+  since?: string;
+  dryRun?: boolean;
+  send?: (input: {
+    apiKey: string;
+    inbox: string;
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+  }) => Promise<SendMailResult>;
+}
+
+/**
+ * One operator email from the day's evidence. Suggestions come from the
+ * index, never from a model. Credentials stay in the AgentMail header.
+ */
+export async function digestSend(deps: CommandDeps, options: DigestSendOptions = {}): Promise<DigestSendResult> {
+  const untilMs = deps.now();
+  const window = parseDigestWindow(options.since, untilMs);
+  if (!window.ok) return { ok: false, skipped: "bad-window", detail: window.error };
+
+  const apiKey = deps.env.AGENTMAIL_API_KEY ?? "";
+  const inbox = deps.env.GEOQA_LOGIN_EMAIL ?? "";
+  if (apiKey === "" || inbox === "") {
+    return {
+      ok: false,
+      skipped: "unconfigured",
+      detail: "digest send needs AGENTMAIL_API_KEY and GEOQA_LOGIN_EMAIL",
+    };
+  }
+
+  const fs = historyFsOf(deps);
+  const filed = loadFiledIssues(deps.evidenceRoot, fs);
+  const repaired = loadRepairedItems(deps.evidenceRoot, fs);
+  if (!filed.ok || !repaired.ok) {
+    return { ok: false, skipped: "store-unreadable", detail: "filed-issues.json or repaired-issues.json will not parse" };
+  }
+
+  const { records } = readHistory(deps.evidenceRoot, fs);
+  const digest = assembleDigest({
+    records,
+    filed: filed.issues,
+    repaired: repaired.items,
+    sinceMs: window.sinceMs,
+    untilMs,
+    tenantId: deps.tenantId ?? null,
+    consoleUrl: deps.env.GEOQA_CONSOLE_URL ?? null,
+  });
+  const to = resolveDigestTo(options.to, deps.env);
+  const day = new Date(untilMs).toISOString().slice(0, 10);
+  const subject = `geoqa daily — ${digest.tenantId ?? "geoqa"} — ${day}`;
+  const text = renderDigestText(digest);
+  const html = renderDigestHtml(digest);
+  if (options.dryRun === true) {
+    return { ok: true, dryRun: true, to, from: inbox, subject, digest };
+  }
+
+  const send = options.send ?? sendAgentMail;
+  const sent = await send({ apiKey, inbox, to, subject, text, html });
+  if (!sent.ok) {
+    return { ok: false, skipped: "send-failed", detail: sent.detail, to, from: inbox, subject, digest };
+  }
+  return { ok: true, dryRun: false, to, from: inbox, subject, digest, messageId: sent.messageId, threadId: sent.threadId };
+}
+
+export function renderDigestResult(result: DigestSendResult): string {
+  if (!result.ok) return `digest send: ${result.detail}`;
+  const counts = `${result.digest.runs.total} run(s), ${result.digest.runs.fail} fail, ${result.digest.runs.error} error`;
+  if (result.dryRun) return `digest send: dry run — would mail ${result.to} (${counts})`;
+  return `digest send: mailed ${result.to} — ${result.subject} (${counts})`;
 }
 
 export function renderFindingsFile(result: FileTicketsResult): string {

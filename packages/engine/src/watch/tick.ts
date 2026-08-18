@@ -49,6 +49,11 @@ const e2eDueAt = (input: TickInput): number | null => {
   return input.lastE2eStartedMs + input.spec.e2e.everyMinutes * 60_000;
 };
 
+/** Each clock, so the console can show two next-due times instead of one. */
+export function dueTimes(input: TickInput): { pulseMs: number | null; e2eMs: number | null } {
+  return { pulseMs: pulseDueAt(input), e2eMs: e2eDueAt(input) };
+}
+
 export interface SweepAxes {
   markets: string[];
   devices: string[];

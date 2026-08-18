@@ -76,6 +76,7 @@ pnpm geoqa experiment run EXP-001 --samples 10 [--geo …] [--url …] \
                          [--stability-window <duration>] [--stability-reads <n>] [--concurrency <n>]
 pnpm geoqa findings file [--dry-run]
 pnpm geoqa findings repair [--dry-run]
+pnpm geoqa digest send [--to <email>] [--since 24h|ISO] [--dry-run]
 pnpm geoqa evidence inspect <runId>
 pnpm geoqa assist explain <runId> # claude -p after judgement; Max login, not API
 pnpm geoqa evidence prune [--apply] [--max-age <tier>=<days|null>]... \
@@ -142,6 +143,8 @@ assist/       claude -p AFTER judgement (explain a brief). Never imported by run
 config/       geoqa.config.json: schema + credential guard + IMPORTED defaults
 tenant/       registry (who owns what) → quota (refuse before launch) → usage-probe (the vendor's figure)
 watch/        operator surface: YAML spec → tick (when to start) → journey-pick (seeded) → live board → health + log
+digest/       daily operator email from the evidence index — never from a model
+mail/         AgentMail: receive OTP, send the digest. Credentials from env only
 server/       the operator console's HTTP side: auth → router → accept-run → watch-loop
 run/          context (RunSpec) → stages → execute (one run) → matrix (many, bounded)
 gate/         publish.ts — may this page go live? allow / block / unknown, DEFAULT DENY

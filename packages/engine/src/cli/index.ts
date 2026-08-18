@@ -34,6 +34,7 @@ import {
   evidencePrune,
   experimentRun,
   dashboardBuild,
+  digestSend,
   findingsFile,
   findingsRepair,
   renderFindingsFile,
@@ -43,6 +44,7 @@ import {
   keywordsResearch,
   loadUrlList,
   renderDashboardBuild,
+  renderDigestResult,
   contentAnalyse,
   renderContentAnalysis,
   renderGateResult,
@@ -590,6 +592,17 @@ async function main(argv: string[]): Promise<number> {
     // A run directory the rebuild could not read is a gap in the history, and a
     // scheduled rebuild must go red rather than look fine.
     return result.unreadable.length > 0 ? 1 : 0;
+  }
+
+  if (group === "digest" && action === "send") {
+    const result = await digestSend(deps, {
+      dryRun: flagBool(args, "dry-run"),
+      ...(args.flags.to !== undefined ? { to: flagString(args, "to", "") } : {}),
+      ...(args.flags.since !== undefined ? { since: flagString(args, "since", "") } : {}),
+    });
+    emit(result, renderDigestResult(result));
+    if (!result.ok) return result.skipped === "bad-window" ? 2 : 1;
+    return 0;
   }
 
   if (group === "assist" && action === "explain") {

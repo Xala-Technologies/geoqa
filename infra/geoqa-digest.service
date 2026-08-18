@@ -1,0 +1,11 @@
+[Unit]
+Description=GeoQA daily digest
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/geoqa
+EnvironmentFile=/opt/geoqa/.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/root
+ExecStart=/usr/local/bin/pnpm geoqa digest send --tenant digilist

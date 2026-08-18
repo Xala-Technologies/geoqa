@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideTick, planE2e, planSweep, type TickInput } from "../tick.js";
+import { decideTick, dueTimes, planE2e, planSweep, type TickInput } from "../tick.js";
 import type { WatchSpec } from "../spec.js";
 import type { Tenant } from "../../tenant/types.js";
 
@@ -93,6 +93,18 @@ describe("decideTick", () => {
     );
     expect(bothWaiting.action).toBe("wait");
     expect(bothWaiting.nextMs).toBe(1_800_000 - 10 * 60_000 + 30 * 60_000);
+  });
+
+  it("reports each clock separately so the console can show two next-due times", () => {
+    const withE2e = spec({ e2e: { everyMinutes: 720, journeys: [login] } });
+    const lastStartedMs = 1_800_000 - 10 * 60_000;
+    const lastE2eStartedMs = 1_800_000 - 100 * 60_000;
+    expect(dueTimes(input({ spec: withE2e, lastStartedMs, lastE2eStartedMs }))).toEqual({
+      pulseMs: lastStartedMs + 30 * 60_000,
+      e2eMs: lastE2eStartedMs + 720 * 60_000,
+    });
+    expect(dueTimes(input()).pulseMs).toBe(1_800_000);
+    expect(dueTimes(input({ spec: spec({ journeys: [] }) })).pulseMs).toBeNull();
   });
 
   it("can start e2e when the pulse has no journeys, so a login does not need the city grid", () => {

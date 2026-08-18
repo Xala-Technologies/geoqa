@@ -42,8 +42,11 @@ interface WatchView {
   availableJourneys: JourneyInfo[];
   lastStartedAt: string | null;
   lastFinishedAt: string | null;
+  lastE2eStartedAt?: string | null;
   inFlight: number;
   nextDueAt: string | null;
+  nextPulseDueAt?: string | null;
+  nextE2eDueAt?: string | null;
   decision: { action: string; reason: string };
   health?: WatchHealthView;
   log?: WatchLogLine[];
@@ -137,9 +140,8 @@ export function Watch(): JSX.Element {
           <h3>Cadence</h3>
           <p className="hint">
             {data.decision.reason}
-            {data.nextDueAt !== null ? ` · next ${data.nextDueAt.slice(11, 16)} UTC` : ""}
-            {data.lastStartedAt !== null ? ` · last start ${data.lastStartedAt.slice(11, 16)} UTC` : ""}
-            {data.lastFinishedAt !== null ? ` · last finish ${data.lastFinishedAt.slice(11, 16)} UTC` : ""}
+            {data.lastStartedAt !== null ? ` · last geo ${data.lastStartedAt.slice(11, 16)} UTC` : ""}
+            {data.lastE2eStartedAt != null ? ` · last e2e ${data.lastE2eStartedAt.slice(11, 16)} UTC` : ""}
             {data.inFlight > 0 ? ` · ${data.inFlight} in flight` : ""}
           </p>
         </div>
@@ -168,7 +170,7 @@ export function Watch(): JSX.Element {
           </label>
           {spec.mode === "periodic" ? (
             <label className="field field-inline">
-              <span className="field-label">every</span>
+              <span className="field-label">geo pulse</span>
               <input
                 className="input input-narrow"
                 type="number"
@@ -178,6 +180,7 @@ export function Watch(): JSX.Element {
                 onChange={(e) => patch({ everyMinutes: Number(e.target.value) })}
               />
               <span className="dim">min</span>
+              {data.nextPulseDueAt != null ? <span className="dim">next {data.nextPulseDueAt.slice(11, 16)} UTC</span> : null}
             </label>
           ) : (
             <label className="field field-inline">
@@ -193,6 +196,23 @@ export function Watch(): JSX.Element {
               <span className="dim">sec</span>
             </label>
           )}
+          <label className="field field-inline">
+            <span className="field-label">e2e</span>
+            <input
+              className="input input-narrow"
+              type="number"
+              min={5}
+              max={1440}
+              value={spec.e2e?.everyMinutes ?? 720}
+              onChange={(e) =>
+                patch({
+                  e2e: { everyMinutes: Number(e.target.value), journeys: spec.e2e?.journeys ?? [] },
+                })
+              }
+            />
+            <span className="dim">min</span>
+            {data.nextE2eDueAt != null ? <span className="dim">next {data.nextE2eDueAt.slice(11, 16)} UTC</span> : null}
+          </label>
           {(["mobile", "desktop"] as const).map((device) => (
             <label className="check" key={device}>
               <input
@@ -349,27 +369,20 @@ export function Watch(): JSX.Element {
         </div>
       ) : null}
 
-      {(spec.e2e?.journeys ?? []).length > 0 ? (
-        <div className="panel">
-          <div className="panel-head">
-            <h3>E2E</h3>
-            <p className="hint">
-              One cell each, on their own clock — not the city grid. Login, checkout, a form
-              that actually submits. Add more here; leave the pulse for geography.
-            </p>
-            <label className="field field-inline">
-              <span className="field-label">every</span>
-              <input
-                className="input input-narrow"
-                type="number"
-                min={5}
-                max={1440}
-                value={spec.e2e?.everyMinutes ?? 720}
-                onChange={(e) => patch({ e2e: { everyMinutes: Number(e.target.value) } })}
-              />
-              <span className="dim">min</span>
-            </label>
+      <div className="panel">
+        <div className="panel-head">
+          <h3>E2E</h3>
+          <p className="hint">
+            One cell each — not the city grid. Interval is under Cadence, so you can
+            retune login without touching the geo pulse.
+          </p>
+        </div>
+        {(spec.e2e?.journeys ?? []).length === 0 ? (
+          <div className="empty">
+            <strong>No e2e journeys yet.</strong>
+            Add them in <code>watch.yaml</code> — login, checkout, a form that writes.
           </div>
+        ) : (
           <ul className="target-list">
             {(spec.e2e?.journeys ?? []).map((row) => (
               <li key={`${row.journey}:${row.url}`}>
@@ -377,8 +390,8 @@ export function Watch(): JSX.Element {
               </li>
             ))}
           </ul>
-        </div>
-      ) : null}
+        )}
+      </div>
     </>
   );
 }

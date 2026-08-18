@@ -1,0 +1,9 @@
+[Unit]
+Description=GeoQA daily digest at 07:00 Europe/Oslo
+
+[Timer]
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

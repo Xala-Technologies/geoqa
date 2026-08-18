@@ -15,7 +15,7 @@ import { acceptRun, type AcceptedRun } from "./accept-run.js";
 import type { Tenant } from "../tenant/types.js";
 import type { GeoQaConfig } from "../config/schema.js";
 import { LiveRegistry } from "../watch/live.js";
-import { decideTick, planE2e, planSweep, type TickDecision } from "../watch/tick.js";
+import { decideTick, dueTimes, planE2e, planSweep, type TickDecision } from "../watch/tick.js";
 import { addTarget, removeTarget } from "../watch/targets.js";
 import { applyWatchPatch, dropOrphanTargetJourneys, loadWatch, saveWatch, watchPath, type WatchAllowed } from "../watch/store.js";
 import { expandMatrix } from "../run/matrix.js";
@@ -122,18 +122,24 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
 
   const view = (): unknown => {
     const spec = current();
-    const decision = decideTick({ spec, nowMs: options.now(), lastStartedMs, lastFinishedMs, lastE2eStartedMs, inFlight });
+    const tick = { spec, nowMs: options.now(), lastStartedMs, lastFinishedMs, lastE2eStartedMs, inFlight };
+    const decision = decideTick(tick);
+    const due = dueTimes(tick);
+    const iso = (ms: number | null): string | null => (ms === null ? null : new Date(ms).toISOString());
     return {
       tenantId: options.tenant.id,
       tenantName: options.tenant.name,
       spec,
       allowedMarkets: options.markets,
       availableJourneys: options.journeys.map((j) => ({ id: j.id, title: j.title, writes: j.writes })),
-      lastStartedAt: lastStartedMs === null ? null : new Date(lastStartedMs).toISOString(),
-      lastFinishedAt: lastFinishedMs === null ? null : new Date(lastFinishedMs).toISOString(),
+      lastStartedAt: iso(lastStartedMs),
+      lastFinishedAt: iso(lastFinishedMs),
+      lastE2eStartedAt: iso(lastE2eStartedMs),
       inFlight,
-      nextDueAt: decision.nextMs === null ? null : new Date(decision.nextMs).toISOString(),
-      decision: { action: decision.action, reason: decision.reason },
+      nextDueAt: iso(decision.nextMs),
+      nextPulseDueAt: iso(due.pulseMs),
+      nextE2eDueAt: iso(due.e2eMs),
+      decision: { action: decision.action, reason: decision.reason, pulse: decision.action === "start" ? decision.pulse : false, e2e: decision.action === "start" ? decision.e2e : false },
       health: snapshot(),
       log: recentWatchEvents(readWatchLog(options.evidenceRoot).events),
     };
