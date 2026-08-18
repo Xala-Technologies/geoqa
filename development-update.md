@@ -19,6 +19,19 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Repair always starts from origin
+
+A repair clones the site repo, then `git fetch origin <base>` and
+checks out `origin/<base>` before Claude runs. After the commit it
+fetches again and rebases, so a 20-minute edit does not open a PR
+against yesterday's tip. `git` talks to GitHub through `gh auth
+git-credential` — `GH_TOKEN` is enough for `gh clone` and was being
+ignored by `git push`, which is why four local commits never became PRs.
+
+Where: `packages/engine/src/assist/repair.ts`.
+
+---
+
 ## 2026-08-18 — Fix from the Findings page
 
 `#/findings` has a Fix button (and a per-row Fix). It starts the same

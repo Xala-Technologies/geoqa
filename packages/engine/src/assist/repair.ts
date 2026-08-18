@@ -118,11 +118,21 @@ function workdirFor(workRoot: string, repo: string, issueNumber: number): { ok: 
   return containedPath(ownerDir.value, `${name}-${issueNumber}`);
 }
 
+/**
+ * `gh` sees GH_TOKEN; `git fetch` / `git push` do not. The helper is set
+ * through GIT_CONFIG_* so the token never appears on argv — a clone that
+ * could pull but not push is how four local commits never became PRs.
+ */
 const gitEnv = (token: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
   ...env,
   GH_TOKEN: token,
   GH_PROMPT_DISABLED: "1",
   GIT_TERMINAL_PROMPT: "0",
+  GIT_CONFIG_COUNT: "2",
+  GIT_CONFIG_KEY_0: "credential.helper",
+  GIT_CONFIG_VALUE_0: "",
+  GIT_CONFIG_KEY_1: "credential.helper",
+  GIT_CONFIG_VALUE_1: "!gh auth git-credential",
 });
 
 async function exec(
@@ -162,12 +172,23 @@ export async function repairOne(
   ports.exec.mkdir(parent);
   if (ports.exec.exists(workdir)) ports.exec.rm(workdir);
 
-  const cloned = await exec(ports, parent, ["gh", "repo", "clone", job.codeRepo, workdir, "--", "--branch", job.base, "--depth", "1"], env, 60_000);
+  const cloned = await exec(ports, parent, ["gh", "repo", "clone", job.codeRepo, workdir, "--", "--branch", job.base], env, 60_000);
   if (cloned.exitCode !== 0) {
       return failed(job.key, cloned.error ?? (cloned.stderr.trim() || `gh repo clone exited ${cloned.exitCode}`));
   }
 
-  const branched = await exec(ports, workdir, ["git", "checkout", "-B", `geoqa/issue-${job.issueNumber}`], env, 15_000);
+  const fetched = await exec(ports, workdir, ["git", "fetch", "origin", job.base], env, 60_000);
+  if (fetched.exitCode !== 0) {
+    return failed(job.key, fetched.error ?? (fetched.stderr.trim() || "git fetch failed"));
+  }
+
+  const branched = await exec(
+    ports,
+    workdir,
+    ["git", "checkout", "-B", `geoqa/issue-${job.issueNumber}`, `origin/${job.base}`],
+    env,
+    15_000,
+  );
   if (branched.exitCode !== 0) {
       return failed(job.key, branched.error ?? (branched.stderr.trim() || "git checkout failed"));
   }
@@ -200,6 +221,15 @@ export async function repairOne(
       15_000,
     );
     if (commit.exitCode !== 0) return failed(job.key, commit.stderr.trim() || "git commit failed");
+  }
+
+  const latest = await exec(ports, workdir, ["git", "fetch", "origin", job.base], env, 60_000);
+  if (latest.exitCode !== 0) {
+    return failed(job.key, latest.error ?? (latest.stderr.trim() || "git fetch failed"));
+  }
+  const rebased = await exec(ports, workdir, ["git", "rebase", `origin/${job.base}`], env, 60_000);
+  if (rebased.exitCode !== 0) {
+    return failed(job.key, rebased.error ?? (rebased.stderr.trim() || "git rebase failed"));
   }
 
   const pushed = await exec(ports, workdir, ["git", "push", "-u", "origin", "HEAD"], env, 60_000);

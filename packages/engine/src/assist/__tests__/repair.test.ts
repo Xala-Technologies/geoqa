@@ -31,11 +31,13 @@ const job = (over: Partial<RepairJob> = {}): RepairJob => ({
 
 const scripted = (
   replies: Record<string, { stdout?: string; stderr?: string; exitCode?: number; error?: string }>,
-): RepairExec & { argv: string[][] } => {
+): RepairExec & { argv: string[][]; envs: NodeJS.ProcessEnv[] } => {
   const argv: string[][] = [];
+  const envs: NodeJS.ProcessEnv[] = [];
   const files = new Set<string>();
   return {
     argv,
+    envs,
     mkdir: () => undefined,
     exists: (p) => files.has(p),
     rm: (p) => {
@@ -43,6 +45,7 @@ const scripted = (
     },
     run: async (input) => {
       argv.push(input.argv);
+      envs.push(input.env);
       const key = input.argv.join(" ");
       const hit = Object.entries(replies).find(([pattern]) => key.includes(pattern));
       const reply = hit?.[1] ?? { exitCode: 0, stdout: "" };
@@ -147,9 +150,12 @@ describe("repairOne", () => {
     expect(out.prUrl).toBe("https://github.com/xalatechnologies/xala-web-cloner/pull/3");
     expect(out.autoMerge).toBe(true);
     expect(exec.argv.some((a) => a.includes("clone") && a.includes("xalatechnologies/xala-web-cloner"))).toBe(true);
-    expect(exec.argv.some((a) => a[0] === "git" && a.includes("checkout") && a.includes("geoqa/issue-48"))).toBe(true);
+    expect(exec.argv.some((a) => a.includes("fetch") && a.includes("origin") && a.includes("main"))).toBe(true);
+    expect(exec.argv.some((a) => a.includes("checkout") && a.includes("geoqa/issue-48") && a.includes("origin/main"))).toBe(true);
+    expect(exec.argv.some((a) => a.includes("rebase") && a.includes("origin/main"))).toBe(true);
     expect(exec.argv.some((a) => a.includes("pr") && a.includes("create") && a.includes("main"))).toBe(true);
     expect(exec.argv.some((a) => a.includes("--auto") && a.includes("--squash"))).toBe(true);
+    expect(exec.envs.some((e) => e.GIT_CONFIG_VALUE_1 === "!gh auth git-credential")).toBe(true);
     expect(exec.argv.flat().includes("t")).toBe(false);
   });
 
@@ -223,6 +229,15 @@ describe("repairOne", () => {
     });
     expect(clone.detail).toContain("403");
 
+    const fetch = await repairOne(job(), {
+      exec: scripted({ "git fetch": { exitCode: 1, stderr: "could not read Username" } }),
+      claude: async () => ({ ok: true, text: "x" }),
+      workRoot,
+      token,
+      env,
+    });
+    expect(fetch.detail).toContain("could not read Username");
+
     const checkout = await repairOne(job(), {
       exec: scripted({ "git checkout": { exitCode: 1, error: "checkout died" } }),
       claude: async () => ({ ok: true, text: "x" }),
@@ -258,6 +273,21 @@ describe("repairOne", () => {
       env,
     });
     expect(commit.detail).toBe("git commit failed");
+
+    const rebase = await repairOne(job(), {
+      exec: scripted({
+        "git status": { stdout: " M a\n" },
+        "git log": { stdout: "" },
+        "git add": { exitCode: 0 },
+        commit: { exitCode: 0 },
+        "git rebase": { exitCode: 1, stderr: "conflict on src/app.tsx" },
+      }),
+      claude: async () => ({ ok: true, text: "x" }),
+      workRoot,
+      token,
+      env,
+    });
+    expect(rebase.detail).toContain("conflict on src/app.tsx");
 
     const push = await repairOne(job(), {
       exec: scripted({
@@ -341,6 +371,15 @@ describe("repairOne", () => {
     });
     expect(clone.detail).toContain("gh repo clone exited");
 
+    const fetch = await repairOne(job(), {
+      exec: scripted({ "git fetch": { exitCode: 1 } }),
+      claude: async () => ({ ok: true, text: "x" }),
+      workRoot,
+      token,
+      env,
+    });
+    expect(fetch.detail).toBe("git fetch failed");
+
     const checkout = await repairOne(job(), {
       exec: scripted({ "git checkout": { exitCode: 1 } }),
       claude: async () => ({ ok: true, text: "x" }),
@@ -358,6 +397,21 @@ describe("repairOne", () => {
       env,
     });
     expect(add.detail).toBe("git add failed");
+
+    const rebase = await repairOne(job(), {
+      exec: scripted({
+        "git status": { stdout: " M a\n" },
+        "git log": { stdout: "" },
+        "git add": { exitCode: 0 },
+        commit: { exitCode: 0 },
+        "git rebase": { exitCode: 1 },
+      }),
+      claude: async () => ({ ok: true, text: "x" }),
+      workRoot,
+      token,
+      env,
+    });
+    expect(rebase.detail).toBe("git rebase failed");
 
     const push = await repairOne(job(), {
       exec: scripted({
