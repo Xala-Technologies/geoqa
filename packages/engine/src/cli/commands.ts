@@ -1959,8 +1959,8 @@ export async function findingsRepair(
       ...(result.prUrl !== undefined ? { prUrl: result.prUrl } : {}),
     });
     saveRepairedItems(deps.evidenceRoot, kept, store);
+    dashboardBuild(deps);
   }
-  dashboardBuild(deps);
   return { skipped: "none", repaired, failed, wouldRepair: [] };
 }
 

@@ -115,4 +115,6 @@ export interface FindingTicket {
   runIds: string[];
   issue: Measured<{ number: number; url: string }>;
   pr: Measured<{ url: string }>;
+  /** A PR exists. The row is struck out. */
+  fixed: boolean;
 }

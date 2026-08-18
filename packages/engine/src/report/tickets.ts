@@ -21,6 +21,8 @@ export interface FindingTicket {
   runIds: string[];
   issue: Measured<{ number: number; url: string }>;
   pr: Measured<{ url: string }>;
+  /** A PR exists. The row is struck out; cannot-fix is not this. */
+  fixed: boolean;
 }
 
 export interface FiledRef {
@@ -53,8 +55,15 @@ export function ticketsForView(drafts: TicketDraft[], filed: readonly FiledRef[]
           ? unmeasured("not filed on GitHub")
           : measured({ number: issue.number, url: issue.url }, `#${issue.number}`),
       pr: prOf(repair),
+      fixed: isFixed(repair),
     };
   });
+}
+
+function isFixed(repair: RepairRef | undefined): boolean {
+  if (repair === undefined) return false;
+  if (repair.prUrl !== undefined && repair.prUrl !== "") return true;
+  return repair.status === "opened";
 }
 
 function prOf(repair: RepairRef | undefined): Measured<{ url: string }> {

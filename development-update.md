@@ -19,6 +19,18 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-18 — Fix from the Findings page
+
+`#/findings` has a Fix button (and a per-row Fix). It starts the same
+Claude repair the sweep does, without waiting for the next pulse. Tickets
+with a PR are counted as Fixed and struck out. The dashboard rebuilds
+after each successful PR so the strike-through appears while the rest
+are still running.
+
+Where: `server/repair-control.ts`, `apps/ui/src/views/Findings.tsx`.
+
+---
+
 ## 2026-08-18 — The Findings page is the ticket board
 
 `#/findings` is the same grouping as GitHub: one row per check × host,

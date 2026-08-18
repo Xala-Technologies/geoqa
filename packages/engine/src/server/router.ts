@@ -31,6 +31,7 @@
  */
 import { clearedCookie, cookieValue, readBearer, readSession, sessionCookie, signSession, verifyApiToken, verifyPassword, SESSION_MS, type AuthConfig } from "./auth.js";
 import { routeControl, type ControlDeps } from "./control.js";
+import { keysFromBody, type RepairProgress, type RepairStart } from "./repair-control.js";
 
 export interface ServerRequest {
   method: string;
@@ -81,6 +82,14 @@ export interface RouterDeps {
    */
   rebuild: () => { generatedAt: string; total: number; warnings: string[] };
   /**
+   * Start Claude against the current tickets, or report how far the one
+   * in flight is. Absent on a static console. POST starts; GET is status.
+   */
+  repair?: {
+    start: (keys?: string[]) => RepairStart;
+    status: () => RepairProgress;
+  };
+  /**
    * The watch / live control plane. Absent on a static console, which has no
    * server to start a sweep. Routes that need it 404 with a reason rather than
    * pretending the watch is empty.
@@ -124,6 +133,7 @@ export function route(request: ServerRequest, deps: RouterDeps): ServerResponse 
     // POST, not GET: it writes a file. A rebuild reachable by typing a URL is a rebuild a
     // link preview or a prefetching browser can trigger without anybody asking for it.
     if (path === "/api/dashboard/rebuild" && method === "POST") return json(200, deps.rebuild());
+    if (path === "/api/findings/repair") return routeRepair(request, deps);
     if (path === "/api/whoami" && method === "GET") return json(200, { user: session.user, expiresAt: session.expiresAt });
     if (path.startsWith("/api/watch") || path.startsWith("/api/live") || path === "/api/run") {
       return routeControl(request, deps.control);
@@ -214,6 +224,17 @@ export function asset(path: string, deps: RouterDeps): ServerResponse {
     },
     body: file.body,
   };
+}
+
+function routeRepair(request: ServerRequest, deps: RouterDeps): ServerResponse {
+  if (deps.repair === undefined) {
+    return json(404, { error: "findings repair is not available on this console — run `geoqa server`" });
+  }
+  if (request.method === "GET") return json(200, deps.repair.status());
+  if (request.method !== "POST") return json(404, { error: `no such endpoint: ${request.method} ${request.path}` });
+  const parsed = keysFromBody(request.body);
+  if (!parsed.ok) return json(400, { error: parsed.error });
+  return json(200, deps.repair.start(parsed.keys));
 }
 
 const EVIDENCE = /^\/api\/evidence\/(run_[A-Za-z0-9._-]+)(?:\/shot\/([A-Za-z0-9._-]+))?$/;

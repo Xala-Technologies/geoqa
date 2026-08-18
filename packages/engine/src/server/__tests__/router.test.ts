@@ -141,7 +141,7 @@ describe("rebuilding the dashboard from the console", () => {
 describe("default deny", () => {
   it("REFUSES every API route without a session", () => {
     const d = deps();
-    for (const path of ["/api/settings", "/api/whoami", "/api/watch", "/api/live", "/api/run", "/api/evidence/run_1", "/api/anything"]) {
+    for (const path of ["/api/settings", "/api/whoami", "/api/watch", "/api/live", "/api/run", "/api/evidence/run_1", "/api/findings/repair", "/api/anything"]) {
       const out = route(req({ path }), d);
       expect(out.status, path).toBe(401);
     }
@@ -381,6 +381,70 @@ describe("evidence for one run", () => {
     const out = route(req({ path: "/api/evidence/run_1_bergen-mobile/shot/landing", headers: withSession(d) }), d);
     expect(out.status).toBe(404);
     expect(JSON.parse(asText(out.body)).error).toContain("not available on this console");
+  });
+});
+
+describe("findings repair from the console", () => {
+  it("needs a session, like everything else that writes", () => {
+    expect(route(req({ path: "/api/findings/repair", method: "POST" }), deps()).status).toBe(401);
+    expect(route(req({ path: "/api/findings/repair" }), deps()).status).toBe(401);
+  });
+
+  it("404s with a reason when this console cannot start a repair", () => {
+    const d = deps();
+    const out = route(req({ path: "/api/findings/repair", method: "POST", headers: withSession(d) }), d);
+    expect(out.status).toBe(404);
+    expect(JSON.parse(asText(out.body)).error).toContain("geoqa server");
+  });
+
+  it("REFUSES a GET that would start work, and a POST that is not JSON", () => {
+    const start = vi.fn(() => ({ started: true, running: true, queued: 1, done: 0, failed: 0, last: "starting" }));
+    const d = deps({
+      repair: {
+        start,
+        status: () => ({ running: false, queued: 0, done: 0, failed: 0, last: null }),
+      },
+    });
+    expect(route(req({ path: "/api/findings/repair", headers: withSession(d) }), d).status).toBe(200);
+    expect(start).not.toHaveBeenCalled();
+    const bad = route(req({ path: "/api/findings/repair", method: "POST", headers: withSession(d), body: "not json" }), d);
+    expect(bad.status).toBe(400);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("starts a repair and reports whether one is already running", () => {
+    const start = vi.fn((keys?: string[]) => ({
+      started: keys === undefined,
+      running: true,
+      queued: keys?.length ?? 2,
+      done: 0,
+      failed: 0,
+      last: "starting",
+      ...(keys !== undefined ? { reason: "already running" } : {}),
+    }));
+    const d = deps({
+      repair: {
+        start,
+        status: () => ({ running: true, queued: 2, done: 0, failed: 0, last: "starting" }),
+      },
+    });
+    const out = route(req({ path: "/api/findings/repair", method: "POST", headers: withSession(d), body: "" }), d);
+    expect(out.status).toBe(200);
+    expect(JSON.parse(asText(out.body)).started).toBe(true);
+    expect(start).toHaveBeenCalledWith(undefined);
+
+    const one = route(
+      req({
+        path: "/api/findings/repair",
+        method: "POST",
+        headers: withSession(d),
+        body: JSON.stringify({ keys: ["site:x"] }),
+      }),
+      d,
+    );
+    expect(JSON.parse(asText(one.body)).started).toBe(false);
+    expect(start).toHaveBeenCalledWith(["site:x"]);
+    expect(route(req({ path: "/api/findings/repair", method: "PUT", headers: withSession(d) }), d).status).toBe(404);
   });
 });
 

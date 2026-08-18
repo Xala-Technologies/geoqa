@@ -18,7 +18,8 @@ import { consoleEvidenceRoot, loadTenant } from "../tenant/registry.js";
 import { loadJourney } from "../journeys/spec.js";
 import { journeysRoot, profilesRoot, tenantsRoot } from "../repo.js";
 import { loadConfig, configPath } from "../config/load.js";
-import { dashboardBuild } from "../cli/commands.js";
+import { dashboardBuild, defaultDeps, findingsFile, findingsRepair, renderFindingsRepair } from "../cli/commands.js";
+import { createRepairGate } from "./repair-control.js";
 import { nodeHistoryFs } from "../history/store.js";
 import { attachWatch } from "./watch-loop.js";
 import { watchableMarkets } from "../watch/store.js";
@@ -92,6 +93,13 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
             dashboardBuild({ evidenceRoot, historyFs: nodeHistoryFs, now: Date.now });
           },
         });
+  const gate = createRepairGate();
+  const commandDeps = defaultDeps(options.repoRoot, {
+    evidenceRoot,
+    env: options.env,
+    log: options.log,
+    ...(tenant !== undefined ? { tenantId: tenant.id } : {}),
+  });
   const server = createGeoqaServer({
     auth: auth.config,
     now: Date.now,
@@ -115,6 +123,21 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
     evidence: (runId) => loadEvidencePackage(evidenceRoot, runId, nodePackageFs),
     evidenceShot: (runId, label) => loadEvidenceShot(evidenceRoot, runId, label, nodePackageFs),
     ...(watch !== null ? { control: watch.control } : {}),
+    repair: {
+      start: (keys) => {
+        const begun = gate.begin(keys?.length);
+        if (!begun.started) return begun;
+        void (async () => {
+          await findingsFile(commandDeps);
+          const repaired = await findingsRepair(commandDeps, keys !== undefined ? { onlyKeys: keys } : {});
+          gate.finish(renderFindingsRepair(repaired));
+        })().catch((err: unknown) => {
+          gate.finish(err instanceof Error ? err.message : String(err));
+        });
+        return begun;
+      },
+      status: () => gate.status(),
+    },
     settings: () =>
       buildSettings({
         tenants,

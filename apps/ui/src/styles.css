@@ -985,6 +985,16 @@ a.tag:hover {
   min-width: 0;
 }
 
+tr.struck td {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+tr.struck a,
+tr.struck .tag {
+  text-decoration: line-through;
+}
+
 tr.link {
   cursor: pointer;
 }

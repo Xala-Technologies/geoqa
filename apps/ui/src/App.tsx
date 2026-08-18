@@ -354,7 +354,7 @@ export function App(): JSX.Element {
       {route.runId === undefined && route.view === "overview" && <Overview view={view} />}
       {route.runId === undefined && route.view === "live" && <Live selectedId={route.liveId} />}
       {route.runId === undefined && route.view === "runs" && <Runs view={view} />}
-      {route.runId === undefined && route.view === "findings" && <Findings view={view} />}
+      {route.runId === undefined && route.view === "findings" && <Findings view={view} onReload={load} />}
       {route.runId === undefined && route.view === "geography" && <Geography view={view} />}
       {route.runId === undefined && route.view === "coverage" && <Coverage view={view} />}
       {route.runId === undefined && route.view === "trends" && <Trends view={view} />}

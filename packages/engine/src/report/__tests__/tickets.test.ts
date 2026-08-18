@@ -37,13 +37,17 @@ describe("ticketsForView", () => {
     });
     expect(rows[0]?.pr.measured).toBe(true);
     if (rows[0]?.pr.measured) expect(rows[0].pr.value.url).toContain("/pull/3");
+    expect(rows[0]?.fixed).toBe(true);
   });
 
   it("a cannot-fix or no-change is a measured absence of a PR, not a missing row", () => {
     const cannot = ticketsForView([draft()], [], [{ key: draft().key, status: "cannot-fix" }]);
     expect(cannot[0]?.pr.measured).toBe(false);
     if (cannot[0]?.pr.measured === false) expect(cannot[0].pr.reason).toContain("could not fix");
+    expect(cannot[0]?.fixed).toBe(false);
     const none = ticketsForView([draft({ key: "other" })], [], [{ key: "other", status: "no-changes" }]);
     if (none[0]?.pr.measured === false) expect(none[0].pr.reason).toContain("no code change");
+    expect(none[0]?.fixed).toBe(false);
+    expect(ticketsForView([draft()], [], [])[0]?.fixed).toBe(false);
   });
 });
