@@ -24,6 +24,7 @@
  */
 import type { SubUserUsage } from "./quota.js";
 import { parseSubUsers } from "./quota.js";
+import { decodoHeaders } from "./decodo-headers.js";
 
 export const DECODO_SUB_USERS_URL = "https://api.decodo.com/v2/sub-users";
 
@@ -33,7 +34,7 @@ export type UsageProbe = (apiKey: string) => Promise<SubUserUsage[] | null>;
 export const decodoUsageProbe: UsageProbe = async (apiKey) => {
   try {
     const response = await fetch(DECODO_SUB_USERS_URL, {
-      headers: { authorization: apiKey, accept: "application/json" },
+      headers: decodoHeaders(apiKey),
       // A usage check must never be the thing that hangs a run. Ten seconds is
       // generous for one JSON read, and a timeout reads as "unmeasured" rather
       // than as zero spent.
