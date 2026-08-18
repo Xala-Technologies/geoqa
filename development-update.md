@@ -19,6 +19,23 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-18 — The VPS ships from a GitHub Action
+
+The console on `geoqa.srv1212925.hstgr.cloud` can be updated without SSHing
+from a laptop. `.github/workflows/deploy.yml` rsyncs the tree to `/opt/geoqa`
+and runs `infra/remote-release.sh` (install, UI build, systemd, `/health`).
+It is `workflow_dispatch` only so a commit of the workflow cannot overwrite
+machine-local watch state or inputs that are not on `main` yet.
+
+`.env`, `geoqa.config.json`, `var/`, and every `watch.yaml` are excluded.
+Credentials stay in GitHub secrets (`DEPLOY_KEY` is an ed25519 key on the
+box, not the VPS password).
+
+Where: `.github/workflows/deploy.yml`, `infra/remote-release.sh`,
+`infra/geoqa.service`, `infra/geoqa-bridge.service`.
+
+---
+
 ## 2026-08-18 — Periodic watch draws one seeded journey per city × URL
 
 A periodic sweep used to launch every ticked journey on every cell. Five

@@ -1,0 +1,15 @@
+[Unit]
+Description=Forward Docker bridge 4180 to GeoQA on localhost
+After=network.target docker.service
+
+[Service]
+Type=simple
+# Caddy runs in Docker on 172.16.1.0/24. geoqa binds 127.0.0.1 only, so the
+# container cannot reach it without this hop. Bind the docker-bridge address,
+# not 0.0.0.0 — 4180 must not be public.
+ExecStart=/usr/bin/socat TCP-LISTEN:4180,bind=172.16.1.1,reuseaddr,fork TCP:127.0.0.1:4180
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

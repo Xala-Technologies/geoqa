@@ -1,0 +1,14 @@
+# Paths the release must not overwrite on the VPS.
+# rsync --delete still leaves these in place on the destination.
+
+.git
+node_modules
+.env
+.env.*
+geoqa.config.json
+var
+apps/ui/dist
+.cache
+coverage
+.cursor
+watch.yaml

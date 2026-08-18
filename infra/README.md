@@ -1,3 +1,31 @@
+# Infra
+
+Two jobs live here: the **console VPS** release, and the **exit IPs** you only
+buy when the office connection is not enough.
+
+## Console VPS
+
+Production is `geoqa server` behind Caddy, not Vite. The tree is rsynced to
+`/opt/geoqa` by [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml).
+That workflow is `workflow_dispatch` only — run it from the Actions tab.
+
+`.env`, `geoqa.config.json`, `var/`, and any `watch.yaml` stay on the machine.
+A release that overwrote the watch file would disarm a pulse the operator had
+armed, and a release that shipped `.env` would put Decodo in git.
+
+Secrets the workflow reads (repo settings, not this tree):
+
+| Secret | What |
+|---|---|
+| `DEPLOY_HOST` | VPS address |
+| `DEPLOY_PORT` | SSH port |
+| `DEPLOY_USER` | SSH user (`root` on the first box) |
+| `DEPLOY_KEY` | ed25519 private key whose public half is in `authorized_keys` |
+| `DEPLOY_KNOWN_HOSTS` | `ssh-keyscan` of that host |
+
+On the box, `infra/remote-release.sh` installs deps, rebuilds `apps/ui/dist`,
+refreshes the systemd units, and waits for `GET /health` on localhost.
+
 # Exit IPs
 
 geoqa needs one country-correct egress per market. This directory provisions the

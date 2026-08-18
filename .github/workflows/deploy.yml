@@ -1,0 +1,59 @@
+name: Deploy
+
+# Manual until you want every green `main` to ship. A push of this file alone
+# would otherwise rsync origin/main over the VPS and drop machine-local inputs
+# that are not on `main` yet. Run it from the Actions tab.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://geoqa.srv1212925.hstgr.cloud
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Rsync tree
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_PORT"
+          rsync -az --delete \
+            --exclude-from=infra/deploy.exclude \
+            -e "ssh -p $DEPLOY_PORT -o IdentitiesOnly=yes -o BatchMode=yes" \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:/opt/geoqa/"
+
+      - name: Release
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          ssh -p "$DEPLOY_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" bash /opt/geoqa/infra/remote-release.sh
+
+      - name: Public health
+        run: |
+          curl -fsS --max-time 15 https://geoqa.srv1212925.hstgr.cloud/health
+          echo

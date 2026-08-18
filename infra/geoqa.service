@@ -1,0 +1,18 @@
+[Unit]
+Description=GeoQA console and watch
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/geoqa
+EnvironmentFile=/opt/geoqa/.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/root
+# ui-root is absolute: `pnpm --filter` runs with cwd packages/engine, and a
+# relative apps/ui/dist would 404 every asset while the process still looked up.
+ExecStart=/usr/local/bin/pnpm geoqa server --port 4180 --ui-root /opt/geoqa/apps/ui/dist --secure
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
