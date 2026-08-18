@@ -34,6 +34,8 @@ import {
   evidencePrune,
   experimentRun,
   dashboardBuild,
+  findingsFile,
+  renderFindingsFile,
   enforceQuota,
   gateCheck,
   keywordsResearch,
@@ -558,6 +560,13 @@ async function main(argv: string[]): Promise<number> {
     // Red when a check that used to pass now does not. A regression report nobody's CI
     // notices is a report nobody reads.
     return result.regressions.length > 0 ? 1 : 0;
+  }
+
+  if (group === "findings" && (action === "file" || action === undefined)) {
+    const result = await findingsFile(deps, { dryRun: flagBool(args, "dry-run") });
+    emit(result, renderFindingsFile(result));
+    if (result.skipped === "store-unreadable" || result.failed.length > 0) return 1;
+    return 0;
   }
 
   if (group === "runs" && action === "rebuild") {

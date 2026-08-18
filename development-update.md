@@ -19,6 +19,24 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-18 — The watch files its own GitHub issues
+
+Findings are no longer a page you have to remember to read. After a
+sweep the watch groups the run index and opens GitHub issues:
+instrumentation, a hung navigate, and a Decodo city miss get `urgent`;
+a site check is one issue per host, not one per city. Already-filed
+keys live in `filed-issues.json` under the tenant evidence root, so a
+second sweep does not open the same ticket again.
+
+`geoqa findings file --dry-run` prints the drafts. Token and repo come
+from `GEOQA_GITHUB_TOKEN` and `GEOQA_GITHUB_REPO` only — a missing
+token is not a failed sweep.
+
+Where: `findings/tickets.ts`, `findings/github.ts`, `cli/commands.ts`
+(`findingsFile`), `server/watch-loop.ts`.
+
+---
+
 ## 2026-08-18 — The watch reports its own failures
 
 Live looking busy is not the same as a sweep that is moving. Chromium

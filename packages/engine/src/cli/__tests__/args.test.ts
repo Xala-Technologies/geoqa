@@ -152,6 +152,7 @@ describe("USAGE", () => {
       "evidence inspect",
       "assist explain",
       "evidence prune",
+      "findings file",
       "geoqa server",
       "geoqa run",
     ]) {
@@ -207,6 +208,14 @@ describe("USAGE", () => {
     expect(USAGE).toContain("GEOQA_ADMIN_PASSWORD_HASH");
     expect(USAGE).toContain("POST /api/run");
     expect(USAGE).toContain("GEOQA_API_TOKEN");
+  });
+
+  it("documents findings file as GitHub, and that a missing token does not fail a sweep", () => {
+    expect(USAGE).toContain("findings file");
+    expect(USAGE).toContain("GEOQA_GITHUB_TOKEN");
+    expect(USAGE).toContain("GEOQA_GITHUB_REPO");
+    expect(USAGE).toContain("urgent");
+    expect(USAGE).toContain("Already-filed");
   });
 });
 

@@ -99,6 +99,8 @@ import {
   type Regression,
 } from "../history/store.js";
 import { recordFromRunJson, type RunRecord } from "../history/records.js";
+import { draftsFromRuns, type TicketRun } from "../findings/tickets.js";
+import { fileTickets, type FileTicketsResult, type FiledStore, type GitHubCreate } from "../findings/github.js";
 import type { Tenant } from "../tenant/types.js";
 import { executeRun, prepareRun, type RunProgress } from "../run/execute.js";
 import {
@@ -1820,6 +1822,61 @@ export function dashboardBuild(
 }
 
 export const DASHBOARD_FILE = "dashboard.json";
+
+const toTicketRun = (record: RunRecord): TicketRun => ({
+  runId: record.runId,
+  target: record.target,
+  profileId: record.profileId,
+  journeyId: record.journeyId,
+  verdict: record.verdict,
+  findings: record.findings,
+  geo: record.geo,
+});
+
+/**
+ * File the current index as GitHub issues.
+ *
+ * Grouping and urgency live in `findings/tickets.ts`. This only reads the
+ * index, calls the porter, and never throws — a sweep that cannot reach
+ * GitHub still finished the measurement.
+ */
+export async function findingsFile(
+  deps: CommandDeps,
+  options: { dryRun?: boolean; create?: GitHubCreate; store?: FiledStore } = {},
+): Promise<FileTicketsResult> {
+  const { records } = readHistory(deps.evidenceRoot, historyFsOf(deps));
+  const drafts = draftsFromRuns(records.map(toTicketRun), {
+    ...(deps.env.GEOQA_CONSOLE_URL ? { consoleBase: deps.env.GEOQA_CONSOLE_URL } : {}),
+  });
+  return fileTickets({
+    drafts,
+    evidenceRoot: deps.evidenceRoot,
+    env: deps.env,
+    nowMs: deps.now(),
+    ...(options.dryRun === true ? { dryRun: true } : {}),
+    ...(options.create !== undefined ? { create: options.create } : {}),
+    ...(options.store !== undefined ? { store: options.store } : {}),
+  });
+}
+
+export function renderFindingsFile(result: FileTicketsResult): string {
+  if (result.skipped === "unconfigured") {
+    return "findings file: GitHub is off (set GEOQA_GITHUB_TOKEN and GEOQA_GITHUB_REPO)";
+  }
+  if (result.skipped === "store-unreadable") {
+    return "findings file: filed-issues.json is unreadable — not filing, so we do not open duplicates";
+  }
+  if (result.skipped === "dry-run") {
+    const lines = [`findings file: dry run — ${result.wouldFile.length} issue(s) would be opened`];
+    for (const draft of result.wouldFile) lines.push(`  ${draft.urgent ? "URGENT" : "site"} ${draft.title}`);
+    for (const key of result.already) lines.push(`  already ${key}`);
+    return lines.join("\n");
+  }
+  const lines = [`findings file: opened ${result.filed.length}, already ${result.already.length}, failed ${result.failed.length}`];
+  for (const item of result.filed) lines.push(`  #${item.number} ${item.url}`);
+  for (const item of result.failed) lines.push(`  FAILED ${item.key}: ${item.error}`);
+  return lines.join("\n");
+}
 
 export function renderDashboardBuild(result: { path: string; view: DashboardView }): string {
   const v = result.view;

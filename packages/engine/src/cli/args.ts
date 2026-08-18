@@ -502,6 +502,14 @@ Multi-tenancy:
       verdict, not the assembled confidence report) and says so rather than filling the
       gaps with defaults that would read as real readings.
 
+  geoqa findings file [--dry-run] [--json]
+      Open GitHub issues from the run index. Site checks group by host.
+      Instrumentation, a hung navigate, and a Decodo city miss get the
+      urgent label. Already-filed keys are skipped. GEOQA_GITHUB_TOKEN
+      and GEOQA_GITHUB_REPO (owner/name) required; GEOQA_CONSOLE_URL
+      adds links. A missing token is not an error — the sweep still
+      finished. Exits 1 when the store is unreadable or GitHub refuses.
+
   geoqa evidence inspect <runId> [--json]
       Show a run's evidence manifest, what is missing, and its completeness.
 
