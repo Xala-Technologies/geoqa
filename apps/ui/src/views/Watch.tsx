@@ -25,6 +25,7 @@ interface WatchSpec {
   targets: string[];
   maxConcurrent: number;
   allowWrites: boolean;
+  journeyPick?: "all" | "seeded";
 }
 
 interface WatchView {
@@ -98,6 +99,7 @@ export function Watch(): JSX.Element {
   if (data === null) return <div className="load">reading watch…</div>;
 
   const { spec } = data;
+  const journeyPick = spec.journeyPick ?? "all";
   const patch = (body: Partial<WatchSpec>): void => {
     act("Saving…", sendJson("/api/watch", "PUT", body));
   };
@@ -269,7 +271,30 @@ export function Watch(): JSX.Element {
       <div className="panel">
         <div className="panel-head">
           <h3>Journeys</h3>
-          <p className="hint">Read-only by default. A journey that submits a form is marked.</p>
+          <p className="hint">
+            Read-only by default. A journey that submits a form is marked. Seeded pick draws one
+            journey per city × URL from this list — same hour, same city, same URL, same journey.
+          </p>
+        </div>
+        <div className="watch-row">
+          <label className="check">
+            <input
+              type="radio"
+              name="journeyPick"
+              checked={journeyPick === "all"}
+              onChange={() => patch({ journeyPick: "all" })}
+            />
+            Every journey
+          </label>
+          <label className="check">
+            <input
+              type="radio"
+              name="journeyPick"
+              checked={journeyPick === "seeded"}
+              onChange={() => patch({ journeyPick: "seeded" })}
+            />
+            One seeded journey
+          </label>
         </div>
         <div className="chip-grid">
           {data.availableJourneys.map((j) => (

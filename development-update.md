@@ -19,6 +19,31 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-18 — Periodic watch draws one seeded journey per city × URL
+
+A periodic sweep used to launch every ticked journey on every cell. Five
+read-only journeys × 26 cities × 2 URLs is 260 residential sessions an
+hour. The VPS pulse is 52: one journey per cell, drawn from the read-only
+pool (`landing-page`, `browse`, `search`, `reader`, `returning-visitor`).
+
+The draw is `seedFrom(UTC-hour + market + url)` over the sorted pool — the
+same hasher the journey harness already uses. Same hour, same city, same
+URL, same journey. Device is not in the seed, so a two-device watch still
+does one journey per city × URL. `Math.random` is refused: an unseeded
+pick cannot answer "why did Oslo get search at 14:00?"
+
+`journeyPick: all | seeded` on the watch spec, default `all`, so an old
+file still means the cartesian product. Continuous still walks a cursor
+and ignores the flag. Digilist's `watch.yaml` is the hourly pulse
+(26 cities, mobile, two URLs, seeded, writes off) and stays disarmed
+until Decodo and the quota are ready. `contact-form` and `explore` are
+off the list.
+
+Where: `watch/journey-pick.ts`, `watch/spec.ts`, `server/watch-loop.ts`,
+`inputs/tenants/digilist/watch.yaml`, Watch view.
+
+---
+
 ## 2026-08-15 — The console can arm a watch, and you can see the session while it runs
 
 The matrix used to start when a human typed `geoqa matrix run`. That is still

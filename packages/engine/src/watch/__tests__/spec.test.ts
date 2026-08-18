@@ -22,13 +22,21 @@ describe("WatchSpecSchema", () => {
     expect(parsed.value.everyMinutes).toBe(30);
   });
 
-  it("defaults restSeconds, allowWrites and maxConcurrent so a short file is still complete", () => {
+  it("defaults restSeconds, allowWrites, maxConcurrent and journeyPick so a short file is still complete", () => {
     const { restSeconds: _r, allowWrites: _w, ...short } = valid;
     const parsed = parseWatch(short);
     if (!parsed.ok) throw new Error(parsed.errors.join("\n"));
     expect(parsed.value.restSeconds).toBe(15);
     expect(parsed.value.allowWrites).toBe(false);
     expect(parsed.value.maxConcurrent).toBe(2);
+    expect(parsed.value.journeyPick).toBe("all");
+  });
+
+  it("accepts a seeded pick and REFUSES an unseeded random — that draw cannot be replayed", () => {
+    const seeded = parseWatch({ ...valid, journeyPick: "seeded" });
+    if (!seeded.ok) throw new Error(seeded.errors.join("\n"));
+    expect(seeded.value.journeyPick).toBe("seeded");
+    expect(parseWatch({ ...valid, journeyPick: "random" }).ok).toBe(false);
   });
 
   it("REFUSES an unknown key rather than ignoring it", () => {

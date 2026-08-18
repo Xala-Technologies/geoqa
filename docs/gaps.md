@@ -234,8 +234,9 @@ Still open, and each is a different kind of open:
   when due. Periodic measures from the last start; continuous from the last
   finish. Continuous samples the coverage matrix through a persisted cursor
   (`maxConcurrent`, default 2) instead of launching the cartesian product
-  every tick. Periodic still runs the selected axes in full — the operator
-  named that subset on purpose. Each sweep mints new run ids, which become
+  every tick. Periodic with `journeyPick: all` still runs the selected axes
+  in full; `journeyPick: seeded` draws one journey per market × URL from the
+  pool, seeded on UTC-hour + market + url. Each sweep mints new run ids, which become
   new proxy session ids, so the residential pool rotates the exit. The
   console Watch view writes the spec; Live shows frames while sessions are
   in flight. `geoqa run --json` streams one event per line (`observedIp`,

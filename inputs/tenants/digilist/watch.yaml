@@ -1,9 +1,14 @@
 # Operator-controlled watch. The console writes this file; do not put credentials here.
 # Markets must be ones the tenant listed. A writes journey needs allowWrites: true.
+#
+# Hourly VPS pulse: 26 cities × 2 URLs × 1 seeded journey = 52 runs/hour.
+# The draw is UTC-hour + market + url — not Math.random(). contact-form /
+# explore stay off until allowWrites is on. xala.no and dev.digilist.no are
+# daily, not hourly. Left disarmed until Decodo + quota are ready.
 tenantId: digilist
 enabled: false
-mode: continuous
-everyMinutes: 30
+mode: periodic
+everyMinutes: 60
 restSeconds: 60
 markets:
   - oslo
@@ -34,17 +39,15 @@ markets:
   - molde
 devices:
   - mobile
-  - desktop
 journeys:
   - landing-page
   - browse
-  - returning-visitor
   - search
-  - explore
+  - reader
+  - returning-visitor
 targets:
   - https://digilist.no
   - https://app.digilist.no
-  - https://dev.digilist.no
-  - https://xala.no
 maxConcurrent: 2
-allowWrites: true
+allowWrites: false
+journeyPick: seeded

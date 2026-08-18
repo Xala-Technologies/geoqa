@@ -15,6 +15,7 @@ const spec = (over: Partial<WatchSpec> = {}): WatchSpec => ({
   targets: ["https://digilist.no"],
   maxConcurrent: 2,
   allowWrites: false,
+  journeyPick: "all",
   ...over,
 });
 

@@ -20,6 +20,7 @@ import { applyWatchPatch, loadWatch, saveWatch, watchPath, type WatchAllowed } f
 import { emptyClock, loadWatchClock, saveWatchClock, watchClockPath } from "../watch/clock.js";
 import { journeysRoot, tenantsRoot } from "../repo.js";
 import { nextSlice } from "../watch/cursor.js";
+import { pickSeededCells } from "../watch/journey-pick.js";
 import { parseWatch, type WatchSpec } from "../watch/spec.js";
 import { expandMatrix } from "../run/matrix.js";
 import type { ControlDeps, ControlOutcome } from "./control.js";
@@ -99,7 +100,8 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       return;
     }
     inFlight += 1;
-    lastStartedMs = options.now();
+    const startedMs = options.now();
+    lastStartedMs = startedMs;
     persistClock();
     options.log(`watch: starting sweep (${reason}) — ${planned.axes.targets.length} url(s) × ${planned.axes.markets.length} market(s)`);
     const deps = defaultDeps(options.repoRoot, {
@@ -176,7 +178,9 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
                 target: s.target ?? "",
               }));
             })()
-          : undefined;
+          : spec.journeyPick === "seeded"
+            ? pickSeededCells({ ...planned.axes, atMs: startedMs })
+            : undefined;
       if (pick !== undefined && pick.length === 0) {
         options.log("watch: continuous slice is empty");
         return;

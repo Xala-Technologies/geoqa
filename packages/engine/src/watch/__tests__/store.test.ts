@@ -23,6 +23,7 @@ const spec = (over: Partial<WatchSpec> = {}): WatchSpec => ({
   targets: ["https://digilist.no"],
   maxConcurrent: 2,
   allowWrites: false,
+  journeyPick: "all",
   ...over,
 });
 
@@ -93,10 +94,11 @@ describe("applyWatchPatch", () => {
   };
 
   it("merges a partial patch onto the current spec", () => {
-    const out = applyWatchPatch(spec(), { enabled: true, everyMinutes: 15 }, allowed);
+    const out = applyWatchPatch(spec(), { enabled: true, everyMinutes: 15, journeyPick: "seeded" }, allowed);
     if (!out.ok) throw new Error(out.errors.join());
     expect(out.value.enabled).toBe(true);
     expect(out.value.everyMinutes).toBe(15);
+    expect(out.value.journeyPick).toBe("seeded");
     expect(out.value.targets).toEqual(["https://digilist.no"]);
   });
 

@@ -56,9 +56,9 @@ export const WatchSpecSchema = z
      * How many scenarios one continuous tick launches.
      *
      * Continuous samples the matrix; it does not dump it. Two is the
-     * starting bound — each slot is a residential browser. Periodic still
-     * launches the selected axes in full, because the operator named that
-     * subset on purpose.
+     * starting bound — each slot is a residential browser. Periodic with
+     * `journeyPick: all` still launches the selected axes in full;
+     * `seeded` draws one journey per cell.
      */
     maxConcurrent: z.number().int().min(1).max(16).default(2),
     allowWrites: z.boolean().default(false),
