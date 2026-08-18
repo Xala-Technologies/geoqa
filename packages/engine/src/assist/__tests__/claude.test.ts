@@ -44,6 +44,24 @@ describe("runClaudePrint", () => {
     expect(seen[0]?.args.join(" ")).not.toContain("FAIL");
   });
 
+  it("repairs in the checkout: extra flags and cwd reach the child, the prompt does not", async () => {
+    let cwd = "";
+    let args: string[] = [];
+    await runClaudePrint("ISSUE\nsearch box", {
+      env: {},
+      extraArgs: ["--dangerously-skip-permissions"],
+      cwd: "/tmp/repair/site",
+      spawn: async (passed, opts) => {
+        args = passed;
+        cwd = opts.cwd ?? "";
+        return { stdout: "fixed", stderr: "", exitCode: 0 };
+      },
+    });
+    expect(args).toEqual(["-p", "--output-format", "text", "--dangerously-skip-permissions"]);
+    expect(cwd).toBe("/tmp/repair/site");
+    expect(args.join(" ")).not.toContain("search box");
+  });
+
   it("hands the child an env with API keys removed", async () => {
     let childEnv: NodeJS.ProcessEnv = {};
     await runClaudePrint("x", {

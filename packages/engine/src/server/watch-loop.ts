@@ -8,7 +8,7 @@
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { controlRun, defaultDeps, findingsFile, matrixRun, renderFindingsFile, resolveProfileId } from "../cli/commands.js";
+import { controlRun, defaultDeps, findingsFile, findingsRepair, matrixRun, renderFindingsFile, renderFindingsRepair, resolveProfileId } from "../cli/commands.js";
 import { liveDashboardUrl } from "../cli/events.js";
 import { loadJourney } from "../journeys/spec.js";
 import { acceptRun, type AcceptedRun } from "./accept-run.js";
@@ -281,7 +281,12 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       lastFinishedMs = options.now();
       persistClock();
       live.prune(options.now(), KEEP_LIVE_MS);
-      void findingsFile(deps).then((filed) => options.log(renderFindingsFile(filed)));
+      void findingsFile(deps).then(async (filed) => {
+        options.log(renderFindingsFile(filed));
+        if (filed.filed.length === 0) return;
+        const repaired = await findingsRepair(deps, { onlyKeys: filed.filed.map((item) => item.key) });
+        options.log(renderFindingsRepair(repaired));
+      });
     }
   };
 

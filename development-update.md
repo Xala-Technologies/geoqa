@@ -19,6 +19,26 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-18 — Findings tag the site and open a PR
+
+A finding now carries `site:<host>` so the GitHub filter is the page the
+visitor saw. Tenant `repositories:` send a site check to that host's
+repo — [booking-brilliance](https://github.com/Xala-Technologies/booking-brilliance)
+for digilist.no, [Digilist](https://github.com/Xala-Technologies/Digilist)
+for app.digilist.no (PRs from `dev`), [xala-web-cloner](https://github.com/xalatechnologies/xala-web-cloner)
+for xala.no. Instrumentation stays on geoqa.
+
+After a new issue is filed, `geoqa findings repair` clones the
+destination, runs `claude -p` on the operator Max login, and opens a PR
+with auto-merge asked for. Already-repaired keys live in
+`repaired-issues.json`. A missing token still does not fail a sweep.
+
+Where: `findings/tickets.ts`, `findings/repos.ts`, `findings/github.ts`,
+`assist/repair.ts`, `cli/commands.ts` (`findingsRepair`),
+`server/watch-loop.ts`, `inputs/tenants/digilist.yaml`.
+
+---
+
 ## 2026-08-18 — The watch files its own GitHub issues
 
 Findings are no longer a page you have to remember to read. After a

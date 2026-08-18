@@ -35,7 +35,9 @@ import {
   experimentRun,
   dashboardBuild,
   findingsFile,
+  findingsRepair,
   renderFindingsFile,
+  renderFindingsRepair,
   enforceQuota,
   gateCheck,
   keywordsResearch,
@@ -565,6 +567,13 @@ async function main(argv: string[]): Promise<number> {
   if (group === "findings" && (action === "file" || action === undefined)) {
     const result = await findingsFile(deps, { dryRun: flagBool(args, "dry-run") });
     emit(result, renderFindingsFile(result));
+    if (result.skipped === "store-unreadable" || result.failed.length > 0) return 1;
+    return 0;
+  }
+
+  if (group === "findings" && action === "repair") {
+    const result = await findingsRepair(deps, { dryRun: flagBool(args, "dry-run") });
+    emit(result, renderFindingsRepair(result));
     if (result.skipped === "store-unreadable" || result.failed.length > 0) return 1;
     return 0;
   }

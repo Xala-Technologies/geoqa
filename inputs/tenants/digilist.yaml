@@ -53,6 +53,18 @@ targets:
   - https://app.digilist.no
   - https://dev.digilist.no
   - https://xala.no
+# Host → GitHub repo. Site findings file here; instrumentation stays on
+# GEOQA_GITHUB_REPO. app.digilist.no PRs start from `dev`.
+repositories:
+  - host: digilist.no
+    repo: Xala-Technologies/booking-brilliance
+    base: main
+  - host: app.digilist.no
+    repo: Xala-Technologies/Digilist
+    base: dev
+  - host: xala.no
+    repo: xalatechnologies/xala-web-cloner
+    base: main
 # The NAME of an environment variable, never a credential. R-26: credentials come
 # from the environment only. null means "use the shared default", which is what this
 # tenant does today — its own Decodo sub-user is slice 7.

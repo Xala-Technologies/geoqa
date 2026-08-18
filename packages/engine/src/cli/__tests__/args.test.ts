@@ -153,6 +153,7 @@ describe("USAGE", () => {
       "assist explain",
       "evidence prune",
       "findings file",
+      "findings repair",
       "geoqa server",
       "geoqa run",
     ]) {
@@ -216,6 +217,14 @@ describe("USAGE", () => {
     expect(USAGE).toContain("GEOQA_GITHUB_REPO");
     expect(USAGE).toContain("urgent");
     expect(USAGE).toContain("Already-filed");
+    expect(USAGE).toContain("site:<host>");
+  });
+
+  it("documents findings repair as claude -p PRs with auto-merge, Digilist from dev", () => {
+    expect(USAGE).toContain("findings repair");
+    expect(USAGE).toContain("claude -p");
+    expect(USAGE).toContain("dev");
+    expect(USAGE).toContain("Auto-merge");
   });
 });
 

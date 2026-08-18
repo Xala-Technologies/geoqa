@@ -261,6 +261,20 @@ describe("loadTenant", () => {
     // A NAME or null, never a value. A tenant file that held a secret would be the
     // .env mistake moved somewhere with worse odds.
     expect(loaded.value.proxyCredentials).toBeNull();
+    expect(loaded.value.repositories).toEqual([
+      { host: "digilist.no", repo: "Xala-Technologies/booking-brilliance", base: "main" },
+      { host: "app.digilist.no", repo: "Xala-Technologies/Digilist", base: "dev" },
+      { host: "xala.no", repo: "xalatechnologies/xala-web-cloner", base: "main" },
+    ]);
+  });
+
+  it("defaults repositories to empty, and refuses a repo that is not owner/name", () => {
+    const none = parseTenant(valid);
+    if (!none.ok) throw new Error(none.errors.join("\n"));
+    expect(none.value.repositories).toEqual([]);
+    expect(parseTenant({ ...valid, repositories: [{ host: "x.no", repo: "not-a-repo" }] }).ok).toBe(false);
+    expect(parseTenant({ ...valid, repositories: [{ host: "x.no", repo: "../x" }] }).ok).toBe(false);
+    expect(parseTenant({ ...valid, repositories: [{ host: "x.no", repo: "acme/site", base: "main", extra: 1 }] }).ok).toBe(false);
   });
 
   it("reports unreadable YAML with the filename, not a bare parser message", () => {

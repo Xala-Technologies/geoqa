@@ -17,6 +17,7 @@ export interface ClaudeSpawnOptions {
   stdin: string;
   timeoutMs: number;
   bin: string;
+  cwd?: string;
 }
 
 export type ClaudeSpawn = (
@@ -45,16 +46,19 @@ export async function runClaudePrint(
     spawn: ClaudeSpawn;
     bin?: string;
     timeoutMs?: number;
+    cwd?: string;
+    extraArgs?: string[];
   },
 ): Promise<AssistOutcome> {
   const bin = options.bin ?? options.env.GEOQA_CLAUDE_BIN ?? "claude";
   const timeoutMs = options.timeoutMs ?? DEFAULT_CLAUDE_TIMEOUT_MS;
   const env = envForMaxSubscription(options.env);
-  const reply = await options.spawn(["-p", "--output-format", "text"], {
+  const reply = await options.spawn(["-p", "--output-format", "text", ...(options.extraArgs ?? [])], {
     env,
     stdin: prompt,
     timeoutMs,
     bin,
+    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
   });
   if (reply.error) {
     if (reply.error.code === "ETIMEDOUT") return fail("timeout", reply.error.message);

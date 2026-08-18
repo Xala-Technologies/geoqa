@@ -64,6 +64,9 @@ export default defineConfig({
         // Anthropic; every decision about a reply lives in assist/claude.ts
         // and is covered against an injected spawn.
         "src/assist/claude-spawn.ts",
+        // Spawns git/gh for an unattended repair. The suite must never
+        // clone a customer repo; every decision lives in assist/repair.ts.
+        "src/assist/repair-exec.ts",
         // Every activity is a thin wrapper that news up a real provider /
         // runtime and delegates; the logic each one calls is at 100%.
         "src/temporal/activities.ts",

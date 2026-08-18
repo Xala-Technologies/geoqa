@@ -103,3 +103,34 @@ describe("LiveRegistry", () => {
     expect(live.safeId("")).toBe(false);
   });
 });
+
+describe("the live board fills what a caller left out, and holds a stable order", () => {
+  it("takes steps a caller supplies, and defaults a step index to the end of the log", () => {
+    // `geoqa run --json` streams events that may name a step without numbering
+    // it. Appending at the end is the honest reading of "the next thing that
+    // happened", and inventing 0 would redraw the board from the top.
+    const live = new LiveRegistry();
+    live.upsert({ ...session(), steps: [{ index: 0, label: "open target", phase: "journey", at: "2026-08-15T12:00:01.000Z" }] });
+    live.progress("run_1", { stepLabel: "click the first result", phase: "journey" }, "2026-08-15T12:00:02.000Z");
+    const after = live.get("run_1");
+    expect(after?.steps.map((s) => s.index)).toEqual([0, 1]);
+
+    // The same label at the same index twice is one step being re-reported, not
+    // two steps: a repeat must not grow the log.
+    live.progress("run_1", { stepLabel: "click the first result", stepIndex: 1 }, "2026-08-15T12:00:03.000Z");
+    expect(live.get("run_1")?.steps).toHaveLength(2);
+  });
+
+  it("keeps two sessions started in the same millisecond in a stable order", () => {
+    // Sorting is newest first, and equal timestamps must compare equal rather
+    // than swapping on every render — a board that reshuffles under a watching
+    // operator looks like sessions appearing and vanishing.
+    const live = new LiveRegistry();
+    live.upsert(session({ id: "run_a", startedAt: "2026-08-15T12:00:00.000Z" }));
+    live.upsert(session({ id: "run_b", startedAt: "2026-08-15T12:00:00.000Z" }));
+    live.upsert(session({ id: "run_c", startedAt: "2026-08-15T12:00:05.000Z" }));
+    const ids = live.list().map((s) => s.id);
+    expect(ids[0]).toBe("run_c");
+    expect(live.list().map((s) => s.id)).toEqual(ids);
+  });
+});

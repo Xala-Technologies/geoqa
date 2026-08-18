@@ -10,6 +10,7 @@ export const nodeClaudeSpawn: ClaudeSpawn = (args, options) =>
     const child = spawn(options.bin, args, {
       env: options.env,
       stdio: ["pipe", "pipe", "pipe"],
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];

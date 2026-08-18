@@ -58,6 +58,7 @@ describe("findingsFile", () => {
     });
     const first = await findingsFile(d, {
       create: async () => ({ number: 42, html_url: "https://github.com/acme/geoqa/issues/42" }),
+      addLabels: async () => undefined,
     });
     expect(first.filed).toHaveLength(1);
     expect(first.filed[0]?.number).toBe(42);
@@ -67,6 +68,7 @@ describe("findingsFile", () => {
       create: async () => {
         throw new Error("should not re-file");
       },
+      addLabels: async () => undefined,
     });
     expect(second.already).toHaveLength(1);
   });
@@ -115,5 +117,27 @@ describe("findingsFile", () => {
     };
     expect(renderFindingsFile(result)).toContain("FAILED");
     expect(renderFindingsFile(result)).toContain("403");
+  });
+
+  it("an unknown tenant id does not invent a site repo", async () => {
+    writeFileSync(path.join(evidenceRoot, "runs.jsonl"), `${record()}\n`);
+    const created: string[] = [];
+    await findingsFile(
+      defaultDeps(repoRoot, {
+        evidenceRoot,
+        tenantId: "no-such-tenant",
+        env: { GEOQA_GITHUB_TOKEN: "t", GEOQA_GITHUB_REPO: "acme/geoqa" },
+        now: () => 1,
+        log: () => undefined,
+      }),
+      {
+        create: async (input) => {
+          created.push(input.repo);
+          return { number: 1, html_url: "https://x/1" };
+        },
+        addLabels: async () => undefined,
+      },
+    );
+    expect(created).toEqual(["acme/geoqa"]);
   });
 });

@@ -35,6 +35,10 @@ export interface TicketDraft {
   labels: string[];
   urgent: boolean;
   runIds: string[];
+  /** Primary host, or `geoqa` when the defect is ours / the vendor's. */
+  site: string;
+  /** Every host that contributed runs — each becomes a `site:<host>` label. */
+  hosts: string[];
 }
 
 export interface TicketOptions {
@@ -147,7 +151,14 @@ function draft(input: {
   origin: string | null;
   body: string;
 }): TicketDraft {
-  const labels = input.urgent ? ["urgent", "instrumentation", "findings", "bug"] : ["findings", "bug"];
+  const hosts = [...new Set(input.runs.map((run) => hostOf(run.target)))];
+  const site = input.urgent ? "geoqa" : (hosts[0] ?? "geoqa");
+  const labels = [
+    ...(input.urgent ? ["urgent", "instrumentation"] : []),
+    "findings",
+    "bug",
+    ...hosts.map((host) => `site:${host}`),
+  ];
   const findings = link(input.origin, "#/findings");
   const tail = findings === "" ? "" : `\n\nFindings: ${findings}`;
   return {
@@ -157,6 +168,8 @@ function draft(input: {
     labels,
     urgent: input.urgent,
     runIds: [...new Set(input.runs.map((r) => r.runId))],
+    site,
+    hosts,
   };
 }
 

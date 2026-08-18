@@ -359,6 +359,29 @@ describe("evidence for one run", () => {
     const noShot = route(req({ path: "/api/evidence/run_1_bergen-mobile/shot/secret", headers: withSession(d) }), d);
     expect(noShot.status).toBe(404);
   });
+
+  it("404s a WRITE to the evidence route, and a run id that is not one", () => {
+    // Evidence is read-only over HTTP by design: there is no endpoint that
+    // writes into a package, so a POST is not a method error to fix — it is a
+    // route that does not exist. A malformed run id gets the same answer for
+    // the same reason the loader refuses it: an id becomes a path.
+    const d = deps({ evidence: (runId) => ({ ok: true, value: { runId, steps: [], screenshots: [] } }) });
+    const posted = route(req({ method: "POST", path: "/api/evidence/run_1_bergen-mobile", headers: withSession(d) }), d);
+    expect(posted.status).toBe(404);
+    const malformed = route(req({ path: "/api/evidence/not-a-run-id", headers: withSession(d) }), d);
+    expect(malformed.status).toBe(404);
+  });
+
+  it("404s a SHOT request too when the console cannot read the tree, and says which console can", () => {
+    // The pack route and the shot route carry the same guard separately, and
+    // both need it: the console renders an <img> for every screenshot in a
+    // package, so a console started without an evidence reader would answer
+    // the JSON and then throw on the picture it just advertised.
+    const d = deps();
+    const out = route(req({ path: "/api/evidence/run_1_bergen-mobile/shot/landing", headers: withSession(d) }), d);
+    expect(out.status).toBe(404);
+    expect(JSON.parse(asText(out.body)).error).toContain("not available on this console");
+  });
 });
 
 describe("whoami", () => {

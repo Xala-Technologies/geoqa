@@ -16,6 +16,7 @@ import {
   defaultDeps,
   assistExplain,
   evidenceInspect,
+  nodePackageFs,
   evidencePrune,
   experimentRun,
   journeyList,
@@ -2801,5 +2802,31 @@ describe("refusing before spending anything", () => {
         { profileId: "oslo-desktop", providerName: "http-proxy" },
       ),
     ).rejects.toThrow(/unusable/);
+  });
+});
+
+describe("nodePackageFs — the adapter the server reads evidence through", () => {
+  it("reads text, bytes, existence and a listing off a real disk", () => {
+    // Every other test in this file injects a fake fs, which is the point: the
+    // judgement is tested without touching a disk. This one exists because the
+    // adapter itself is the seam nothing else exercises — `readBytes` is
+    // reached only by `loadEvidenceShot` in the server, so a broken mapping
+    // here would surface as a screenshot that 404s in production and passes
+    // every test.
+    const dir = mkdtempSync(path.join(tmpdir(), "geoqa-pkgfs-"));
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    writeFileSync(path.join(dir, "run.json"), '{"runId":"run_1_oslo-mobile"}');
+    writeFileSync(path.join(dir, "landing.png"), png);
+
+    expect(nodePackageFs.exists(path.join(dir, "run.json"))).toBe(true);
+    expect(nodePackageFs.exists(path.join(dir, "nothing.json"))).toBe(false);
+    expect(JSON.parse(nodePackageFs.readText(path.join(dir, "run.json"))).runId).toBe("run_1_oslo-mobile");
+    expect(nodePackageFs.list(dir).sort()).toEqual(["landing.png", "run.json"]);
+
+    const bytes = nodePackageFs.readBytes(path.join(dir, "landing.png"));
+    expect(Buffer.isBuffer(bytes)).toBe(true);
+    expect(bytes.equals(png)).toBe(true);
+
+    rmSync(dir, { recursive: true, force: true });
   });
 });

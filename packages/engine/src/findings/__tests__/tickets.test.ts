@@ -40,7 +40,9 @@ describe("draftsFromRuns", () => {
     expect(drafts).toHaveLength(1);
     expect(drafts[0]?.urgent).toBe(false);
     expect(drafts[0]?.key).toBe("site:has a search box:xala.no");
-    expect(drafts[0]?.labels).toEqual(["findings", "bug"]);
+    expect(drafts[0]?.labels).toEqual(["findings", "bug", "site:xala.no"]);
+    expect(drafts[0]?.site).toBe("xala.no");
+    expect(drafts[0]?.hosts).toEqual(["xala.no"]);
     expect(drafts[0]?.runIds).toEqual(["a", "b"]);
     expect(drafts[0]?.title).toContain("has a search box");
     expect(drafts[0]?.title).toContain("xala.no");
@@ -64,6 +66,8 @@ describe("draftsFromRuns", () => {
     expect(keys).toEqual(["site:has a search box:digilist.no", "urgent:run:open target"]);
     expect(drafts.find((d) => d.key.startsWith("urgent:"))?.urgent).toBe(true);
     expect(drafts.find((d) => d.key.startsWith("urgent:"))?.labels).toContain("urgent");
+    expect(drafts.find((d) => d.key.startsWith("urgent:"))?.labels).toContain("site:digilist.no");
+    expect(drafts.find((d) => d.key.startsWith("urgent:"))?.site).toBe("geoqa");
     expect(drafts.some((d) => d.key.includes("type the query"))).toBe(false);
   });
 

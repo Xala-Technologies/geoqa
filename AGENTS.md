@@ -75,6 +75,7 @@ pnpm geoqa runs rebuild
 pnpm geoqa experiment run EXP-001 --samples 10 [--geo …] [--url …] \
                          [--stability-window <duration>] [--stability-reads <n>] [--concurrency <n>]
 pnpm geoqa findings file [--dry-run]
+pnpm geoqa findings repair [--dry-run]
 pnpm geoqa evidence inspect <runId>
 pnpm geoqa assist explain <runId> # claude -p after judgement; Max login, not API
 pnpm geoqa evidence prune [--apply] [--max-age <tier>=<days|null>]... \
@@ -152,7 +153,7 @@ journeys/     spec (YAML DSL) → engine (executes) → assertions (pure judgeme
 geo/          profile → observe (both axes) → verify (three-valued verdicts)
 network/      GeoNetworkProvider (direct | http-proxy) + a persisted cooldown store
 evidence/     redact-at-write → store → manifest (tiered retention) → prune (shelf life)
-findings/     classify → tickets (GitHub). Site checks group by host; Decodo/run failures are urgent. Token from env only.
+findings/     classify → tickets (GitHub). Site checks group by host and carry site:<host>; Decodo/run failures are urgent. Tenant repositories: file the site repo (Digilist PRs from dev). Token from env only.
 confidence/   five independent axes, overall capped by the weakest
 search/       SERP → the fifth axis, or an honest null (serpapi behind SearchProvider)
 browser/      the ONLY layer that knows an engine exists

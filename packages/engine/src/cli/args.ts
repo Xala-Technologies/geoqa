@@ -503,12 +503,21 @@ Multi-tenancy:
       gaps with defaults that would read as real readings.
 
   geoqa findings file [--dry-run] [--json]
-      Open GitHub issues from the run index. Site checks group by host.
-      Instrumentation, a hung navigate, and a Decodo city miss get the
-      urgent label. Already-filed keys are skipped. GEOQA_GITHUB_TOKEN
-      and GEOQA_GITHUB_REPO (owner/name) required; GEOQA_CONSOLE_URL
+      Open GitHub issues from the run index. Site checks group by host
+      and carry a site:<host> label. A mapped host files on that site's
+      repo (tenant repositories:); instrumentation stays on
+      GEOQA_GITHUB_REPO and gets the urgent label. Already-filed keys
+      are skipped, then retagged.
+      GEOQA_GITHUB_TOKEN and GEOQA_GITHUB_REPO required; GEOQA_CONSOLE_URL
       adds links. A missing token is not an error — the sweep still
       finished. Exits 1 when the store is unreadable or GitHub refuses.
+
+  geoqa findings repair [--dry-run] [--json]
+      After issues exist, clone each destination repo and run claude -p
+      (Max login, not the API) to open a PR. app.digilist.no branches
+      from dev; every other mapped repo from main. Auto-merge is asked
+      for. Already-repaired keys are skipped. A missing token is not an
+      error. Exits 1 when a store is unreadable or a repair fails.
 
   geoqa evidence inspect <runId> [--json]
       Show a run's evidence manifest, what is missing, and its completeness.

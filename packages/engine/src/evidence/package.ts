@@ -194,12 +194,17 @@ export function loadEvidenceShot(
   fs: PackageFs,
 ): { body: Buffer; type: string } | null {
   if (!SHOT_LABEL.test(label)) return null;
+  // Resolved ONCE, before the package is read. It used to be resolved again
+  // after, which produced a second `dir === null` guard that could not fire —
+  // `loadEvidencePackage` had already refused the same run id on the same
+  // check. A guard with no reachable failure is a claim that the invariant
+  // above it might not hold, so the resolution moved rather than the check.
+  const dir = evidenceRunDir(root, runId);
+  if (dir === null) return null;
   const loaded = loadEvidencePackage(root, runId, fs);
   if (!loaded.ok) return null;
   const shot = loaded.value.screenshots.find((s) => s.label === label);
   if (shot === undefined || !shot.present) return null;
-  const dir = evidenceRunDir(root, runId);
-  if (dir === null) return null;
   const full = path.resolve(dir, shot.file);
   const relative = path.relative(dir, full);
   if (relative.startsWith("..") || path.isAbsolute(relative) || relative.includes("/")) return null;

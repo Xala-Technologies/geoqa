@@ -53,6 +53,23 @@ export const TenantQuotaSchema = z.object({
   runsPerDay: z.number().int().positive(),
 });
 
+const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const GIT_REF = /^[A-Za-z0-9._/-]+$/;
+
+export const TenantRepositorySchema = z
+  .object({
+    host: z.string().min(1),
+    repo: z
+      .string()
+      .regex(REPO, "a repository is owner/name")
+      .refine((value) => {
+        const [owner, name] = value.split("/");
+        return owner !== "." && owner !== ".." && name !== "." && name !== "..";
+      }, "a repository owner or name cannot be . or .."),
+    base: z.string().regex(GIT_REF, "a git branch name").default("main"),
+  })
+  .strict();
+
 export const TenantSchema = z
   .object({
     id: TenantIdSchema,
@@ -66,6 +83,7 @@ export const TenantSchema = z
     proxySubUser: z.string().min(1).nullable().default(null),
     quota: TenantQuotaSchema,
     retentionDays: z.number().int().positive(),
+    repositories: z.array(TenantRepositorySchema).default([]),
   })
   // Unknown keys are an ERROR, matching the config loader's reasoning: a misspelled
   // `retentionDay` that silently became the default is a retention policy somebody

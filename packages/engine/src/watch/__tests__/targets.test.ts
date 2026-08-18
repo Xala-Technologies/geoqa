@@ -66,3 +66,18 @@ describe("addTarget / removeTarget", () => {
     expect(out.ok).toBe(false);
   });
 });
+
+describe("a target that will not parse is refused by BOTH mutators, unchanged", () => {
+  it("returns the parse failure rather than adding or removing something", () => {
+    // The list is what the watch will drive a real browser at. A URL that could
+    // not be parsed must not reach it under any spelling, and the caller gets
+    // the parser's own errors rather than a generic "no" — the operator typed
+    // it and needs to know which part was wrong.
+    const existing = ["https://digilist.no"];
+    const added = addTarget(existing, "http://user:pass@digilist.no");
+    expect(added.ok).toBe(false);
+    const removed = removeTarget(existing, "not a url at all\u0000");
+    expect(removed.ok).toBe(false);
+    expect(existing).toHaveLength(1);
+  });
+});

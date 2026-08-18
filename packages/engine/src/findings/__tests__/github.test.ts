@@ -4,9 +4,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   fileTickets,
+  githubAddLabels,
   githubCreate,
   parseGithubRepo,
   type FiledStore,
+  type GitHubAddLabels,
   type GitHubCreate,
 } from "../github.js";
 import type { TicketDraft } from "../tickets.js";
@@ -21,9 +23,11 @@ const draft = (over: Partial<TicketDraft> = {}): TicketDraft => ({
   key: "site:has a search box:xala.no",
   title: "has a search box on xala.no",
   body: "failed",
-  labels: ["findings", "bug"],
+  labels: ["findings", "bug", "site:xala.no"],
   urgent: false,
   runIds: ["run_1"],
+  site: "xala.no",
+  hosts: ["xala.no"],
   ...over,
 });
 
@@ -97,23 +101,26 @@ describe("fileTickets", () => {
       return { number: 41, html_url: "https://github.com/Xala-Technologies/geoqa/issues/41" };
     };
     const env = { GEOQA_GITHUB_TOKEN: "t", GEOQA_GITHUB_REPO: "Xala-Technologies/geoqa" };
+    const silent: GitHubAddLabels = async () => undefined;
     const first = await fileTickets({
       drafts: [draft()],
       evidenceRoot: "/e",
       env,
       nowMs: 1,
       create,
+      addLabels: silent,
       store,
     });
     expect(first.filed).toEqual([
       { key: draft().key, number: 41, url: "https://github.com/Xala-Technologies/geoqa/issues/41" },
     ]);
     const second = await fileTickets({
-      drafts: [draft(), draft({ key: "urgent:run:open target", title: "URGENT: boom", urgent: true })],
+      drafts: [draft(), draft({ key: "urgent:run:open target", title: "URGENT: boom", urgent: true, site: "geoqa", hosts: ["digilist.no"] })],
       evidenceRoot: "/e",
       env,
       nowMs: 2,
       create,
+      addLabels: silent,
       store,
     });
     expect(second.filed).toEqual([]);
@@ -140,7 +147,7 @@ describe("fileTickets", () => {
       create,
       store: memory(),
     });
-    expect(calls).toEqual([["findings", "bug"], []]);
+    expect(calls).toEqual([["findings", "bug", "site:xala.no"], []]);
     expect(result.filed[0]?.number).toBe(9);
   });
 
@@ -182,12 +189,14 @@ describe("fileTickets", () => {
   it("round-trips through disk so a restart does not open the same issue again", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "geoqa-filed-"));
     temps.push(dir);
+    const silent: GitHubAddLabels = async () => undefined;
     const first = await fileTickets({
       drafts: [draft()],
       evidenceRoot: dir,
       env: { GEOQA_GITHUB_TOKEN: "t", GEOQA_GITHUB_REPO: "acme/geoqa" },
       nowMs: 1,
       create: async () => ({ number: 7, html_url: "https://github.com/acme/geoqa/issues/7" }),
+      addLabels: silent,
     });
     expect(first.filed[0]?.number).toBe(7);
     const second = await fileTickets({
@@ -198,6 +207,7 @@ describe("fileTickets", () => {
       create: async () => {
         throw new Error("should not re-file");
       },
+      addLabels: silent,
     });
     expect(second.already).toEqual([draft().key]);
   });
@@ -247,5 +257,111 @@ describe("githubCreate", () => {
     await expect(
       githubCreate(req, (async () => new Response("{}", { status: 201 })) as typeof fetch),
     ).rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe("fileTickets routes by host", () => {
+  it("opens a site finding on that host's repo, and retags an already-filed issue", async () => {
+    const created: string[] = [];
+    const tagged: string[] = [];
+    const store = memory();
+    const env = { GEOQA_GITHUB_TOKEN: "t", GEOQA_GITHUB_REPO: "Xala-Technologies/geoqa" };
+    const sites = [{ host: "xala.no", repo: "xalatechnologies/xala-web-cloner", base: "main" }];
+    const first = await fileTickets({
+      drafts: [draft()],
+      evidenceRoot: "/e",
+      env,
+      nowMs: 1,
+      sites,
+      create: async (input) => {
+        created.push(input.repo);
+        return { number: 48, html_url: "https://github.com/xalatechnologies/xala-web-cloner/issues/48" };
+      },
+      addLabels: async () => undefined,
+      store,
+    });
+    expect(created).toEqual(["xalatechnologies/xala-web-cloner"]);
+    expect(first.filed[0]?.url).toContain("xala-web-cloner");
+    const second = await fileTickets({
+      drafts: [draft()],
+      evidenceRoot: "/e",
+      env,
+      nowMs: 2,
+      sites,
+      create: async () => {
+        throw new Error("should not re-file");
+      },
+      addLabels: async (input) => {
+        tagged.push(`${input.repo}#${input.number}:${input.labels.join(",")}`);
+      },
+      store,
+    });
+    expect(second.already).toEqual([draft().key]);
+    expect(tagged[0]).toContain("xalatechnologies/xala-web-cloner#48");
+    expect(tagged[0]).toContain("site:xala.no");
+  });
+
+  it("a thrown addLabels on an already-filed key is not a failed file", async () => {
+    const store = memory();
+    const env = { GEOQA_GITHUB_TOKEN: "t", GEOQA_GITHUB_REPO: "acme/geoqa" };
+    await fileTickets({
+      drafts: [draft()],
+      evidenceRoot: "/e",
+      env,
+      nowMs: 1,
+      create: async () => ({ number: 1, html_url: "https://x/1" }),
+      addLabels: async () => undefined,
+      store,
+    });
+    const again = await fileTickets({
+      drafts: [draft()],
+      evidenceRoot: "/e",
+      env,
+      nowMs: 2,
+      create: async () => {
+        throw new Error("should not re-file");
+      },
+      addLabels: async () => {
+        throw new Error("403");
+      },
+      store,
+    });
+    expect(again.already).toEqual([draft().key]);
+    expect(again.failed).toEqual([]);
+  });
+});
+
+describe("githubAddLabels", () => {
+  it("posts the labels and refuses a bad repo", async () => {
+    const urls: string[] = [];
+    await githubAddLabels(
+      { repo: "acme/geoqa", token: "t", number: 47, labels: ["site:digilist.no"] },
+      (async (url) => {
+        urls.push(String(url));
+        return new Response("[]", { status: 200 });
+      }) as typeof fetch,
+    );
+    expect(urls[0]).toContain("/repos/acme/geoqa/issues/47/labels");
+    await githubAddLabels(
+      { repo: "acme/geoqa", token: "t", number: 1, labels: [] },
+      (async () => {
+        throw new Error("should not post empty labels");
+      }) as typeof fetch,
+    );
+    await expect(
+      githubAddLabels({ repo: "nope", token: "t", number: 1, labels: ["bug"] }, (async () => new Response("")) as typeof fetch),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      githubAddLabels(
+        { repo: "acme/geoqa", token: "t", number: 1, labels: ["bug"] },
+        (async () => new Response("", { status: 403 })) as typeof fetch,
+      ),
+    ).rejects.toMatchObject({ status: 403, message: "GitHub 403" });
+    await expect(
+      githubAddLabels(
+        { repo: "acme/geoqa", token: "t", number: 1, labels: ["bug"] },
+        (async () => new Response("nope", { status: 401 })) as typeof fetch,
+      ),
+    ).rejects.toMatchObject({ status: 401, message: "nope" });
   });
 });

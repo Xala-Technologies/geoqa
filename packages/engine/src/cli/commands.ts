@@ -30,6 +30,9 @@ import {
 } from "../evidence/prune.js";
 import { bindAssistComplete, type AssistOutcome } from "../assist/claude.js";
 import { nodeClaudeSpawn } from "../assist/claude-spawn.js";
+import { nodeRepairExec } from "../assist/repair-exec.js";
+import { defaultRepairClaude, jobsFromFiled, repairOne, type RepairExec, type RepairJob, type RepairOneResult } from "../assist/repair.js";
+import { loadRepairedKeys, saveRepairedKeys } from "../assist/repair-store.js";
 import { buildExplainPrompt } from "../assist/prompt.js";
 import { loadEvidencePackage, type PackageFs } from "../evidence/package.js";
 import { readManifest } from "../evidence/store.js";
@@ -100,7 +103,8 @@ import {
 } from "../history/store.js";
 import { recordFromRunJson, type RunRecord } from "../history/records.js";
 import { draftsFromRuns, type TicketRun } from "../findings/tickets.js";
-import { fileTickets, type FileTicketsResult, type FiledStore, type GitHubCreate } from "../findings/github.js";
+import { fileTickets, loadFiledIssues, nodeFiledStore, parseGithubRepo, type FileTicketsResult, type FiledStore, type GitHubAddLabels, type GitHubCreate } from "../findings/github.js";
+import type { SiteRepo } from "../findings/repos.js";
 import type { Tenant } from "../tenant/types.js";
 import { executeRun, prepareRun, type RunProgress } from "../run/execute.js";
 import {
@@ -1582,7 +1586,16 @@ export function evidenceInspect(deps: CommandDeps, runId: string): { runId: stri
   return { runId, manifest };
 }
 
-const nodePackageFs: PackageFs = {
+/**
+ * The node-backed `PackageFs`. Exported so the bytes path can be exercised.
+ *
+ * `readBytes` is reached only by `loadEvidenceShot`, which the SERVER calls and
+ * no command does — so it is live code with no caller in this file, and the
+ * coverage gate is right to notice. A duplicate of this object lives in
+ * `server/start.ts`, which is coverage-excluded; that duplicate should import
+ * this one rather than restate it.
+ */
+export const nodePackageFs: PackageFs = {
   readText: (p) => readFileSync(p, "utf8"),
   exists: existsSync,
   list: (d) => readdirSync(d),
@@ -1842,7 +1855,7 @@ const toTicketRun = (record: RunRecord): TicketRun => ({
  */
 export async function findingsFile(
   deps: CommandDeps,
-  options: { dryRun?: boolean; create?: GitHubCreate; store?: FiledStore } = {},
+  options: { dryRun?: boolean; create?: GitHubCreate; addLabels?: GitHubAddLabels; store?: FiledStore } = {},
 ): Promise<FileTicketsResult> {
   const { records } = readHistory(deps.evidenceRoot, historyFsOf(deps));
   const drafts = draftsFromRuns(records.map(toTicketRun), {
@@ -1853,10 +1866,111 @@ export async function findingsFile(
     evidenceRoot: deps.evidenceRoot,
     env: deps.env,
     nowMs: deps.now(),
+    sites: loadSiteRepos(deps),
     ...(options.dryRun === true ? { dryRun: true } : {}),
     ...(options.create !== undefined ? { create: options.create } : {}),
+    ...(options.addLabels !== undefined ? { addLabels: options.addLabels } : {}),
     ...(options.store !== undefined ? { store: options.store } : {}),
   });
+}
+
+function loadSiteRepos(deps: CommandDeps): SiteRepo[] {
+  if (deps.tenantId === undefined || deps.tenantId === "") return [];
+  const loaded = loadTenant(tenantPath(deps, deps.tenantId));
+  return loaded.ok ? (loaded.value.repositories ?? []) : [];
+}
+
+export interface FindingsRepairResult {
+  skipped: "none" | "unconfigured" | "dry-run" | "store-unreadable" | "nothing-new";
+  repaired: RepairOneResult[];
+  failed: RepairOneResult[];
+  wouldRepair: RepairJob[];
+}
+
+/**
+ * After issues exist, clone each destination repo and let claude -p open a PR.
+ * Digilist PRs start from `dev`; everything else from `main`. Auto-merge is
+ * asked for; a repo that has it off still keeps the PR.
+ */
+export async function findingsRepair(
+  deps: CommandDeps,
+  options: {
+    dryRun?: boolean;
+    exec?: RepairExec;
+    claude?: (prompt: string, cwd: string) => Promise<AssistOutcome>;
+    store?: FiledStore;
+    onlyKeys?: string[];
+  } = {},
+): Promise<FindingsRepairResult> {
+  const empty = { repaired: [] as RepairOneResult[], failed: [] as RepairOneResult[], wouldRepair: [] as RepairJob[] };
+  const token = deps.env.GEOQA_GITHUB_TOKEN ?? "";
+  const fallback = parseGithubRepo(deps.env.GEOQA_GITHUB_REPO);
+  if (token === "" || fallback === null) return { ...empty, skipped: "unconfigured" };
+
+  const exec = options.exec ?? nodeRepairExec;
+  const claude = options.claude ?? defaultRepairClaude(deps.env);
+  const store = options.store ?? nodeFiledStore;
+  const loaded = loadFiledIssues(deps.evidenceRoot, store);
+  const remembered = loadRepairedKeys(deps.evidenceRoot, store);
+  if (!loaded.ok || !remembered.ok) return { ...empty, skipped: "store-unreadable" };
+
+  const { records } = readHistory(deps.evidenceRoot, historyFsOf(deps));
+  const drafts = draftsFromRuns(records.map(toTicketRun), {
+    ...(deps.env.GEOQA_CONSOLE_URL ? { consoleBase: deps.env.GEOQA_CONSOLE_URL } : {}),
+  });
+  const fallbackRepo = `${fallback.owner}/${fallback.name}`;
+  const done = new Set(remembered.keys);
+  const jobs = jobsFromFiled(drafts, loaded.issues, loadSiteRepos(deps), fallbackRepo).filter((job) => {
+    if (done.has(job.key)) return false;
+    if (options.onlyKeys !== undefined) return options.onlyKeys.includes(job.key);
+    return true;
+  });
+
+  if (options.onlyKeys !== undefined && options.onlyKeys.length === 0) {
+    return { ...empty, skipped: "nothing-new" };
+  }
+  if (jobs.length === 0) return { ...empty, skipped: "nothing-new" };
+  if (options.dryRun === true) return { ...empty, skipped: "dry-run", wouldRepair: jobs };
+
+  const repaired: RepairOneResult[] = [];
+  const failed: RepairOneResult[] = [];
+  const kept = [...remembered.keys];
+  for (const job of jobs) {
+    const result = await repairOne(job, { exec, claude, workRoot: path.join(deps.evidenceRoot, "repair"), token, env: deps.env });
+    if (result.status === "failed") {
+      failed.push(result);
+      continue;
+    }
+    repaired.push(result);
+    kept.push(job.key);
+    saveRepairedKeys(deps.evidenceRoot, kept, store);
+  }
+  return { skipped: "none", repaired, failed, wouldRepair: [] };
+}
+
+export function renderFindingsRepair(result: FindingsRepairResult): string {
+  if (result.skipped === "unconfigured") {
+    return "findings repair: GitHub is off (set GEOQA_GITHUB_TOKEN and GEOQA_GITHUB_REPO)";
+  }
+  if (result.skipped === "store-unreadable") {
+    return "findings repair: a store is unreadable — not opening PRs, so we do not open duplicates";
+  }
+  if (result.skipped === "nothing-new") {
+    return "findings repair: nothing new to repair";
+  }
+  if (result.skipped === "dry-run") {
+    const lines = [`findings repair: dry run — ${result.wouldRepair.length} job(s)`];
+    for (const job of result.wouldRepair) {
+      lines.push(`  ${job.urgent ? "URGENT" : "site"} ${job.title} → ${job.codeRepo} (${job.base})`);
+    }
+    return lines.join("\n");
+  }
+  const lines = [`findings repair: opened ${result.repaired.filter((r) => r.status === "opened").length}, skipped ${result.repaired.filter((r) => r.status !== "opened").length}, failed ${result.failed.length}`];
+  for (const item of result.repaired) {
+    lines.push(`  ${item.status} ${item.key}${item.prUrl !== undefined ? ` ${item.prUrl}` : ""}`);
+  }
+  for (const item of result.failed) lines.push(`  FAILED ${item.key}: ${item.detail ?? ""}`);
+  return lines.join("\n");
 }
 
 export function renderFindingsFile(result: FileTicketsResult): string {

@@ -486,6 +486,28 @@ describe("collectEvidence", () => {
     expect(manifest.completeness).toBe(100);
   });
 
+  it("writes an artifact that says the read FAILED, rather than one that says there was nothing", async () => {
+    // A collector read that comes back `!ok` is our instrumentation failing, not
+    // a page with no network requests and no a11y violations. Both are written —
+    // the artifact exists either way, so completeness is honest — but a failed
+    // read lands as `null` (and an empty snapshot as ""), which the reader can
+    // tell apart from a real empty result.
+    //
+    // Run at ERROR on purpose: that maps to the `investigation` tier, the only
+    // one that collects a11y — which is the point of the tier. When the engine
+    // could not read the page we know least and collect most.
+    const blind = fakeRuntime({
+      networkRequests: () => Promise.resolve(bad()),
+      snapshot: () => Promise.resolve(bad()),
+      a11y: () => Promise.resolve(bad()),
+    });
+    await collectEvidence(blind, await input(journeyResult({ verdict: "ERROR" })));
+    const dir = path.join(root, "run_1");
+    expect(JSON.parse(readFileSync(path.join(dir, "network.json"), "utf8"))).toBeNull();
+    expect(JSON.parse(readFileSync(path.join(dir, "a11y.json"), "utf8"))).toBeNull();
+    expect(readFileSync(path.join(dir, "snapshot.txt"), "utf8")).toBe("");
+  });
+
   it("does not let one run's narrowed tier narrow the NEXT run", async () => {
     // `RETENTION` is module-level and mutable. Narrowing it in place would have been the short
     // fix, and one caller would then silently decide what every later run in the process keeps

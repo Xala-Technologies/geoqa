@@ -21,6 +21,13 @@
  * before spending anything.
  */
 
+/** Where site findings for one owned host are filed and repaired. */
+export interface TenantRepository {
+  host: string;
+  repo: string;
+  base: string;
+}
+
 /** What a tenant is allowed to spend. Enforced before a run launches, not after. */
 export interface TenantQuota {
   /**
@@ -90,6 +97,13 @@ export interface Tenant {
    * and attributing it to one of them would be a fabrication.
    */
   proxySubUser: string | null;
+  /**
+   * Host → GitHub repo a site finding is filed on, and the branch a
+   * repair PR starts from. Instrumentation stays on GEOQA_GITHUB_REPO.
+   *
+   * Repo names, not tokens. The token is still GEOQA_GITHUB_TOKEN.
+   */
+  repositories?: TenantRepository[];
   quota: TenantQuota;
   /**
    * How long this tenant's evidence is kept, in days.
