@@ -19,6 +19,23 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Daily digest mail from AgentMail
+
+`geoqa digest send` mails one operator brief from the last 24 hours of
+evidence: runs processed, FAIL/ERROR cells, issues filed, issues repaired,
+and suggestions derived from those numbers — never from a model. HTML uses
+the Xala palette (forest `#0b1612`, cream, leaf `#2f8f62`, gold). From
+inbox is `GEOQA_LOGIN_EMAIL`. To is `--to`, else `GEOQA_DIGEST_TO`, else
+`ibrahim@xala.no`. A test went out from `digilist-e2e@agentmail.to` against
+the live Digilist index (134 runs in the window).
+
+A systemd timer (`geoqa-digest.timer`) fires daily at 05:00 UTC (07:00
+Oslo). It does not reset the watch clock.
+
+Where: `digest/`, `mail/send.ts`, `geoqa digest send`, `infra/geoqa-digest.timer`.
+
+---
+
 ## 2026-08-19 — Watch clocks and honest settings
 
 Watch Cadence now has two numbers you can edit: geo pulse and e2e, each
