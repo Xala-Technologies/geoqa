@@ -13,7 +13,7 @@
  * piles a second matrix onto a machine that is still running the first.
  */
 import type { Tenant } from "../tenant/types.js";
-import type { WatchSpec } from "./spec.js";
+import type { WatchExtra, WatchSpec } from "./spec.js";
 
 export interface TickInput {
   spec: WatchSpec;
@@ -101,4 +101,36 @@ export function planSweep(
       targets: spec.targets,
     },
   };
+}
+
+export interface ExtraCell {
+  market: string;
+  device: WatchExtra["device"];
+  journey: string;
+  target: string;
+}
+
+/**
+ * Sidecar cells. Not in the cartesian product, and a writes extra does not
+ * require `allowWrites` on the pulse — that flag is what would let someone
+ * tick `contact-form` onto every city.
+ */
+export function planExtras(
+  spec: WatchSpec,
+  tenant: Tenant,
+  availableJourneys: { id: string; writes: boolean }[],
+): { ok: true; cells: ExtraCell[]; writes: boolean } | { ok: false; error: string } {
+  const byId = new Map(availableJourneys.map((j) => [j.id, j]));
+  const cells: ExtraCell[] = [];
+  let writes = false;
+  for (const extra of spec.extras) {
+    if (!tenant.markets.includes(extra.market)) {
+      return { ok: false, error: `extra market this tenant never asked about: ${extra.market}` };
+    }
+    const found = byId.get(extra.journey);
+    if (found === undefined) return { ok: false, error: `no such extra journey: ${extra.journey}` };
+    if (found.writes) writes = true;
+    cells.push({ market: extra.market, device: extra.device, journey: extra.journey, target: extra.url });
+  }
+  return { ok: true, cells, writes };
 }

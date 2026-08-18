@@ -258,12 +258,14 @@ describe("loadTenant", () => {
     expect(loaded.value.markets).toContain("oslo");
     expect(loaded.value.targets).toContain("https://digilist.no");
     expect(loaded.value.targets).toContain("https://xala.no");
+    expect(loaded.value.targets).toContain("https://dashboard.digilist.no");
     // A NAME or null, never a value. A tenant file that held a secret would be the
     // .env mistake moved somewhere with worse odds.
     expect(loaded.value.proxyCredentials).toBeNull();
     expect(loaded.value.repositories).toEqual([
       { host: "digilist.no", repo: "Xala-Technologies/booking-brilliance", base: "main" },
       { host: "app.digilist.no", repo: "Xala-Technologies/Digilist", base: "dev" },
+      { host: "dashboard.digilist.no", repo: "Xala-Technologies/Digilist", base: "dev" },
       { host: "xala.no", repo: "xalatechnologies/xala-web-cloner", base: "main" },
     ]);
   });

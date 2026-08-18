@@ -93,5 +93,11 @@ export function applyWatchPatch(current: WatchSpec, patch: unknown, allowed: Wat
       };
     }
   }
+  for (const extra of merged.value.extras) {
+    if (!allowed.markets.includes(extra.market)) {
+      return { ok: false, errors: [`no profile on disk for extra market: ${extra.market}`] };
+    }
+    if (!byId.has(extra.journey)) return { ok: false, errors: [`no such extra journey: ${extra.journey}`] };
+  }
   return merged;
 }

@@ -52,6 +52,7 @@ targets:
   - https://digilist.no
   - https://app.digilist.no
   - https://dev.digilist.no
+  - https://dashboard.digilist.no
   - https://xala.no
 # Host → GitHub repo. Site findings file here; instrumentation stays on
 # GEOQA_GITHUB_REPO. app.digilist.no PRs start from `dev`.
@@ -60,6 +61,9 @@ repositories:
     repo: Xala-Technologies/booking-brilliance
     base: main
   - host: app.digilist.no
+    repo: Xala-Technologies/Digilist
+    base: dev
+  - host: dashboard.digilist.no
     repo: Xala-Technologies/Digilist
     base: dev
   - host: xala.no
@@ -77,10 +81,11 @@ proxyCredentials: null
 proxySubUser: GEOQA_SUBUSER_DIGILIST
 quota:
   # Sized for the 180-minute pulse: 34 cities × 3 URLs × desktop × 1 journey = 102
-  # cells × 8 sweeps/day = 816 runs. 1,800 leaves headroom for a console
-  # "Run now". Traffic is 1 MB × 816 × 30 days ≈ 24 GB against a 50 GB
-  # account. Hourly on three sites would be 2,448/day and ~73 GB — over
-  # the account — so the tick is 180 minutes on purpose.
+  # cells × 8 sweeps/day = 816 runs, plus 2 Oslo-desktop extras (login-reachable
+  # + login) × 8 = 16. 1,800 leaves headroom for a console "Run now". Traffic is
+  # 1 MB × 832 × 30 days ≈ 25 GB against a 50 GB account. Hourly on three sites
+  # would be 2,448/day and ~73 GB — over the account — so the tick is 180
+  # minutes on purpose.
   trafficMb: 50000
   runsPerDay: 1800
 retentionDays: 30

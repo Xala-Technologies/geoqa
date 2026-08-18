@@ -4,6 +4,7 @@ import { routeTicket, siteLabel, type SiteRepo } from "../repos.js";
 const sites: SiteRepo[] = [
   { host: "digilist.no", repo: "Xala-Technologies/booking-brilliance", base: "main" },
   { host: "app.digilist.no", repo: "Xala-Technologies/Digilist", base: "dev" },
+  { host: "dashboard.digilist.no", repo: "Xala-Technologies/Digilist", base: "dev" },
   { host: "xala.no", repo: "xalatechnologies/xala-web-cloner", base: "main" },
 ];
 
@@ -21,6 +22,12 @@ describe("routeTicket", () => {
       "Xala-Technologies/geoqa",
     );
     expect(app).toEqual({ repo: "Xala-Technologies/Digilist", base: "dev", site: "app.digilist.no" });
+    const dashboard = routeTicket(
+      { urgent: false, hosts: ["dashboard.digilist.no"], site: "dashboard.digilist.no" },
+      sites,
+      "Xala-Technologies/geoqa",
+    );
+    expect(dashboard).toEqual({ repo: "Xala-Technologies/Digilist", base: "dev", site: "dashboard.digilist.no" });
     const marketing = routeTicket(
       { urgent: false, hosts: ["digilist.no"], site: "digilist.no" },
       sites,

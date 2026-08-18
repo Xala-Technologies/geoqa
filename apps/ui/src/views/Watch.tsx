@@ -27,6 +27,7 @@ interface WatchSpec {
   maxConcurrent: number;
   allowWrites: boolean;
   journeyPick?: "all" | "seeded";
+  extras?: { market: string; device: string; journey: string; url: string }[];
 }
 
 interface WatchView {
@@ -324,6 +325,25 @@ export function Watch(): JSX.Element {
           Allow writes — submits real forms
         </label>
       </div>
+
+      {(spec.extras ?? []).length > 0 ? (
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Sidecar</h3>
+            <p className="hint">
+              Extra cells outside the city × URL product. A login here is one Oslo desktop visit,
+              not a fourth URL on every city.
+            </p>
+          </div>
+          <ul className="target-list">
+            {(spec.extras ?? []).map((extra) => (
+              <li key={`${extra.journey}:${extra.url}`}>
+                {extra.market} · {extra.device} · {extra.journey} · {extra.url}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </>
   );
 }

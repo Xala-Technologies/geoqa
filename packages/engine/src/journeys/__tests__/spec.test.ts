@@ -17,6 +17,7 @@ describe("parseStep", () => {
       { action: "click", selector: "@e1" },
       { action: "scroll" },
       { action: "wait", target: "500" },
+      { action: "receive-otp", selector: "#otp" },
       { action: "screenshot", label: "hero" },
       { action: "snapshot", label: "tree" },
     ];

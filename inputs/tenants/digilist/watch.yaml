@@ -3,7 +3,9 @@
 #
 # 34 cities × 3 URLs × desktop × 1 seeded journey = 102 cells. Hourly that is 2,448
 # runs/day and ~73 GB/month against a 50 GB Decodo account, so the tick is
-# 180 minutes (8 sweeps/day → 816 runs, ~24 GB). The draw is UTC-hour +
+# 180 minutes (8 sweeps/day → 816 runs, ~24 GB). extras add two Oslo-desktop
+# cells against dashboard.digilist.no — login-reachable and a real AgentMail
+# login — not a fourth URL in the product. The draw is UTC-hour +
 # market + url — not Math.random(). contact-form / explore stay off until
 # allowWrites is on. returning-visitor is off the pool (audit 2026-08-18 §2).
 # dev.digilist.no stays off this pulse (staging).
@@ -61,3 +63,12 @@ targets:
 maxConcurrent: 2
 allowWrites: false
 journeyPick: seeded
+extras:
+  - market: oslo
+    device: desktop
+    journey: login-reachable
+    url: https://dashboard.digilist.no/login
+  - market: oslo
+    device: desktop
+    journey: login
+    url: https://dashboard.digilist.no/login

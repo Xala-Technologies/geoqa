@@ -1,0 +1,18 @@
+id: login-reachable
+title: Login form is reachable
+description: >
+  Opens dashboard.digilist.no/login, reveals the email form, and stops
+  before a code is requested. Read-only. The full login is the `login`
+  journey — this one only proves a visitor can see the field.
+
+  Not part of the 102-cell pulse. Watch extras run it once per sweep
+  from Oslo desktop.
+writes: false
+steps:
+  - { action: open, url: "{target}", label: open the login page }
+  - { action: assert, check: selector-visible, selector: "[data-testid=login-email-entry]", severity: critical, label: email login is offered }
+  - { action: click, selector: "[data-testid=login-email-entry]", label: choose email login }
+  - { action: assert, check: selector-visible, selector: "[data-testid=login-email-input]", severity: critical, label: the email field is there }
+  - { action: screenshot, label: login-form }
+  - { action: assert, check: no-http-5xx, severity: critical }
+  - { action: assert, check: no-page-errors, severity: high }

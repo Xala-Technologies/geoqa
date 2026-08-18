@@ -24,6 +24,7 @@ const spec = (over: Partial<WatchSpec> = {}): WatchSpec => ({
   maxConcurrent: 2,
   allowWrites: false,
   journeyPick: "all",
+  extras: [],
   ...over,
 });
 
@@ -90,6 +91,7 @@ describe("applyWatchPatch", () => {
     journeys: [
       { id: "landing-page", writes: false },
       { id: "contact-form", writes: true },
+      { id: "login", writes: true },
     ],
   };
 
@@ -116,6 +118,20 @@ describe("applyWatchPatch", () => {
     const out = applyWatchPatch(spec(), { journeys: ["contact-form"], allowWrites: true }, allowed);
     if (!out.ok) throw new Error(out.errors.join());
     expect(out.value.journeys).toEqual(["contact-form"]);
+  });
+
+  it("REFUSES an extra market or journey that is not on disk", () => {
+    const extra = { market: "oslo", device: "desktop" as const, journey: "login", url: "https://dashboard.digilist.no/login" };
+    expect(applyWatchPatch(spec(), { extras: [{ ...extra, market: "atlantis" }] }, allowed).ok).toBe(false);
+    expect(applyWatchPatch(spec(), { extras: [{ ...extra, journey: "nope" }] }, allowed).ok).toBe(false);
+  });
+
+  it("keeps a writes extra without turning allowWrites on for the pulse", () => {
+    const extra = { market: "oslo", device: "desktop" as const, journey: "login", url: "https://dashboard.digilist.no/login" };
+    const out = applyWatchPatch(spec(), { extras: [extra] }, allowed);
+    if (!out.ok) throw new Error(out.errors.join());
+    expect(out.value.allowWrites).toBe(false);
+    expect(out.value.extras).toEqual([extra]);
   });
 
   it("refuses a body that is not an object, rather than treating null as empty", () => {

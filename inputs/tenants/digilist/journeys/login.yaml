@@ -1,0 +1,29 @@
+id: login
+title: Production email login
+description: >
+  A real visitor login on dashboard.digilist.no — email, then the 6-digit
+  code from AgentMail. writes: true because it creates a session.
+
+  The email is GEOQA_LOGIN_EMAIL (also the AgentMail inbox). The code is
+  never in this file and never in evidence. Demo emails / 123456 are
+  production-blocked; do not point this at those.
+
+  Sidecar only: Oslo desktop, once per pulse. Not a fourth URL in the
+  102-cell matrix.
+
+    pnpm geoqa journey run --tenant digilist --journey login \
+      --url https://dashboard.digilist.no/login --geo oslo-desktop \
+      --allow-writes --engine playwright
+writes: true
+steps:
+  - { action: open, url: "{target}", label: open the login page }
+  - { action: click, selector: "[data-testid=login-email-entry]", label: choose email login }
+  - { action: assert, check: selector-visible, selector: "[data-testid=login-email-input]", severity: critical, label: the email field is there }
+  - { action: fill, selector: "[data-testid=login-email-input]", value: "{email}", label: enter the inbox email }
+  - { action: pause, minMs: 400, maxMs: 1200 }
+  - { action: click, selector: "[data-testid=login-email-submit]", label: request the code }
+  - { action: assert, check: selector-visible, selector: "#otp", severity: critical, label: the code field is there }
+  - { action: receive-otp, selector: "#otp", label: type the code from the inbox }
+  - { action: pause, minMs: 800, maxMs: 2000, label: wait for the session }
+  - { action: assert, check: url-matches, value: "dashboard\\.digilist\\.no/(?!login(?:\\?|$))", severity: high, label: left the login page }
+  - { action: assert, check: no-http-5xx, severity: critical }

@@ -374,6 +374,12 @@ export function verificationSpec(
   };
 }
 
+/** Email for a login journey. The inbox id is the same address. Flag `--var` wins. */
+export function loginVarsFromEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const email = env.GEOQA_LOGIN_EMAIL;
+  return email !== undefined && email !== "" ? { email } : {};
+}
+
 export function defaultDeps(repoRoot: string, overrides: Partial<CommandDeps> = {}): CommandDeps {
   // Resolved before `makeRuntime` closes over it, so a caller's `--evidence-root`
   // also moves where a Playwright verify session writes its HAR.
@@ -1031,7 +1037,7 @@ export async function journeyRun(deps: CommandDeps, options: JourneyRunOptions):
       profilePath: profilePath(deps, options.profileId),
       journeyPath: journeyPath(deps, options.journeyId),
       evidenceRoot: deps.evidenceRoot,
-      vars: options.vars ?? {},
+      vars: { ...loginVarsFromEnv(deps.env), ...(options.vars ?? {}) },
       headed: options.headed ?? false,
       verifyEndpoint: options.verifyEndpoint ?? DEFAULT_VERIFY_ENDPOINT,
     },
@@ -1370,7 +1376,7 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
       profilePath: profilePath(deps, profileId),
       journeyPath: journeyPath(deps, scenario.journey),
       evidenceRoot: deps.evidenceRoot,
-      vars: options.vars ?? {},
+      vars: { ...loginVarsFromEnv(deps.env), ...(options.vars ?? {}) },
       headed: options.headed ?? false,
       verifyEndpoint: options.verifyEndpoint ?? DEFAULT_VERIFY_ENDPOINT,
     };
@@ -1440,7 +1446,7 @@ export async function matrixRun(deps: CommandDeps, options: MatrixRunOptions): P
           profilePath: profilePath(deps, profileId),
           journeyPath: journeyPath(deps, scenario.journey),
           evidenceRoot: deps.evidenceRoot,
-          vars: options.vars ?? {},
+          vars: { ...loginVarsFromEnv(deps.env), ...(options.vars ?? {}) },
           headed: options.headed ?? false,
           verifyEndpoint: options.verifyEndpoint ?? DEFAULT_VERIFY_ENDPOINT,
         },

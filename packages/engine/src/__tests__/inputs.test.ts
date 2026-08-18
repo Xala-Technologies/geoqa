@@ -124,6 +124,14 @@ describe("tenant digilist", () => {
       "https://app.digilist.no",
       "https://xala.no",
     ]);
+    expect(watch.value.targets).not.toContain("https://dashboard.digilist.no/login");
+    expect(tenant.value.targets).toContain("https://dashboard.digilist.no");
+    expect(watch.value.extras).toEqual([
+      { market: "oslo", device: "desktop", journey: "login-reachable", url: "https://dashboard.digilist.no/login" },
+      { market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" },
+    ]);
+    expect(watch.value.journeys).not.toContain("login");
+    expect(watch.value.journeys).not.toContain("login-reachable");
     expect(watch.value.markets).toEqual(tenant.value.markets);
     expect(watch.value.markets).toEqual(expect.arrayContaining([
       "moss",
@@ -154,6 +162,10 @@ describe("tenant digilist", () => {
       expect(journeyIds, id).toContain(id);
       if (!watch.value.allowWrites) expect(writes.has(id), id).toBe(false);
     }
+    for (const extra of watch.value.extras) {
+      expect(journeyIds, extra.journey).toContain(extra.journey);
+      expect(tenant.value.markets, extra.market).toContain(extra.market);
+    }
     // Audit 2026-08-18 §2: returning-visitor asserts a restored session as a
     // site defect. The pulse is desktop + agent-browser + anonymous; that
     // engine isolates cookies per run. The journey still does not belong
@@ -163,7 +175,8 @@ describe("tenant digilist", () => {
     // cells × hours-per-day. A ceiling below that refuses mid-day and looks
     // like a broken proxy.
     const cells = watch.value.markets.length * watch.value.devices.length * watch.value.targets.length;
-    const runsPerDay = cells * Math.floor((24 * 60) / watch.value.everyMinutes);
+    const sweeps = Math.floor((24 * 60) / watch.value.everyMinutes);
+    const runsPerDay = cells * sweeps + watch.value.extras.length * sweeps;
     expect(tenant.value.quota.runsPerDay).toBeGreaterThanOrEqual(runsPerDay);
     expect(tenant.value.quota.trafficMb).toBeGreaterThanOrEqual(runsPerDay * 30 * MB_PER_PAGE_LOAD);
   });

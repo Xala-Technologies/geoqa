@@ -17,6 +17,7 @@ import { withEgressHeld } from "../geo/verify.js";
 import { mergeAttempts, occurrenceKey, withExtraStep, type JourneyResult } from "../journeys/engine.js";
 import type { GeoQaRunResult } from "../findings/types.js";
 import { buildRuntime, newRunId, resolveVisitorState, writeInitScript, type RunSpec } from "./context.js";
+import { mailboxFromEnv, type ReceiveOtp } from "../mail/agentmail.js";
 import { appendRun } from "../history/store.js";
 import { toRunRecord } from "../history/records.js";
 import type { EvidenceManifest } from "../evidence/manifest.js";
@@ -74,6 +75,12 @@ export interface ExecuteOptions {
    * of what a cross-run question needs to scope by.
    */
   tenantId?: string | null;
+  /**
+   * How a `receive-otp` step reads the mailbox. Injected in tests.
+   * Absent falls back to AgentMail from `AGENTMAIL_API_KEY` / `GEOQA_LOGIN_EMAIL`
+   * so the durable activity — which cannot carry a function — still logs in.
+   */
+  receiveOtp?: ReceiveOtp;
   /**
    * Append this run to `<evidenceRoot>/runs.jsonl`. Default on.
    *
@@ -275,7 +282,15 @@ export async function executeRun(options: ExecuteOptions): Promise<GeoQaRunResul
       const shot = await runtime.screenshot(frame);
       if (!shot.ok) log(`warning: live frame unavailable — ${shot.failure.detail}`);
     };
-    const ran = await repeatJourney(runtime, options.spec, journey, repeat, log, onStep);
+    const ran = await repeatJourney(
+      runtime,
+      options.spec,
+      journey,
+      repeat,
+      log,
+      onStep,
+      options.receiveOtp ?? mailboxFromEnv(process.env),
+    );
 
     // One journey must be one network session. Confirm that it was, before the verdict is used
     // to pick a retention tier — and through the same shared function the durable path calls,

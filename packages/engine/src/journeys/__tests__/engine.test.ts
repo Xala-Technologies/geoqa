@@ -561,6 +561,58 @@ describe("input steps", () => {
     ]);
   });
 
+  it("receive-otp fills the code and NEVER records it", async () => {
+    const filled: string[] = [];
+    const after: number[] = [];
+    const result = await runJourney(
+      runtime({
+        fill: (sel, value) => {
+          filled.push(`${sel}:${value}`);
+          return Promise.resolve(ok(null));
+        },
+      }),
+      journey([
+        { action: "click", selector: "[data-testid=login-email-submit]" },
+        { action: "receive-otp", selector: "#otp" },
+      ]),
+      {
+        ...opts,
+        now: (() => {
+          let t = 1_000;
+          return () => (t += 10);
+        })(),
+        receiveOtp: (input) => {
+          after.push(input.afterMs);
+          return Promise.resolve({ ok: true, code: "482913" });
+        },
+      },
+    );
+    expect(result.verdict).toBe("PASS");
+    expect(filled).toEqual(["#otp:482913"]);
+    expect(JSON.stringify(result)).not.toContain("482913");
+    expect(result.steps[1]?.detail).toBe("receive-otp #otp ok (value not recorded)");
+    expect(result.touchedForm).toBe(true);
+    expect(after[0]).toBeGreaterThan(0);
+  });
+
+  it("receive-otp without a mailbox is OUR defect, not a missing field on the page", async () => {
+    const result = await runJourney(runtime(), journey([{ action: "receive-otp", selector: "#otp" }]), opts);
+    expect(result.verdict).toBe("ERROR");
+    expect(result.steps[0]?.outcome).toBe("errored");
+    expect(result.steps[0]?.category).toBe("instrumentation");
+    expect(result.steps[0]?.detail).toContain("no mailbox");
+  });
+
+  it("receive-otp that cannot read a code is instrumentation, not a site finding", async () => {
+    const result = await runJourney(runtime(), journey([{ action: "receive-otp", selector: "#otp" }]), {
+      ...opts,
+      receiveOtp: () => Promise.resolve({ ok: false, detail: "no login code arrived" }),
+    });
+    expect(result.verdict).toBe("ERROR");
+    expect(result.steps[0]?.category).toBe("instrumentation");
+    expect(result.steps[0]?.detail).toContain("no login code");
+  });
+
   it("NEVER records what was typed — the rule that makes login journeys safe", async () => {
     const result = await runJourney(
       runtime(),
@@ -602,6 +654,9 @@ describe("input steps", () => {
   it("still never puts a fill value in the description", () => {
     expect(describeAction({ action: "fill", selector: "#password", value: "hunter2", probability: 1 })).toBe(
       "fill #password ok (value not recorded)",
+    );
+    expect(describeAction({ action: "receive-otp", selector: "#otp", probability: 1 })).toBe(
+      "receive-otp #otp ok (value not recorded)",
     );
     expect(describeAction({ action: "pinch", selector: ".map", direction: "in", probability: 1 })).toBe(
       "pinch in .map ok",

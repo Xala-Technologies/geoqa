@@ -19,6 +19,21 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Production login via AgentMail
+
+A real email login on `dashboard.digilist.no` is now a sidecar cell, not a
+fourth URL in the 102-cell pulse. `login-reachable` opens the form and
+stops. `login` requests a code, polls `digilist-e2e@agentmail.to`, types
+`#otp`, and never writes the digits to evidence. The pulse stays
+`allowWrites: false`; extras may write without flipping that flag.
+
+`AGENTMAIL_API_KEY` and `GEOQA_LOGIN_EMAIL` come from the environment
+only. Demo emails / `123456` stay unused — that path is production-blocked.
+
+Where: `mail/`, `journeys` `receive-otp`, `inputs/tenants/digilist/journeys/login*.yaml`, `watch.extras`.
+
+---
+
 ## 2026-08-19 — Watch pulse is 180 minutes
 
 The Norway desktop pulse is every 180 minutes, not 90. Same 102 cells

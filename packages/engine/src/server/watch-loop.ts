@@ -8,16 +8,17 @@
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { controlRun, defaultDeps, findingsFile, findingsRepair, matrixRun, renderFindingsFile, renderFindingsRepair, resolveProfileId } from "../cli/commands.js";
+import { controlRun, defaultDeps, findingsFile, findingsRepair, loginVarsFromEnv, matrixRun, renderFindingsFile, renderFindingsRepair, resolveProfileId } from "../cli/commands.js";
 import { liveDashboardUrl } from "../cli/events.js";
 import { loadJourney } from "../journeys/spec.js";
 import { acceptRun, type AcceptedRun } from "./accept-run.js";
 import type { Tenant } from "../tenant/types.js";
 import type { GeoQaConfig } from "../config/schema.js";
 import { LiveRegistry } from "../watch/live.js";
-import { decideTick, planSweep } from "../watch/tick.js";
+import { decideTick, planExtras, planSweep } from "../watch/tick.js";
 import { addTarget, removeTarget } from "../watch/targets.js";
 import { applyWatchPatch, loadWatch, saveWatch, watchPath, type WatchAllowed } from "../watch/store.js";
+import { expandMatrix } from "../run/matrix.js";
 import { emptyClock, loadWatchClock, saveWatchClock, watchClockPath } from "../watch/clock.js";
 import { journeysRoot, tenantsRoot } from "../repo.js";
 import { nextSlice } from "../watch/cursor.js";
@@ -25,7 +26,6 @@ import { pickSeededCells } from "../watch/journey-pick.js";
 import { parseWatch, type WatchSpec } from "../watch/spec.js";
 import { assessWatch, findingKey, unreportedFindings, type WatchHealth } from "../watch/health.js";
 import { appendWatchEvent, eventFromFinding, readWatchLog, recentWatchEvents, type WatchLogEvent } from "../watch/log.js";
-import { expandMatrix } from "../run/matrix.js";
 import type { ControlDeps, ControlOutcome } from "./control.js";
 
 export interface WatchLoopOptions {
@@ -142,6 +142,7 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
 
   const launch = async (spec: WatchSpec, reason: string): Promise<void> => {
     const planned = planSweep(spec, options.tenant, options.journeys);
+    const extras = planExtras(spec, options.tenant, options.journeys);
     if (!planned.ok) {
       options.log(`watch: refused ${planned.error}`);
       lastSweepError = planned.error;
@@ -150,6 +151,17 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
         level: "warning",
         kind: "sweep-refused",
         message: planned.error,
+      });
+      return;
+    }
+    if (!extras.ok) {
+      options.log(`watch: refused ${extras.error}`);
+      lastSweepError = extras.error;
+      record({
+        at: new Date(options.now()).toISOString(),
+        level: "warning",
+        kind: "sweep-refused",
+        message: extras.error,
       });
       return;
     }
@@ -226,22 +238,25 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       }
     };
     try {
+      const asPick = (s: { market: string; device: string; journey: string; target: string | null }): {
+        market: string;
+        device: string;
+        journey: string;
+        target: string;
+      } => ({ market: s.market, device: s.device, journey: s.journey, target: s.target ?? "" });
       const pick =
         spec.mode === "continuous"
           ? (() => {
               const stepped = nextSlice(expandMatrix(planned.axes), cursor, spec.maxConcurrent);
               cursor = stepped.nextCursor;
               persistClock();
-              return stepped.slice.map((s) => ({
-                market: s.market,
-                device: s.device,
-                journey: s.journey,
-                target: s.target ?? "",
-              }));
+              return stepped.slice.map(asPick);
             })()
           : spec.journeyPick === "seeded"
-            ? pickSeededCells({ ...planned.axes, atMs: startedMs })
-            : undefined;
+            ? [...pickSeededCells({ ...planned.axes, atMs: startedMs }), ...extras.cells]
+            : extras.cells.length > 0
+              ? [...expandMatrix(planned.axes).map(asPick), ...extras.cells]
+              : undefined;
       if (pick !== undefined && pick.length === 0) {
         options.log("watch: continuous slice is empty");
         return;
@@ -253,9 +268,10 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
         journeys: planned.axes.journeys,
         targets: planned.axes.targets,
         providerName: options.config.network.provider,
-        allowWrites: spec.allowWrites,
+        allowWrites: spec.allowWrites || extras.writes,
         concurrency: spec.maxConcurrent,
         engine: WATCH_ENGINE,
+        vars: loginVarsFromEnv(options.env),
         ...(pick !== undefined ? { pick } : {}),
       });
       options.rebuild();

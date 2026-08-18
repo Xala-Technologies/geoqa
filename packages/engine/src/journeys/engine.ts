@@ -94,6 +94,14 @@ export interface EngineOptions {
    * and its wording is not a contract.
    */
   onStep?: (step: StepResult) => void | Promise<void>;
+  /**
+   * How a `receive-otp` step gets its code.
+   *
+   * Injected so the suite never opens a mailbox. Absent means the step
+   * errors as instrumentation — a missing AgentMail key is our defect,
+   * not a missing field on the login form.
+   */
+  receiveOtp?: (input: { afterMs: number }) => Promise<{ ok: true; code: string } | { ok: false; detail: string }>;
 }
 
 /** Which Vitals field each vitals-based check depends on. */
@@ -274,7 +282,7 @@ const captureFrame = async (
 };
 
 /** Actions that act on ONE element chosen from a selector's matches. */
-const TARGETED_ACTIONS = new Set(["click", "fill", "select", "check", "pinch"]);
+const TARGETED_ACTIONS = new Set(["click", "fill", "select", "check", "pinch", "receive-otp"]);
 
 /**
  * "matched N visible elements, acted on the first", or null when there is nothing to say.
@@ -315,6 +323,7 @@ export async function runJourney(
   const screenshots: string[] = [];
   let halted = false;
   let touchedForm = false;
+  let lastActMs = started;
   const record = async (step: StepResult): Promise<void> => {
     steps.push(step);
     await options.onStep?.(step);
@@ -368,7 +377,8 @@ export async function runJourney(
         case "fill":
         case "select":
         case "check":
-        case "pinch": {
+        case "pinch":
+        case "receive-otp": {
           const seen = await runtime.isVisible(step.selector);
           if (!seen.ok) {
             await record({
@@ -423,9 +433,14 @@ export async function runJourney(
     // note exists to prevent.
     const ambiguity = await ambiguityNote(runtime, step);
 
-    const out = await act(runtime, step, options.screenshotDir, random);
+    const out = await act(runtime, step, options.screenshotDir, random, {
+      receiveOtp: options.receiveOtp,
+      afterMs: lastActMs,
+    });
     if (step.action === "screenshot") screenshots.push(step.label);
-    if (step.action === "fill" || step.action === "select" || step.action === "check") touchedForm = true;
+    if (step.action === "fill" || step.action === "select" || step.action === "check" || step.action === "receive-otp") {
+      touchedForm = true;
+    }
 
     if (out.ok) {
       // Sit after a navigation BEFORE the frame. `open` returns as soon as the
@@ -463,6 +478,7 @@ export async function runJourney(
         detail: ambiguity === null ? described : `${described} — ${ambiguity}`,
         expected: null, observed: landedOn, durationMs: now() - stepStarted,
       });
+      lastActMs = now();
       log(`  ✓ ${label}`);
       continue;
     }
@@ -506,6 +522,8 @@ export function describeAction(step: Exclude<Step, { action: "assert" }>): strin
   switch (step.action) {
     case "fill":
       return `fill ${step.selector} ok (value not recorded)`;
+    case "receive-otp":
+      return `receive-otp ${step.selector} ok (value not recorded)`;
     case "select":
       return `select ${step.selector} ok (${step.values.length} value(s), not recorded)`;
     case "press":
@@ -675,11 +693,26 @@ export function mergeAttempts(results: [JourneyResult, ...JourneyResult[]]): Mer
  */
 type ActableStep = Exclude<StepAction, { action: "assert" }> & { probability: number };
 
+function failedAct(detail: string): BrowserResult<unknown> {
+  return {
+    ok: false,
+    failure: { kind: "reported", detail, exitCode: null, signal: null },
+    stdout: "",
+    stderr: "",
+    durationMs: 0,
+    command: "receive-otp",
+  };
+}
+
 function act(
   runtime: BrowserRuntime,
   step: ActableStep,
   screenshotDir: string,
   random: () => number,
+  mailbox: {
+    receiveOtp?: EngineOptions["receiveOtp"];
+    afterMs: number;
+  },
 ): Promise<BrowserResult<unknown>> {
   switch (step.action) {
     case "open":
@@ -706,6 +739,14 @@ function act(
       return runtime.pinch(step.selector, step.direction);
     case "wait":
       return runtime.waitFor(step.target);
+    case "receive-otp":
+      if (mailbox.receiveOtp === undefined) {
+        return Promise.resolve(failedAct("no mailbox configured — set AGENTMAIL_API_KEY and GEOQA_LOGIN_EMAIL"));
+      }
+      return mailbox.receiveOtp({ afterMs: mailbox.afterMs }).then((got) => {
+        if (!got.ok) return failedAct(got.detail);
+        return runtime.fill(step.selector, got.code);
+      });
     case "screenshot":
       return runtime.screenshot(`${screenshotDir}/${step.label}.png`, { fullPage: step.fullPage });
     case "snapshot":

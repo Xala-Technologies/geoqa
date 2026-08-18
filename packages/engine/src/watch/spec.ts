@@ -27,6 +27,25 @@ export const WatchModeSchema = z.enum(["periodic", "continuous"]);
  */
 export const JourneyPickSchema = z.enum(["all", "seeded"]);
 
+/**
+ * One cell that is NOT in the cartesian product.
+ *
+ * Adding dashboard.digilist.no to `targets` would create a cell per city.
+ * A login (or login-reachable) run is one Oslo desktop visit. These rows
+ * are that visit. They may write even when `allowWrites` is false — the
+ * pulse stays read-only; the sidecar says so by existing.
+ */
+export const WatchExtraSchema = z
+  .object({
+    market: z.string().min(1),
+    device: z.enum(["mobile", "desktop"]),
+    journey: z.string().min(1),
+    url: z.string().url(),
+  })
+  .strict();
+
+export type WatchExtra = z.infer<typeof WatchExtraSchema>;
+
 export const WatchSpecSchema = z
   .object({
     tenantId: z.string().min(1),
@@ -63,6 +82,7 @@ export const WatchSpecSchema = z
     maxConcurrent: z.number().int().min(1).max(16).default(2),
     allowWrites: z.boolean().default(false),
     journeyPick: JourneyPickSchema.default("all"),
+    extras: z.array(WatchExtraSchema).default([]),
   })
   .strict();
 

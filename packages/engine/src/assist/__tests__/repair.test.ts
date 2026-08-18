@@ -398,6 +398,30 @@ describe("repairOne", () => {
     });
     expect(add.detail).toBe("git add failed");
 
+    let fetches = 0;
+    const fetchLater = scripted({
+      "git status": { stdout: " M a\n" },
+      "git log": { stdout: "" },
+      "git add": { exitCode: 0 },
+      commit: { exitCode: 0 },
+    });
+    const fetchRun = fetchLater.run.bind(fetchLater);
+    fetchLater.run = async (input) => {
+      if (input.argv.includes("fetch")) {
+        fetches += 1;
+        if (fetches === 2) return { stdout: "", stderr: "", exitCode: 1 };
+      }
+      return fetchRun(input);
+    };
+    const lateFetch = await repairOne(job(), {
+      exec: fetchLater,
+      claude: async () => ({ ok: true, text: "x" }),
+      workRoot,
+      token,
+      env,
+    });
+    expect(lateFetch.detail).toBe("git fetch failed");
+
     const rebase = await repairOne(job(), {
       exec: scripted({
         "git status": { stdout: " M a\n" },

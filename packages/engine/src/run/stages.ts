@@ -19,6 +19,7 @@ import { compareEgressHeld, verifyGeo, withCorroboration, withEgressHeld } from 
 import { CONTENT_EXPRESSION, parsePageContent } from "../analysis/content.js";
 import type { BrowserRuntime } from "../browser/types.js";
 import { mergeAttempts, occurrenceKey, runJourney, withExtraStep, type JourneyResult, type StepResult } from "../journeys/engine.js";
+import type { ReceiveOtp } from "../mail/agentmail.js";
 import { loadJourney, resolveSteps, type Journey } from "../journeys/spec.js";
 import { buildManifest, GEOQA_SCHEMA_VERSION, type Artifact, type EvidenceManifest } from "../evidence/manifest.js";
 import { describeExisting, ensureRunDirectory, writeJsonArtifact, writeManifest, writeTextArtifact } from "../evidence/store.js";
@@ -125,6 +126,7 @@ export async function executeJourney(
   log?: (line: string) => void,
   seed?: number,
   onStep?: (step: StepResult) => void | Promise<void>,
+  receiveOtp?: ReceiveOtp,
 ): Promise<JourneyResult> {
   const vars = { target: spec.target, ...spec.vars };
   const resolved = { ...journey, steps: resolveSteps(journey.steps, vars) };
@@ -133,6 +135,7 @@ export async function executeJourney(
     seed: seed ?? spec.seed,
     ...(log ? { log } : {}),
     ...(onStep ? { onStep } : {}),
+    ...(receiveOtp !== undefined ? { receiveOtp } : {}),
   });
 }
 
@@ -479,11 +482,12 @@ export async function repeatJourney(
   repeat = 1,
   log: (line: string) => void = () => undefined,
   onStep?: (step: StepResult) => void | Promise<void>,
+  receiveOtp?: ReceiveOtp,
 ): Promise<RepeatedJourney> {
   const times = Math.max(1, Math.floor(repeat));
   const attempt = async (index: number): Promise<JourneyResult> => {
     const seed = spec.seed + index;
-    const outcome = await executeJourney(runtime, { ...spec, seed }, journey, log, seed, onStep);
+    const outcome = await executeJourney(runtime, { ...spec, seed }, journey, log, seed, onStep, receiveOtp);
     if (times > 1) log(`journey: attempt ${index + 1}/${times} (seed ${seed}) → ${outcome.verdict}`);
     return outcome;
   };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideTick, planSweep, type TickInput } from "../tick.js";
+import { decideTick, planExtras, planSweep, type TickInput } from "../tick.js";
 import type { WatchSpec } from "../spec.js";
 import type { Tenant } from "../../tenant/types.js";
 
@@ -16,6 +16,7 @@ const spec = (over: Partial<WatchSpec> = {}): WatchSpec => ({
   maxConcurrent: 2,
   allowWrites: false,
   journeyPick: "all",
+  extras: [],
   ...over,
 });
 
@@ -140,5 +141,51 @@ describe("planSweep", () => {
     expect(out.ok).toBe(false);
     if (out.ok) throw new Error("expected refusal");
     expect(out.error).toContain("no-such-journey");
+  });
+});
+
+describe("planExtras", () => {
+  const tenant: Tenant = {
+    id: "digilist",
+    name: "Digilist AS",
+    markets: ["oslo", "bergen"],
+    targets: ["https://digilist.no"],
+    proxyCredentials: null,
+    proxySubUser: null,
+    quota: { trafficMb: 100, runsPerDay: 10 },
+    retentionDays: 30,
+  };
+
+  it("returns sidecar cells and may write without flipping allowWrites on the pulse", () => {
+    const out = planExtras(
+      spec({
+        extras: [{ market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" }],
+      }),
+      tenant,
+      [
+        { id: "landing-page", writes: false },
+        { id: "login", writes: true },
+      ],
+    );
+    if (!out.ok) throw new Error(out.error);
+    expect(out.writes).toBe(true);
+    expect(out.cells).toEqual([
+      { market: "oslo", device: "desktop", journey: "login", target: "https://dashboard.digilist.no/login" },
+    ]);
+  });
+
+  it("refuses an extra market or journey the tenant cannot serve", () => {
+    const missingMarket = planExtras(
+      spec({ extras: [{ market: "berlin", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" }] }),
+      tenant,
+      [{ id: "login", writes: true }],
+    );
+    expect(missingMarket.ok).toBe(false);
+    const missingJourney = planExtras(
+      spec({ extras: [{ market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" }] }),
+      tenant,
+      [{ id: "landing-page", writes: false }],
+    );
+    expect(missingJourney.ok).toBe(false);
   });
 });

@@ -14,6 +14,7 @@ import { fakeRuntime, bad, ok, IPINFO_OSLO } from "../../run/__tests__/fake-runt
 import {
   browserVerify,
   defaultDeps,
+  loginVarsFromEnv,
   assistExplain,
   evidenceInspect,
   nodePackageFs,
@@ -115,6 +116,18 @@ describe("defaultDeps", () => {
     const profile = loadProfileOrThrow(d, "oslo-mobile");
     expect(d.makeRuntime({ sessionId: "a" }, { engine: "agent-browser", profile }).sessionId).toBe("a");
     expect(d.makeRuntime({ sessionId: "b" }).sessionId).toBe("b");
+  });
+});
+
+describe("loginVarsFromEnv", () => {
+  it("is empty without an inbox email, and never invents one", () => {
+    expect(loginVarsFromEnv({})).toEqual({});
+  });
+
+  it("exposes the inbox address as the login email", () => {
+    expect(loginVarsFromEnv({ GEOQA_LOGIN_EMAIL: "digilist-e2e@agentmail.to" })).toEqual({
+      email: "digilist-e2e@agentmail.to",
+    });
   });
 });
 

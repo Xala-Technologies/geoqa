@@ -138,6 +138,18 @@ export const StepSchema = z.discriminatedUnion("action", [
     label: z.string().optional(),
   }),
   z.object({ action: z.literal("wait"), target: z.string().min(1), label: z.string().optional() }),
+  /**
+   * Poll an injected mailbox for a one-time code and type it.
+   *
+   * The code arrives AFTER submit, so it cannot live in `--var`. The mailbox
+   * is injected (AgentMail in production, a fake in tests). The digits never
+   * reach a step record — same secrecy rule as `fill`.
+   */
+  z.object({
+    action: z.literal("receive-otp"),
+    selector: z.string().min(1),
+    label: z.string().optional(),
+  }),
   z.object({
     action: z.literal("screenshot"),
     label: z.string().min(1),
@@ -214,6 +226,7 @@ export type StepAction =
   | { action: "scroll"; direction: "up" | "down" | "left" | "right"; px?: number; label?: string }
   | { action: "pinch"; selector: string; direction: "in" | "out"; label?: string }
   | { action: "wait"; target: string; label?: string }
+  | { action: "receive-otp"; selector: string; label?: string }
   | { action: "screenshot"; label: string; fullPage: boolean }
   | { action: "snapshot"; label: string }
   | {

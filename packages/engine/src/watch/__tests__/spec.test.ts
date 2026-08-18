@@ -65,6 +65,20 @@ describe("WatchSpecSchema", () => {
   it("refuses a device that is not mobile or desktop", () => {
     expect(parseWatch({ ...valid, devices: ["tablet"] }).ok).toBe(false);
   });
+
+  it("defaults extras to empty so a pulse file without a sidecar still parses", () => {
+    const parsed = parseWatch(valid);
+    if (!parsed.ok) throw new Error(parsed.errors.join("\n"));
+    expect(parsed.value.extras).toEqual([]);
+  });
+
+  it("accepts a sidecar extra and REFUSES one that is not a URL", () => {
+    const extra = { market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" };
+    const parsed = parseWatch({ ...valid, extras: [extra] });
+    if (!parsed.ok) throw new Error(parsed.errors.join("\n"));
+    expect(parsed.value.extras).toEqual([extra]);
+    expect(parseWatch({ ...valid, extras: [{ ...extra, url: "dashboard.digilist.no" }] }).ok).toBe(false);
+  });
 });
 
 describe("WatchSpecSchema shape", () => {
