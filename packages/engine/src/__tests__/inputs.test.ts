@@ -117,19 +117,22 @@ describe("tenant digilist", () => {
     expect(watch.value.allowWrites).toBe(false);
     expect(watch.value.enabled).toBe(true);
     expect(watch.value.mode).toBe("periodic");
-    expect(watch.value.everyMinutes).toBe(180);
+    expect(watch.value.everyMinutes).toBe(240);
     expect(watch.value.devices).toEqual(["desktop"]);
     expect(watch.value.targets).toEqual([
       "https://digilist.no",
       "https://app.digilist.no",
       "https://xala.no",
+      "https://dashboard.digilist.no/login",
     ]);
-    expect(watch.value.targets).not.toContain("https://dashboard.digilist.no/login");
     expect(tenant.value.targets).toContain("https://dashboard.digilist.no");
-    expect(watch.value.extras).toEqual([
-      { market: "oslo", device: "desktop", journey: "login-reachable", url: "https://dashboard.digilist.no/login" },
-      { market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" },
-    ]);
+    expect(watch.value.targetJourneys).toEqual({
+      "https://dashboard.digilist.no/login": ["login-reachable"],
+    });
+    expect(watch.value.e2e).toEqual({
+      everyMinutes: 720,
+      journeys: [{ market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" }],
+    });
     expect(watch.value.journeys).not.toContain("login");
     expect(watch.value.journeys).not.toContain("login-reachable");
     expect(watch.value.markets).toEqual(tenant.value.markets);
@@ -162,9 +165,16 @@ describe("tenant digilist", () => {
       expect(journeyIds, id).toContain(id);
       if (!watch.value.allowWrites) expect(writes.has(id), id).toBe(false);
     }
-    for (const extra of watch.value.extras) {
-      expect(journeyIds, extra.journey).toContain(extra.journey);
-      expect(tenant.value.markets, extra.market).toContain(extra.market);
+    for (const e2e of watch.value.e2e.journeys) {
+      expect(journeyIds, e2e.journey).toContain(e2e.journey);
+      expect(tenant.value.markets, e2e.market).toContain(e2e.market);
+    }
+    for (const [url, pool] of Object.entries(watch.value.targetJourneys)) {
+      expect(watch.value.targets, url).toContain(url);
+      for (const id of pool) {
+        expect(journeyIds, id).toContain(id);
+        if (!watch.value.allowWrites) expect(writes.has(id), id).toBe(false);
+      }
     }
     // Audit 2026-08-18 §2: returning-visitor asserts a restored session as a
     // site defect. The pulse is desktop + agent-browser + anonymous; that
@@ -176,7 +186,8 @@ describe("tenant digilist", () => {
     // like a broken proxy.
     const cells = watch.value.markets.length * watch.value.devices.length * watch.value.targets.length;
     const sweeps = Math.floor((24 * 60) / watch.value.everyMinutes);
-    const runsPerDay = cells * sweeps + watch.value.extras.length * sweeps;
+    const e2eSweeps = Math.floor((24 * 60) / watch.value.e2e.everyMinutes);
+    const runsPerDay = cells * sweeps + watch.value.e2e.journeys.length * e2eSweeps;
     expect(tenant.value.quota.runsPerDay).toBeGreaterThanOrEqual(runsPerDay);
     expect(tenant.value.quota.trafficMb).toBeGreaterThanOrEqual(runsPerDay * 30 * MB_PER_PAGE_LOAD);
   });

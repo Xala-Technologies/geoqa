@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideTick, planExtras, planSweep, type TickInput } from "../tick.js";
+import { decideTick, planE2e, planSweep, type TickInput } from "../tick.js";
 import type { WatchSpec } from "../spec.js";
 import type { Tenant } from "../../tenant/types.js";
 
@@ -16,15 +16,19 @@ const spec = (over: Partial<WatchSpec> = {}): WatchSpec => ({
   maxConcurrent: 2,
   allowWrites: false,
   journeyPick: "all",
-  extras: [],
+  e2e: { everyMinutes: 720, journeys: [] },
+  targetJourneys: {},
   ...over,
 });
+
+const login = { market: "oslo", device: "desktop" as const, journey: "login", url: "https://dashboard.digilist.no/login" };
 
 const input = (over: Partial<TickInput> = {}): TickInput => ({
   spec: spec(),
   nowMs: 1_800_000,
   lastStartedMs: null,
   lastFinishedMs: null,
+  lastE2eStartedMs: null,
   inFlight: 0,
   ...over,
 });
@@ -57,7 +61,43 @@ describe("decideTick", () => {
 
   it("starts the first sweep the moment the watch is armed", () => {
     const out = decideTick(input());
-    expect(out).toEqual({ action: "start", reason: "first sweep", nextMs: 1_800_000 });
+    expect(out).toEqual({ action: "start", reason: "first sweep", nextMs: 1_800_000, pulse: true, e2e: false });
+  });
+
+  it("starts e2e on its own clock, not on every city and not on the pulse interval", () => {
+    const withE2e = spec({ e2e: { everyMinutes: 720, journeys: [login] } });
+    const first = decideTick(input({ spec: withE2e }));
+    expect(first).toEqual({ action: "start", reason: "first sweep", nextMs: 1_800_000, pulse: true, e2e: true });
+
+    const pulseWaiting = decideTick(
+      input({
+        spec: withE2e,
+        lastStartedMs: 1_800_000 - 10 * 60_000,
+        lastE2eStartedMs: 1_800_000 - 720 * 60_000,
+      }),
+    );
+    expect(pulseWaiting).toEqual({
+      action: "start",
+      reason: "e2e interval elapsed",
+      nextMs: 1_800_000,
+      pulse: false,
+      e2e: true,
+    });
+
+    const bothWaiting = decideTick(
+      input({
+        spec: withE2e,
+        lastStartedMs: 1_800_000 - 10 * 60_000,
+        lastE2eStartedMs: 1_800_000 - 10 * 60_000,
+      }),
+    );
+    expect(bothWaiting.action).toBe("wait");
+    expect(bothWaiting.nextMs).toBe(1_800_000 - 10 * 60_000 + 30 * 60_000);
+  });
+
+  it("can start e2e when the pulse has no journeys, so a login does not need the city grid", () => {
+    const out = decideTick(input({ spec: spec({ journeys: [], e2e: { everyMinutes: 720, journeys: [login] } }) }));
+    expect(out).toEqual({ action: "start", reason: "first e2e", nextMs: 1_800_000, pulse: false, e2e: true });
   });
 
   it("starts a periodic sweep only after the interval since the last START", () => {
@@ -142,9 +182,72 @@ describe("planSweep", () => {
     if (out.ok) throw new Error("expected refusal");
     expect(out.error).toContain("no-such-journey");
   });
+
+  it("REFUSES a targetJourneys URL that is not a watch target", () => {
+    const out = planSweep(
+      spec({
+        targetJourneys: { "https://dashboard.digilist.no/login": ["login-reachable"] },
+      }),
+      tenant,
+      [
+        { id: "landing-page", writes: false },
+        { id: "login-reachable", writes: false },
+      ],
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected refusal");
+    expect(out.error).toContain("not a watch target");
+  });
+
+  it("REFUSES a writes journey in targetJourneys unless allowWrites is on", () => {
+    const dashboard = "https://dashboard.digilist.no/login";
+    const blocked = planSweep(
+      spec({
+        targets: ["https://digilist.no", dashboard],
+        targetJourneys: { [dashboard]: ["login"] },
+      }),
+      tenant,
+      [
+        { id: "landing-page", writes: false },
+        { id: "login", writes: true },
+      ],
+    );
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) throw new Error("expected refusal");
+    expect(blocked.error).toContain("allowWrites");
+
+    const allowed = planSweep(
+      spec({
+        targets: ["https://digilist.no", dashboard],
+        targetJourneys: { [dashboard]: ["login-reachable"] },
+      }),
+      tenant,
+      [
+        { id: "landing-page", writes: false },
+        { id: "login-reachable", writes: false },
+      ],
+    );
+    if (!allowed.ok) throw new Error(allowed.error);
+    expect(allowed.axes.targets).toContain(dashboard);
+  });
+
+  it("REFUSES a target journey that is not on disk", () => {
+    const dashboard = "https://dashboard.digilist.no/login";
+    const out = planSweep(
+      spec({
+        targets: ["https://digilist.no", dashboard],
+        targetJourneys: { [dashboard]: ["no-such-journey"] },
+      }),
+      tenant,
+      [{ id: "landing-page", writes: false }],
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected refusal");
+    expect(out.error).toContain("no such target journey");
+  });
 });
 
-describe("planExtras", () => {
+describe("planE2e", () => {
   const tenant: Tenant = {
     id: "digilist",
     name: "Digilist AS",
@@ -156,11 +259,9 @@ describe("planExtras", () => {
     retentionDays: 30,
   };
 
-  it("returns sidecar cells and may write without flipping allowWrites on the pulse", () => {
-    const out = planExtras(
-      spec({
-        extras: [{ market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" }],
-      }),
+  it("returns one cell per e2e journey and may write without flipping allowWrites on the pulse", () => {
+    const out = planE2e(
+      spec({ e2e: { everyMinutes: 720, journeys: [login] } }),
       tenant,
       [
         { id: "landing-page", writes: false },
@@ -174,15 +275,15 @@ describe("planExtras", () => {
     ]);
   });
 
-  it("refuses an extra market or journey the tenant cannot serve", () => {
-    const missingMarket = planExtras(
-      spec({ extras: [{ market: "berlin", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" }] }),
+  it("refuses an e2e market or journey the tenant cannot serve", () => {
+    const missingMarket = planE2e(
+      spec({ e2e: { everyMinutes: 720, journeys: [{ ...login, market: "berlin" }] } }),
       tenant,
       [{ id: "login", writes: true }],
     );
     expect(missingMarket.ok).toBe(false);
-    const missingJourney = planExtras(
-      spec({ extras: [{ market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" }] }),
+    const missingJourney = planE2e(
+      spec({ e2e: { everyMinutes: 720, journeys: [login] } }),
       tenant,
       [{ id: "landing-page", writes: false }],
     );

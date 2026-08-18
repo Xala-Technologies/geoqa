@@ -15,14 +15,14 @@ import { acceptRun, type AcceptedRun } from "./accept-run.js";
 import type { Tenant } from "../tenant/types.js";
 import type { GeoQaConfig } from "../config/schema.js";
 import { LiveRegistry } from "../watch/live.js";
-import { decideTick, planExtras, planSweep } from "../watch/tick.js";
+import { decideTick, planE2e, planSweep, type TickDecision } from "../watch/tick.js";
 import { addTarget, removeTarget } from "../watch/targets.js";
-import { applyWatchPatch, loadWatch, saveWatch, watchPath, type WatchAllowed } from "../watch/store.js";
+import { applyWatchPatch, dropOrphanTargetJourneys, loadWatch, saveWatch, watchPath, type WatchAllowed } from "../watch/store.js";
 import { expandMatrix } from "../run/matrix.js";
 import { emptyClock, loadWatchClock, saveWatchClock, watchClockPath } from "../watch/clock.js";
 import { journeysRoot, tenantsRoot } from "../repo.js";
 import { nextSlice } from "../watch/cursor.js";
-import { pickSeededCells } from "../watch/journey-pick.js";
+import { expandWatchCells, pickSeededCells } from "../watch/journey-pick.js";
 import { parseWatch, type WatchSpec } from "../watch/spec.js";
 import { assessWatch, findingKey, unreportedFindings, type WatchHealth } from "../watch/health.js";
 import { appendWatchEvent, eventFromFinding, readWatchLog, recentWatchEvents, type WatchLogEvent } from "../watch/log.js";
@@ -67,11 +67,12 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
   const clock = loadedClock.ok ? loadedClock.value : emptyClock();
   let lastStartedMs: number | null = clock.lastStartedMs;
   let lastFinishedMs: number | null = clock.lastFinishedMs;
+  let lastE2eStartedMs: number | null = clock.lastE2eStartedMs;
   let cursor = clock.cursor;
   let inFlight = 0;
   let lastSweepError: string | null = null;
   const reported = new Set<string>();
-  const persistClock = (): void => saveWatchClock(clockFile, { lastStartedMs, lastFinishedMs, cursor });
+  const persistClock = (): void => saveWatchClock(clockFile, { lastStartedMs, lastFinishedMs, cursor, lastE2eStartedMs });
 
   const record = (event: WatchLogEvent): void => {
     const problem = appendWatchEvent(options.evidenceRoot, event);
@@ -121,7 +122,7 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
 
   const view = (): unknown => {
     const spec = current();
-    const decision = decideTick({ spec, nowMs: options.now(), lastStartedMs, lastFinishedMs, inFlight });
+    const decision = decideTick({ spec, nowMs: options.now(), lastStartedMs, lastFinishedMs, lastE2eStartedMs, inFlight });
     return {
       tenantId: options.tenant.id,
       tenantName: options.tenant.name,
@@ -140,42 +141,47 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
 
   const fail = (error: string): ControlOutcome<unknown> => ({ ok: false, error });
 
-  const launch = async (spec: WatchSpec, reason: string): Promise<void> => {
-    const planned = planSweep(spec, options.tenant, options.journeys);
-    const extras = planExtras(spec, options.tenant, options.journeys);
-    if (!planned.ok) {
-      options.log(`watch: refused ${planned.error}`);
-      lastSweepError = planned.error;
-      record({
-        at: new Date(options.now()).toISOString(),
-        level: "warning",
-        kind: "sweep-refused",
-        message: planned.error,
-      });
+  const refuse = (error: string): void => {
+    options.log(`watch: refused ${error}`);
+    lastSweepError = error;
+    record({
+      at: new Date(options.now()).toISOString(),
+      level: "warning",
+      kind: "sweep-refused",
+      message: error,
+    });
+  };
+
+  const launch = async (spec: WatchSpec, decision: Extract<TickDecision, { action: "start" }>): Promise<void> => {
+    const e2ePlan =
+      spec.e2e.journeys.length > 0
+        ? planE2e(spec, options.tenant, options.journeys)
+        : { ok: true as const, cells: [], writes: false };
+    if (!e2ePlan.ok) {
+      refuse(e2ePlan.error);
       return;
     }
-    if (!extras.ok) {
-      options.log(`watch: refused ${extras.error}`);
-      lastSweepError = extras.error;
-      record({
-        at: new Date(options.now()).toISOString(),
-        level: "warning",
-        kind: "sweep-refused",
-        message: extras.error,
-      });
+    const planned = decision.pulse ? planSweep(spec, options.tenant, options.journeys) : null;
+    if (planned !== null && !planned.ok) {
+      refuse(planned.error);
       return;
     }
     inFlight += 1;
     lastSweepError = null;
     const startedMs = options.now();
-    lastStartedMs = startedMs;
+    if (decision.pulse) lastStartedMs = startedMs;
+    if (decision.e2e) lastE2eStartedMs = startedMs;
     persistClock();
-    options.log(`watch: starting sweep (${reason}) — ${planned.axes.targets.length} url(s) × ${planned.axes.markets.length} market(s)`);
+    const scope =
+      decision.pulse && planned !== null && planned.ok
+        ? `${planned.axes.targets.length} url(s) × ${planned.axes.markets.length} market(s)`
+        : `${e2ePlan.cells.length} e2e journey(s)`;
+    options.log(`watch: starting sweep (${decision.reason}) — ${scope}`);
     record({
       at: new Date(startedMs).toISOString(),
       level: "info",
       kind: "sweep-started",
-      message: `starting sweep (${reason}) — ${planned.axes.targets.length} url(s) × ${planned.axes.markets.length} market(s)`,
+      message: `starting sweep (${decision.reason}) — ${scope}`,
     });
     const deps = defaultDeps(options.repoRoot, {
       evidenceRoot: options.evidenceRoot,
@@ -244,31 +250,51 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
         journey: string;
         target: string;
       } => ({ market: s.market, device: s.device, journey: s.journey, target: s.target ?? "" });
+      const e2eCells = decision.e2e ? e2ePlan.cells : [];
+      const e2eWrites = decision.e2e ? e2ePlan.writes : false;
+      const journeysByTarget = spec.targetJourneys;
+      const hasTargetPools = Object.keys(journeysByTarget).length > 0;
       const pick =
-        spec.mode === "continuous"
-          ? (() => {
-              const stepped = nextSlice(expandMatrix(planned.axes), cursor, spec.maxConcurrent);
-              cursor = stepped.nextCursor;
-              persistClock();
-              return stepped.slice.map(asPick);
-            })()
-          : spec.journeyPick === "seeded"
-            ? [...pickSeededCells({ ...planned.axes, atMs: startedMs }), ...extras.cells]
-            : extras.cells.length > 0
-              ? [...expandMatrix(planned.axes).map(asPick), ...extras.cells]
-              : undefined;
+        decision.pulse && planned !== null && planned.ok
+          ? spec.mode === "continuous"
+            ? (() => {
+                const watchAxes = { ...planned.axes, journeysByTarget };
+                const stepped = nextSlice(
+                  hasTargetPools ? expandWatchCells(watchAxes) : expandMatrix(planned.axes).map(asPick),
+                  cursor,
+                  spec.maxConcurrent,
+                );
+                cursor = stepped.nextCursor;
+                persistClock();
+                return [...stepped.slice, ...e2eCells];
+              })()
+            : spec.journeyPick === "seeded"
+              ? [...pickSeededCells({ ...planned.axes, atMs: startedMs, journeysByTarget }), ...e2eCells]
+              : hasTargetPools || e2eCells.length > 0
+                ? [...(hasTargetPools ? expandWatchCells({ ...planned.axes, journeysByTarget }) : expandMatrix(planned.axes).map(asPick)), ...e2eCells]
+                : undefined
+          : e2eCells;
       if (pick !== undefined && pick.length === 0) {
         options.log("watch: continuous slice is empty");
         return;
       }
+      const axes =
+        decision.pulse && planned !== null && planned.ok
+          ? planned.axes
+          : {
+              markets: [...new Set(e2eCells.map((c) => c.market))],
+              devices: [...new Set(e2eCells.map((c) => c.device))],
+              journeys: [...new Set(e2eCells.map((c) => c.journey))],
+              targets: [...new Set(e2eCells.map((c) => c.target))],
+            };
       await matrixRun(deps, {
-        url: planned.axes.targets[0] ?? "",
-        markets: planned.axes.markets,
-        devices: planned.axes.devices,
-        journeys: planned.axes.journeys,
-        targets: planned.axes.targets,
+        url: axes.targets[0] ?? "",
+        markets: axes.markets,
+        devices: axes.devices,
+        journeys: axes.journeys,
+        targets: axes.targets,
         providerName: options.config.network.provider,
-        allowWrites: spec.allowWrites || extras.writes,
+        allowWrites: spec.allowWrites || e2eWrites,
         concurrency: spec.maxConcurrent,
         engine: WATCH_ENGINE,
         vars: loginVarsFromEnv(options.env),
@@ -389,9 +415,9 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
 
   const startIfDue = (force: boolean): ControlOutcome<unknown> => {
     const spec = current();
-    const decision = decideTick({ spec, nowMs: options.now(), lastStartedMs, lastFinishedMs, inFlight, ...(force ? { force: true } : {}) });
+    const decision = decideTick({ spec, nowMs: options.now(), lastStartedMs, lastFinishedMs, lastE2eStartedMs, inFlight, ...(force ? { force: true } : {}) });
     if (decision.action !== "start") return fail(decision.reason);
-    void launch(spec, decision.reason);
+    void launch(spec, decision);
     return { ok: true, value: { started: true, reason: decision.reason } };
   };
 
@@ -440,7 +466,7 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
         const url = typeof (body as { url?: unknown }).url === "string" ? (body as { url: string }).url : "";
         const removed = removeTarget(current().targets, url);
         if (!removed.ok) return fail(removed.errors.join("; "));
-        persist({ ...current(), targets: removed.value });
+        persist(dropOrphanTargetJourneys({ ...current(), targets: removed.value }));
         return { ok: true, value: view() };
       },
       startNow: () => startIfDue(true),

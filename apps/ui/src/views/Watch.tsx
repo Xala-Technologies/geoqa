@@ -27,7 +27,11 @@ interface WatchSpec {
   maxConcurrent: number;
   allowWrites: boolean;
   journeyPick?: "all" | "seeded";
-  extras?: { market: string; device: string; journey: string; url: string }[];
+  e2e?: {
+    everyMinutes: number;
+    journeys: { market: string; device: string; journey: string; url: string }[];
+  };
+  targetJourneys?: Record<string, string[]>;
 }
 
 interface WatchView {
@@ -326,19 +330,50 @@ export function Watch(): JSX.Element {
         </label>
       </div>
 
-      {(spec.extras ?? []).length > 0 ? (
+      {Object.keys(spec.targetJourneys ?? {}).length > 0 ? (
         <div className="panel">
           <div className="panel-head">
-            <h3>Sidecar</h3>
+            <h3>Per-URL journeys</h3>
             <p className="hint">
-              Extra cells outside the city × URL product. A login here is one Oslo desktop visit,
-              not a fourth URL on every city.
+              These URLs do not draw from the marketing pool. Dashboard login stays
+              login-reachable so browse and search never run against the sign-in page.
             </p>
           </div>
           <ul className="target-list">
-            {(spec.extras ?? []).map((extra) => (
-              <li key={`${extra.journey}:${extra.url}`}>
-                {extra.market} · {extra.device} · {extra.journey} · {extra.url}
+            {Object.entries(spec.targetJourneys ?? {}).map(([url, pool]) => (
+              <li key={url}>
+                {url} · {pool.join(", ")}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {(spec.e2e?.journeys ?? []).length > 0 ? (
+        <div className="panel">
+          <div className="panel-head">
+            <h3>E2E</h3>
+            <p className="hint">
+              One cell each, on their own clock — not the city grid. Login, checkout, a form
+              that actually submits. Add more here; leave the pulse for geography.
+            </p>
+            <label className="field field-inline">
+              <span className="field-label">every</span>
+              <input
+                className="input input-narrow"
+                type="number"
+                min={5}
+                max={1440}
+                value={spec.e2e?.everyMinutes ?? 720}
+                onChange={(e) => patch({ e2e: { everyMinutes: Number(e.target.value) } })}
+              />
+              <span className="dim">min</span>
+            </label>
+          </div>
+          <ul className="target-list">
+            {(spec.e2e?.journeys ?? []).map((row) => (
+              <li key={`${row.journey}:${row.url}`}>
+                {row.market} · {row.device} · {row.journey} · {row.url}
               </li>
             ))}
           </ul>

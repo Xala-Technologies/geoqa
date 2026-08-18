@@ -66,19 +66,35 @@ describe("WatchSpecSchema", () => {
     expect(parseWatch({ ...valid, devices: ["tablet"] }).ok).toBe(false);
   });
 
-  it("defaults extras to empty so a pulse file without a sidecar still parses", () => {
+  it("defaults e2e and targetJourneys so a pulse file without either still parses", () => {
     const parsed = parseWatch(valid);
     if (!parsed.ok) throw new Error(parsed.errors.join("\n"));
-    expect(parsed.value.extras).toEqual([]);
+    expect(parsed.value.e2e).toEqual({ everyMinutes: 720, journeys: [] });
+    expect(parsed.value.targetJourneys).toEqual({});
   });
 
-  it("accepts a sidecar extra and REFUSES one that is not a URL", () => {
-    const extra = { market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" };
-    const parsed = parseWatch({ ...valid, extras: [extra] });
-    if (!parsed.ok) throw new Error(parsed.errors.join("\n"));
-    expect(parsed.value.extras).toEqual([extra]);
-    expect(parseWatch({ ...valid, extras: [{ ...extra, url: "dashboard.digilist.no" }] }).ok).toBe(false);
+  it("REFUSES extras — that list is e2e now, so a leftover key is a typo", () => {
+    expect(parseWatch({ ...valid, extras: [] }).ok).toBe(false);
   });
+
+  it("accepts an e2e journey and REFUSES one that is not a URL", () => {
+    const journey = { market: "oslo", device: "desktop", journey: "login", url: "https://dashboard.digilist.no/login" };
+    const parsed = parseWatch({ ...valid, e2e: { everyMinutes: 480, journeys: [journey] } });
+    if (!parsed.ok) throw new Error(parsed.errors.join("\n"));
+    expect(parsed.value.e2e).toEqual({ everyMinutes: 480, journeys: [journey] });
+    expect(parseWatch({ ...valid, e2e: { journeys: [{ ...journey, url: "dashboard.digilist.no" }] } }).ok).toBe(false);
+    expect(parseWatch({ ...valid, e2e: { everyMinutes: 4, journeys: [journey] } }).ok).toBe(false);
+  });
+
+  it("accepts a per-target pool and REFUSES an empty one or a key that is not a URL", () => {
+    const dashboard = "https://dashboard.digilist.no/login";
+    const parsed = parseWatch({ ...valid, targetJourneys: { [dashboard]: ["login-reachable"] } });
+    if (!parsed.ok) throw new Error(parsed.errors.join("\n"));
+    expect(parsed.value.targetJourneys).toEqual({ [dashboard]: ["login-reachable"] });
+    expect(parseWatch({ ...valid, targetJourneys: { [dashboard]: [] } }).ok).toBe(false);
+    expect(parseWatch({ ...valid, targetJourneys: { "dashboard.digilist.no": ["login-reachable"] } }).ok).toBe(false);
+  });
+
 });
 
 describe("WatchSpecSchema shape", () => {

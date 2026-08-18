@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { applyWatchPatch, loadWatch, saveWatch, watchPath, watchableMarkets } from "../store.js";
+import { applyWatchPatch, dropOrphanTargetJourneys, loadWatch, saveWatch, watchPath, watchableMarkets } from "../store.js";
 import type { WatchSpec } from "../spec.js";
 
 const temps: string[] = [];
@@ -24,7 +24,8 @@ const spec = (over: Partial<WatchSpec> = {}): WatchSpec => ({
   maxConcurrent: 2,
   allowWrites: false,
   journeyPick: "all",
-  extras: [],
+  e2e: { everyMinutes: 720, journeys: [] },
+  targetJourneys: {},
   ...over,
 });
 
@@ -92,6 +93,7 @@ describe("applyWatchPatch", () => {
       { id: "landing-page", writes: false },
       { id: "contact-form", writes: true },
       { id: "login", writes: true },
+      { id: "login-reachable", writes: false },
     ],
   };
 
@@ -120,22 +122,91 @@ describe("applyWatchPatch", () => {
     expect(out.value.journeys).toEqual(["contact-form"]);
   });
 
-  it("REFUSES an extra market or journey that is not on disk", () => {
-    const extra = { market: "oslo", device: "desktop" as const, journey: "login", url: "https://dashboard.digilist.no/login" };
-    expect(applyWatchPatch(spec(), { extras: [{ ...extra, market: "atlantis" }] }, allowed).ok).toBe(false);
-    expect(applyWatchPatch(spec(), { extras: [{ ...extra, journey: "nope" }] }, allowed).ok).toBe(false);
+  it("REFUSES an e2e market or journey that is not on disk", () => {
+    const journey = { market: "oslo", device: "desktop" as const, journey: "login", url: "https://dashboard.digilist.no/login" };
+    expect(applyWatchPatch(spec(), { e2e: { journeys: [{ ...journey, market: "atlantis" }] } }, allowed).ok).toBe(false);
+    expect(applyWatchPatch(spec(), { e2e: { journeys: [{ ...journey, journey: "nope" }] } }, allowed).ok).toBe(false);
   });
 
-  it("keeps a writes extra without turning allowWrites on for the pulse", () => {
-    const extra = { market: "oslo", device: "desktop" as const, journey: "login", url: "https://dashboard.digilist.no/login" };
-    const out = applyWatchPatch(spec(), { extras: [extra] }, allowed);
+  it("keeps a writes e2e journey without turning allowWrites on for the pulse", () => {
+    const journey = { market: "oslo", device: "desktop" as const, journey: "login", url: "https://dashboard.digilist.no/login" };
+    const out = applyWatchPatch(spec(), { e2e: { everyMinutes: 480, journeys: [journey] } }, allowed);
     if (!out.ok) throw new Error(out.errors.join());
     expect(out.value.allowWrites).toBe(false);
-    expect(out.value.extras).toEqual([extra]);
+    expect(out.value.e2e).toEqual({ everyMinutes: 480, journeys: [journey] });
+  });
+
+  it("deep-merges e2e so changing the interval does not drop the journeys", () => {
+    const journey = { market: "oslo", device: "desktop" as const, journey: "login", url: "https://dashboard.digilist.no/login" };
+    const current = spec({ e2e: { everyMinutes: 720, journeys: [journey] } });
+    const out = applyWatchPatch(current, { e2e: { everyMinutes: 480 } }, allowed);
+    if (!out.ok) throw new Error(out.errors.join());
+    expect(out.value.e2e).toEqual({ everyMinutes: 480, journeys: [journey] });
   });
 
   it("refuses a body that is not an object, rather than treating null as empty", () => {
     expect(applyWatchPatch(spec(), null, allowed).ok).toBe(false);
     expect(applyWatchPatch(spec(), ["oslo"], allowed).ok).toBe(false);
+  });
+
+  it("REFUSES a targetJourneys URL that is not a watch target, or a writes journey without allowWrites", () => {
+    const dashboard = "https://dashboard.digilist.no/login";
+    expect(
+      applyWatchPatch(spec(), { targetJourneys: { [dashboard]: ["login-reachable"] } }, allowed).ok,
+    ).toBe(false);
+    expect(
+      applyWatchPatch(
+        spec({ targets: ["https://digilist.no", dashboard] }),
+        { targetJourneys: { [dashboard]: ["login"] } },
+        allowed,
+      ).ok,
+    ).toBe(false);
+    const out = applyWatchPatch(
+      spec({ targets: ["https://digilist.no", dashboard] }),
+      { targetJourneys: { [dashboard]: ["login-reachable"] } },
+      allowed,
+    );
+    if (!out.ok) throw new Error(out.errors.join());
+    expect(out.value.targetJourneys).toEqual({ [dashboard]: ["login-reachable"] });
+  });
+
+  it("REFUSES an unknown target journey", () => {
+    const dashboard = "https://dashboard.digilist.no/login";
+    expect(
+      applyWatchPatch(
+        spec({ targets: ["https://digilist.no", dashboard] }),
+        { targetJourneys: { [dashboard]: ["nope"] } },
+        allowed,
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("drops an orphaned targetJourneys key when the target list changes and the map is not in the patch", () => {
+    const dashboard = "https://dashboard.digilist.no/login";
+    const current = spec({
+      targets: ["https://digilist.no", dashboard],
+      targetJourneys: { [dashboard]: ["login-reachable"] },
+    });
+    const out = applyWatchPatch(current, { targets: ["https://digilist.no"] }, allowed);
+    if (!out.ok) throw new Error(out.errors.join());
+    expect(out.value.targetJourneys).toEqual({});
+    expect(out.value.targets).toEqual(["https://digilist.no"]);
+  });
+});
+
+describe("dropOrphanTargetJourneys", () => {
+  it("leaves a matching map alone and drops a URL that is no longer a target", () => {
+    const dashboard = "https://dashboard.digilist.no/login";
+    const matching = spec({
+      targets: ["https://digilist.no", dashboard],
+      targetJourneys: { [dashboard]: ["login-reachable"] },
+    });
+    expect(dropOrphanTargetJourneys(matching)).toBe(matching);
+    expect(
+      dropOrphanTargetJourneys({
+        ...matching,
+        targets: ["https://digilist.no"],
+      }).targetJourneys,
+    ).toEqual({});
   });
 });

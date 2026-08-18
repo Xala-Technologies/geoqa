@@ -5,8 +5,8 @@ description: >
   before a code is requested. Read-only. The full login is the `login`
   journey — this one only proves a visitor can see the field.
 
-  Not part of the 102-cell pulse. Watch extras run it once per sweep
-  from Oslo desktop.
+  On the pulse via targetJourneys: every city hits dashboard /login
+  with this journey only. The writes OTP login is e2e, one Oslo cell.
 writes: false
 steps:
   - { action: open, url: "{target}", label: open the login page }

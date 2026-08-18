@@ -28,14 +28,15 @@ export const WatchModeSchema = z.enum(["periodic", "continuous"]);
 export const JourneyPickSchema = z.enum(["all", "seeded"]);
 
 /**
- * One cell that is NOT in the cartesian product.
+ * One end-to-end journey: one market × one device × one URL, not the city grid.
  *
- * Adding dashboard.digilist.no to `targets` would create a cell per city.
- * A login (or login-reachable) run is one Oslo desktop visit. These rows
- * are that visit. They may write even when `allowWrites` is false — the
- * pulse stays read-only; the sidecar says so by existing.
+ * Login, checkout, a form that actually submits — things that change state
+ * or spend a one-time code. Running them from 34 cities is an attack on
+ * the site's own limiter. These rows are that visit. They may write even
+ * when `allowWrites` is false — that flag is what would let someone tick
+ * `contact-form` onto every city.
  */
-export const WatchExtraSchema = z
+export const WatchE2eJourneySchema = z
   .object({
     market: z.string().min(1),
     device: z.enum(["mobile", "desktop"]),
@@ -44,7 +45,20 @@ export const WatchExtraSchema = z
   })
   .strict();
 
-export type WatchExtra = z.infer<typeof WatchExtraSchema>;
+export type WatchE2eJourney = z.infer<typeof WatchE2eJourneySchema>;
+
+/**
+ * E2E rides its own clock. The geo pulse can be 4 hours; login can be 12.
+ * Default 720 so an omitted interval is "twice a day", not "every pulse".
+ */
+export const WatchE2eSchema = z
+  .object({
+    everyMinutes: z.number().int().min(5).max(24 * 60).default(720),
+    journeys: z.array(WatchE2eJourneySchema).default([]),
+  })
+  .strict();
+
+export type WatchE2e = z.infer<typeof WatchE2eSchema>;
 
 export const WatchSpecSchema = z
   .object({
@@ -82,7 +96,16 @@ export const WatchSpecSchema = z
     maxConcurrent: z.number().int().min(1).max(16).default(2),
     allowWrites: z.boolean().default(false),
     journeyPick: JourneyPickSchema.default("all"),
-    extras: z.array(WatchExtraSchema).default([]),
+    e2e: WatchE2eSchema.default({ everyMinutes: 720, journeys: [] }),
+    /**
+     * Journey pool for one target, instead of `journeys`.
+     *
+     * Dashboard login is a fourth URL, not a fourth marketing site. Without
+     * this, seeded pick would draw `browse` or `search` against /login and
+     * file those misses as site defects. A key that is not in `targets` is
+     * a typo — `planSweep` refuses it.
+     */
+    targetJourneys: z.record(z.string().url(), z.array(z.string().min(1)).min(1)).default({}),
   })
   .strict();
 

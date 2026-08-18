@@ -1,18 +1,21 @@
 # Operator-controlled watch. The console writes this file; do not put credentials here.
 # Markets must be ones the tenant listed. A writes journey needs allowWrites: true.
 #
-# 34 cities × 3 URLs × desktop × 1 seeded journey = 102 cells. Hourly that is 2,448
-# runs/day and ~73 GB/month against a 50 GB Decodo account, so the tick is
-# 180 minutes (8 sweeps/day → 816 runs, ~24 GB). extras add two Oslo-desktop
-# cells against dashboard.digilist.no — login-reachable and a real AgentMail
-# login — not a fourth URL in the product. The draw is UTC-hour +
-# market + url — not Math.random(). contact-form / explore stay off until
-# allowWrites is on. returning-visitor is off the pool (audit 2026-08-18 §2).
-# dev.digilist.no stays off this pulse (staging).
+# 34 cities × 4 URLs × desktop × 1 seeded journey = 136 cells. Hourly that is
+# 3,264 runs/day and ~98 GB/month against a 50 GB Decodo account, so the tick
+# is 240 minutes (6 sweeps/day → 816 runs, ~24 GB) — same daily volume as the
+# previous 180-minute / 3-URL pulse. Dashboard is a fourth URL, not a
+# fourth marketing site: targetJourneys pins it to login-reachable so
+# browse/search never run against /login. The OTP login is an e2e
+# journey — one Oslo desktop cell on its own 720-minute clock, not
+# 34 cities and not the pulse interval. The draw is UTC-hour + market
+# + url — not Math.random(). contact-form / explore stay off until
+# allowWrites is on. returning-visitor is off the pool
+# (audit 2026-08-18 §2). dev.digilist.no stays off this pulse (staging).
 tenantId: digilist
 enabled: true
 mode: periodic
-everyMinutes: 180
+everyMinutes: 240
 restSeconds: 60
 markets:
   - oslo
@@ -60,15 +63,17 @@ targets:
   - https://digilist.no
   - https://app.digilist.no
   - https://xala.no
+  - https://dashboard.digilist.no/login
+targetJourneys:
+  https://dashboard.digilist.no/login:
+    - login-reachable
 maxConcurrent: 2
 allowWrites: false
 journeyPick: seeded
-extras:
-  - market: oslo
-    device: desktop
-    journey: login-reachable
-    url: https://dashboard.digilist.no/login
-  - market: oslo
-    device: desktop
-    journey: login
-    url: https://dashboard.digilist.no/login
+e2e:
+  everyMinutes: 720
+  journeys:
+    - market: oslo
+      device: desktop
+      journey: login
+      url: https://dashboard.digilist.no/login

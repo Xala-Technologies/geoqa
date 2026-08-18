@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { seedFrom } from "../../journeys/random.js";
-import { journeySeedMaterial, pickSeededCells, pickSeededJourney } from "../journey-pick.js";
+import { expandWatchCells, journeySeedMaterial, pickSeededCells, pickSeededJourney } from "../journey-pick.js";
 
 const POOL = ["landing-page", "browse", "search", "reader", "returning-visitor"] as const;
 
@@ -112,5 +112,36 @@ describe("pickSeededCells", () => {
 
   it("REFUSES an empty journey pool the same way a single draw does", () => {
     expect(() => pickSeededCells({ ...axes, journeys: [] })).toThrow(/empty pool/);
+  });
+
+  it("uses a per-target pool so dashboard does not draw browse or search", () => {
+    const dashboard = "https://dashboard.digilist.no/login";
+    const cells = pickSeededCells({
+      ...axes,
+      targets: ["https://digilist.no", dashboard],
+      journeysByTarget: { [dashboard]: ["login-reachable"] },
+    });
+    const dash = cells.filter((c) => c.target === dashboard);
+    expect(dash).toHaveLength(2);
+    expect(dash.every((c) => c.journey === "login-reachable")).toBe(true);
+    expect(cells.filter((c) => c.target === "https://digilist.no").every((c) => POOL.includes(c.journey as (typeof POOL)[number]))).toBe(true);
+  });
+});
+
+describe("expandWatchCells", () => {
+  it("keeps the marketing cartesian product and pins dashboard to its own pool", () => {
+    const dashboard = "https://dashboard.digilist.no/login";
+    const cells = expandWatchCells({
+      markets: ["oslo"],
+      devices: ["desktop"],
+      journeys: ["landing-page", "browse"],
+      targets: ["https://digilist.no", dashboard],
+      journeysByTarget: { [dashboard]: ["login-reachable"] },
+    });
+    expect(cells).toEqual([
+      { market: "oslo", device: "desktop", journey: "landing-page", target: "https://digilist.no" },
+      { market: "oslo", device: "desktop", journey: "browse", target: "https://digilist.no" },
+      { market: "oslo", device: "desktop", journey: "login-reachable", target: dashboard },
+    ]);
   });
 });

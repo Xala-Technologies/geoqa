@@ -80,12 +80,14 @@ proxyCredentials: null
 # account's figure describes every tenant on it.
 proxySubUser: GEOQA_SUBUSER_DIGILIST
 quota:
-  # Sized for the 180-minute pulse: 34 cities × 3 URLs × desktop × 1 journey = 102
-  # cells × 8 sweeps/day = 816 runs, plus 2 Oslo-desktop extras (login-reachable
-  # + login) × 8 = 16. 1,800 leaves headroom for a console "Run now". Traffic is
-  # 1 MB × 832 × 30 days ≈ 25 GB against a 50 GB account. Hourly on three sites
-  # would be 2,448/day and ~73 GB — over the account — so the tick is 180
-  # minutes on purpose.
+  # Sized for the 240-minute pulse: 34 cities × 4 URLs × desktop × 1 journey = 136
+  # cells × 6 sweeps/day = 816 runs, plus 1 Oslo-desktop e2e login × 2/day
+  # (720-minute clock) = 2. 1,800 leaves headroom for a console "Run now".
+  # Traffic is 1 MB × 818 × 30 days ≈ 25 GB against a 50 GB account. Hourly
+  # on four sites would be 3,264/day and ~98 GB — over the account — so the
+  # tick is 240 minutes on purpose, not more Decodo GB. Dashboard is the
+  # fourth URL; targetJourneys keeps browse/search off /login. OTP login
+  # is e2e, not a city cell.
   trafficMb: 50000
   runsPerDay: 1800
 retentionDays: 30

@@ -14,7 +14,7 @@ describe("parseWatchClock", () => {
   it("reads both timestamps, and treats a missing file shape as empty rather than zero", () => {
     const parsed = parseWatchClock({ lastStartedMs: 10, lastFinishedMs: 20 });
     if (!parsed.ok) throw new Error(parsed.errors.join());
-    expect(parsed.value).toEqual({ lastStartedMs: 10, lastFinishedMs: 20, cursor: 0 });
+    expect(parsed.value).toEqual({ lastStartedMs: 10, lastFinishedMs: 20, cursor: 0, lastE2eStartedMs: 10 });
     const empty = parseWatchClock({ lastStartedMs: null, lastFinishedMs: null });
     if (!empty.ok) throw new Error(empty.errors.join());
     expect(empty.value).toEqual(emptyClock());
@@ -23,6 +23,15 @@ describe("parseWatchClock", () => {
   it("REFUSES an unknown key and a negative timestamp — zero is a real instant, a typo is not", () => {
     expect(parseWatchClock({ lastStartedMs: 1, lastFinishedMs: 2, extra: true }).ok).toBe(false);
     expect(parseWatchClock({ lastStartedMs: -1, lastFinishedMs: null }).ok).toBe(false);
+  });
+
+  it("inherits lastE2eStartedMs from the pulse clock when the key is absent, so a deploy does not fire login immediately", () => {
+    const inherited = parseWatchClock({ lastStartedMs: 10, lastFinishedMs: 20 });
+    if (!inherited.ok) throw new Error(inherited.errors.join());
+    expect(inherited.value.lastE2eStartedMs).toBe(10);
+    const explicit = parseWatchClock({ lastStartedMs: 10, lastFinishedMs: 20, lastE2eStartedMs: 5 });
+    if (!explicit.ok) throw new Error(explicit.errors.join());
+    expect(explicit.value.lastE2eStartedMs).toBe(5);
   });
 });
 
@@ -39,7 +48,12 @@ describe("loadWatchClock / saveWatchClock", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "geoqa-clock-"));
     temps.push(dir);
     const file = watchClockPath(dir);
-    saveWatchClock(file, { lastStartedMs: 1_700_000_000_000, lastFinishedMs: 1_700_000_060_000, cursor: 4 });
+    saveWatchClock(file, {
+      lastStartedMs: 1_700_000_000_000,
+      lastFinishedMs: 1_700_000_060_000,
+      cursor: 4,
+      lastE2eStartedMs: 1_700_000_000_000,
+    });
     expect(existsSync(file)).toBe(true);
     expect(readFileSync(file, "utf8")).toContain("1700000000000");
     const loaded = loadWatchClock(file);

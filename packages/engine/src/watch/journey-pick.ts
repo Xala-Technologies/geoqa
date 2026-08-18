@@ -33,23 +33,67 @@ export interface SeededCell {
   target: string;
 }
 
+export function journeyPoolForTarget(
+  target: string,
+  defaultPool: readonly string[],
+  journeysByTarget: Readonly<Record<string, readonly string[]>> = {},
+): readonly string[] {
+  const override = journeysByTarget[target];
+  return override !== undefined && override.length > 0 ? override : defaultPool;
+}
+
 export function pickSeededCells(axes: {
   markets: readonly string[];
   devices: readonly string[];
   journeys: readonly string[];
   targets: readonly string[];
   atMs: number;
+  /**
+   * A URL that is not a marketing page (dashboard login) must not draw
+   * browse/search from the pulse pool. Absent means every target uses `journeys`.
+   */
+  journeysByTarget?: Readonly<Record<string, readonly string[]>>;
 }): SeededCell[] {
   const cells: SeededCell[] = [];
   for (const market of axes.markets) {
     for (const device of axes.devices) {
       for (const target of axes.targets) {
+        const pool = journeyPoolForTarget(target, axes.journeys, axes.journeysByTarget ?? {});
         cells.push({
           market,
           device,
-          journey: pickSeededJourney(axes.journeys, journeySeedMaterial(axes.atMs, market, target)),
+          journey: pickSeededJourney(pool, journeySeedMaterial(axes.atMs, market, target)),
           target,
         });
+      }
+    }
+  }
+  return cells;
+}
+
+/**
+ * Cartesian product, but each URL draws from its own pool.
+ *
+ * `expandMatrix` cannot do this: it applies one journey list to every
+ * target. Dashboard login in the pulse must never see browse/search.
+ * Continuous and `journeyPick: all` both go through here when a
+ * per-target pool exists.
+ */
+export function expandWatchCells(axes: {
+  markets: readonly string[];
+  devices: readonly string[];
+  journeys: readonly string[];
+  targets: readonly string[];
+  journeysByTarget?: Readonly<Record<string, readonly string[]>>;
+}): SeededCell[] {
+  const cells: SeededCell[] = [];
+  for (const market of axes.markets) {
+    for (const device of axes.devices) {
+      for (const target of axes.targets) {
+        const pool = [...new Set(journeyPoolForTarget(target, axes.journeys, axes.journeysByTarget ?? {}))];
+        for (const journey of pool) {
+          cells.push({ market, device, journey, target });
+        }
       }
     }
   }

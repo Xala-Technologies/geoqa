@@ -8,8 +8,7 @@ description: >
   never in this file and never in evidence. Demo emails / 123456 are
   production-blocked; do not point this at those.
 
-  Sidecar only: Oslo desktop, once per pulse. Not a fourth URL in the
-  102-cell matrix.
+  E2E only: Oslo desktop, on the e2e clock — not the city grid.
 
     pnpm geoqa journey run --tenant digilist --journey login \
       --url https://dashboard.digilist.no/login --geo oslo-desktop \

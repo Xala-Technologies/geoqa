@@ -19,6 +19,41 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — E2E journeys have their own clock
+
+Login is no longer a sidecar on the geo pulse. Watch now has `e2e`:
+one market × one device × one URL, on `e2e.everyMinutes` (Digilist:
+720, twice a day). The city grid stays 240 minutes × 4 URLs; OTP
+login does not ride that interval and does not run from 34 cities.
+
+A later checkout or a real form goes in `e2e.journeys`. Writes there
+still do not flip `allowWrites` on the pulse. The clock file gains
+`lastE2eStartedMs`; an older file without the key inherits
+`lastStartedMs` so a deploy does not fire login immediately.
+`extras` is refused — that name is gone.
+
+Where: `watch/spec.ts` `e2e`, `watch/tick.ts` `decideTick` / `planE2e`, `watch/clock.ts`, `inputs/tenants/digilist/watch.yaml`.
+
+---
+
+## 2026-08-19 — Dashboard is the fourth pulse URL
+
+`https://dashboard.digilist.no/login` is now a watch target, not only a
+sidecar. 34 cities × 4 URLs × desktop × one seeded journey = 136 cells.
+The tick is 240 minutes (6 sweeps/day) so daily volume stays ~816
+marketing runs plus one Oslo OTP login — same Decodo spend as the old
+180-minute / 3-URL pulse, without buying more GB.
+
+`targetJourneys` pins dashboard to `login-reachable`. Without that map,
+seeded pick would draw browse or search against /login and file those
+misses as site defects. The writes `login` journey stays one Oslo extra;
+34 OTP logins would hammer Digilist's own limiter. The clock file was
+left alone, so the next due is `lastStarted + 240m`.
+
+Where: `watch/spec.ts` `targetJourneys`, `watch/journey-pick.ts`, `inputs/tenants/digilist/watch.yaml`.
+
+---
+
 ## 2026-08-19 — Production login via AgentMail
 
 A real email login on `dashboard.digilist.no` is now a sidecar cell, not a

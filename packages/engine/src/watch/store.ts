@@ -10,6 +10,19 @@ import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { parseWatch, type ParseResult, type WatchSpec } from "./spec.js";
 
+/**
+ * Drop per-target pools whose URL is no longer a watch target.
+ *
+ * Removing dashboard from the console only patches `targets`. Leaving
+ * the stale `targetJourneys` key would make `planSweep` refuse the
+ * whole pulse. A YAML file that still names the missing URL is a typo
+ * and stays refused — this is only the merge after a target list change.
+ */
+export function dropOrphanTargetJourneys(spec: WatchSpec): WatchSpec {
+  const kept = Object.fromEntries(Object.entries(spec.targetJourneys).filter(([url]) => spec.targets.includes(url)));
+  return Object.keys(kept).length === Object.keys(spec.targetJourneys).length ? spec : { ...spec, targetJourneys: kept };
+}
+
 export function watchPath(tenantsDir: string, tenantId: string): string {
   return path.join(tenantsDir, tenantId, "watch.yaml");
 }
@@ -74,30 +87,54 @@ export function applyWatchPatch(current: WatchSpec, patch: unknown, allowed: Wat
   if (patch === null || typeof patch !== "object" || Array.isArray(patch)) {
     return { ok: false, errors: ["a watch patch must be an object"] };
   }
-  const merged = parseWatch({ ...current, ...patch });
+  const incoming = patch as Record<string, unknown>;
+  const e2ePatch =
+    incoming.e2e !== undefined && typeof incoming.e2e === "object" && incoming.e2e !== null && !Array.isArray(incoming.e2e)
+      ? { e2e: { ...current.e2e, ...(incoming.e2e as Record<string, unknown>) } }
+      : {};
+  const merged = parseWatch({ ...current, ...patch, ...e2ePatch });
   if (!merged.ok) return merged;
+  const value =
+    "targets" in incoming && !("targetJourneys" in incoming)
+      ? dropOrphanTargetJourneys(merged.value)
+      : merged.value;
 
-  const unknownMarkets = merged.value.markets.filter((m) => !allowed.markets.includes(m));
+  const unknownMarkets = value.markets.filter((m) => !allowed.markets.includes(m));
   if (unknownMarkets.length > 0) {
     return { ok: false, errors: [`no profile on disk for market(s): ${unknownMarkets.join(", ")}`] };
   }
 
   const byId = new Map(allowed.journeys.map((j) => [j.id, j]));
-  for (const id of merged.value.journeys) {
+  for (const id of value.journeys) {
     const found = byId.get(id);
     if (found === undefined) return { ok: false, errors: [`no such journey: ${id}`] };
-    if (found.writes && !merged.value.allowWrites) {
+    if (found.writes && !value.allowWrites) {
       return {
         ok: false,
         errors: [`journey "${id}" declares writes:true — turn on allowWrites before selecting it`],
       };
     }
   }
-  for (const extra of merged.value.extras) {
-    if (!allowed.markets.includes(extra.market)) {
-      return { ok: false, errors: [`no profile on disk for extra market: ${extra.market}`] };
+  for (const [url, pool] of Object.entries(value.targetJourneys)) {
+    if (!value.targets.includes(url)) {
+      return { ok: false, errors: [`targetJourneys names a URL that is not a watch target: ${url}`] };
     }
-    if (!byId.has(extra.journey)) return { ok: false, errors: [`no such extra journey: ${extra.journey}`] };
+    for (const id of pool) {
+      const found = byId.get(id);
+      if (found === undefined) return { ok: false, errors: [`no such target journey: ${id}`] };
+      if (found.writes && !value.allowWrites) {
+        return {
+          ok: false,
+          errors: [`target journey "${id}" declares writes:true — turn on allowWrites before selecting it`],
+        };
+      }
+    }
   }
-  return merged;
+  for (const row of value.e2e.journeys) {
+    if (!allowed.markets.includes(row.market)) {
+      return { ok: false, errors: [`no profile on disk for e2e market: ${row.market}`] };
+    }
+    if (!byId.has(row.journey)) return { ok: false, errors: [`no such e2e journey: ${row.journey}`] };
+  }
+  return { ok: true, value };
 }

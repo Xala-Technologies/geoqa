@@ -27,6 +27,12 @@ export interface WatchClock {
    * written before the cursor existed is "start of the matrix", not an error.
    */
   cursor: number;
+  /**
+   * When the e2e set last started. Independent of the geo pulse.
+   * Absent on an older clock file is treated as `lastStartedMs` so a
+   * deploy does not fire login the moment the new code loads.
+   */
+  lastE2eStartedMs: number | null;
 }
 
 const ClockSchema = z
@@ -34,12 +40,18 @@ const ClockSchema = z
     lastStartedMs: z.number().nonnegative().nullable(),
     lastFinishedMs: z.number().nonnegative().nullable(),
     cursor: z.number().int().nonnegative().default(0),
+    lastE2eStartedMs: z.number().nonnegative().nullable().optional(),
   })
   .strict();
 
 const issues = (error: z.ZodError): string[] => error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`);
 
-export const emptyClock = (): WatchClock => ({ lastStartedMs: null, lastFinishedMs: null, cursor: 0 });
+export const emptyClock = (): WatchClock => ({
+  lastStartedMs: null,
+  lastFinishedMs: null,
+  cursor: 0,
+  lastE2eStartedMs: null,
+});
 
 export function watchClockPath(evidenceRoot: string): string {
   return path.join(evidenceRoot, "watch-clock.json");
@@ -47,7 +59,16 @@ export function watchClockPath(evidenceRoot: string): string {
 
 export function parseWatchClock(doc: unknown): ParseResult<WatchClock> {
   const parsed = ClockSchema.safeParse(doc);
-  return parsed.success ? { ok: true, value: parsed.data } : { ok: false, errors: issues(parsed.error) };
+  if (!parsed.success) return { ok: false, errors: issues(parsed.error) };
+  return {
+    ok: true,
+    value: {
+      lastStartedMs: parsed.data.lastStartedMs,
+      lastFinishedMs: parsed.data.lastFinishedMs,
+      cursor: parsed.data.cursor,
+      lastE2eStartedMs: parsed.data.lastE2eStartedMs ?? parsed.data.lastStartedMs,
+    },
+  };
 }
 
 export function loadWatchClock(
