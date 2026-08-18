@@ -1,0 +1,16 @@
+# Steinkjer on the wide layout — far enough from Trondheim that a regional hours table keyed on the city is already wrong.
+id: steinkjer-desktop
+label: Steinkjer, desktop
+market:
+  id: steinkjer
+  country: NO
+  city: Steinkjer
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [64.0147, 11.4942]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

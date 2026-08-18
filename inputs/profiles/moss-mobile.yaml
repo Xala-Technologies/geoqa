@@ -1,0 +1,22 @@
+# Ostfold's port city on the Oslofjord, far enough from Fredrikstad that a store-locator keyed on Sarpsborg still looks right until it names the wrong harbour.
+id: moss-mobile
+label: Moss, mobile
+market:
+  id: moss
+  country: NO
+  city: Moss
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.4339, 10.6575]
+device:
+  id: mobile
+  kind: mobile
+  viewport: { width: 390, height: 844 }
+  # A real mobile identity WITHOUT a device descriptor — see `oslo-mobile.yaml` for the
+  # measurement. `isMobile` is the only descriptor option that costs viewport control
+  # (980 vs 390 on a page with no viewport meta tag), and it is the one not set here.
+  userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  hasTouch: true
+  deviceScaleFactor: 3
+visitorType: anonymous

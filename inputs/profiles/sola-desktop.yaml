@@ -1,0 +1,16 @@
+# Sola on the wide layout — SVG airport and the Jaeren coast, neither of which a Stavanger hero covers.
+id: sola-desktop
+label: Sola, desktop
+market:
+  id: sola
+  country: NO
+  city: Sola
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [58.8561, 5.575]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

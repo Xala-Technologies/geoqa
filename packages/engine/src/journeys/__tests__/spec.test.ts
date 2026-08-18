@@ -149,6 +149,7 @@ describe("the journeys that actually ship", () => {
       "landing-page.yaml",
       "localization.yaml",
       "reader.yaml",
+      "returning-visitor.yaml",
       "search.yaml",
       "sweep.yaml",
       "explore.yaml",

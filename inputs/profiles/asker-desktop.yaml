@@ -1,0 +1,16 @@
+# Asker on the wide layout — the west-Oslo commuter town a region dropdown collapses into Oslo.
+id: asker-desktop
+label: Asker, desktop
+market:
+  id: asker
+  country: NO
+  city: Asker
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.8331, 10.4392]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

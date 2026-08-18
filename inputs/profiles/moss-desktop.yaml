@@ -1,0 +1,16 @@
+# Moss at desktop width, where a county-wide banner still paints the whole of Viken as one Oslo commute.
+id: moss-desktop
+label: Moss, desktop
+market:
+  id: moss
+  country: NO
+  city: Moss
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.4339, 10.6575]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

@@ -4,7 +4,10 @@ Working brief for any coding agent in this repository. Vendor-neutral — Claude
 Code, Codex, Cursor and friends all read this file. `CLAUDE.md` points here.
 
 Depth lives in [`docs/`](docs/):
-[architecture](docs/architecture.md) · [PRD](docs/prd.md) · [gaps](docs/gaps.md) · [what shipped](development-update.md)
+[architecture](docs/architecture.md) · [PRD](docs/prd.md) · [gaps](docs/gaps.md) ·
+[audit 2026-08-18](docs/audit-2026-08-18.md) ·
+[the 100-session milestone](docs/milestone.md) · [SLA spec](docs/sla.md) ·
+[what shipped](development-update.md)
 
 ## What this is
 
@@ -51,26 +54,47 @@ CLI surface (`pnpm geoqa --help` is authoritative):
 ```bash
 pnpm geoqa profile list
 pnpm geoqa journey list
+pnpm geoqa tenant list
 pnpm geoqa browser verify [--engine agent-browser|playwright] [--geo <profile>]
-pnpm geoqa proxy verify --geo oslo-mobile [--provider http-proxy] [--engine …]
-pnpm geoqa run --url <url> --country NO --city Bergen --device mobile --journey browse --json
+pnpm geoqa proxy verify --geo oslo-mobile [--provider http-proxy] [--engine …] [--no-corroborate]
+pnpm geoqa run --url <url> --country NO --city Bergen --device mobile \
+               [--visitor anonymous|returning] --journey browse --json
 pnpm geoqa journey run --url <url> --geo <profile> --journey <id> \
                        [--engine agent-browser|playwright] [--seed <n>] \
-                       [--repeat <n>] [--var k=v]... [--headed]
-pnpm geoqa matrix run --url <url> --market <a,b,…> --journey <a,b,…> \
+                       [--repeat <n>] [--var k=v]... [--corroborate] [--headed]
+pnpm geoqa matrix run (--url <url> | --urls-file <path>) --market <a,b,…> --journey <a,b,…> \
                       [--device mobile,desktop] [--concurrency <n>] \
-                      [--dry-run] [--allow-writes] [--seed <n>] [--repeat <n>]
-pnpm geoqa experiment run EXP-001 --samples 10 [--geo …] [--url …]
+                      [--dry-run] [--allow-writes] [--seed <n>] [--repeat <n>] \
+                      [--corroborate] [--durable] [--temporal-address <host:port>]
+pnpm geoqa gate check --url <url> [--journey <id>] [--geo <profile>] \
+                      [--block-at critical|high|medium|low] [--min-confidence <n>] \
+                      [--min-geo-confidence <n>]
+pnpm geoqa keywords research --tenant <id> [--market <a,b,…>] [--budget <n>] [--limit <n>]
+pnpm geoqa runs list [--url …] [--geo …] [--journey …] [--verdict …] [--since <iso>] [--limit <n>]
+pnpm geoqa runs rebuild
+pnpm geoqa experiment run EXP-001 --samples 10 [--geo …] [--url …] \
+                         [--stability-window <duration>] [--stability-reads <n>] [--concurrency <n>]
 pnpm geoqa evidence inspect <runId>
 pnpm geoqa assist explain <runId> # claude -p after judgement; Max login, not API
 pnpm geoqa evidence prune [--apply] [--max-age <tier>=<days|null>]... \
                           [--max-total <bytes>] [--privacy-days <days|off>] \
                           [--sweep-tiers pass,warning] [--delete-unreadable]
-pnpm geoqa server [--port <n>]          # Watch + Live + POST /api/run (needs auth env)
+pnpm geoqa server [--port <n>] [--ui-root <path>] [--secure]  # Watch + Live + POST /api/run (needs auth env)
 pnpm geoqa server hash <password>       # prints GEOQA_ADMIN_PASSWORD_HASH + SESSION_SECRET
 pnpm dev                                # API :4180 + Vite :5173 together (loads .env; needs auth env)
 pnpm ui:dev                             # Vite HMR only; proxies /api to an already-running :4180
 ```
+
+`--tenant <id>` scopes a whole invocation to one customer
+(`inputs/tenants/<id>.yaml`): evidence moves under `<root>/<tenantId>/`, the
+cooldown store moves with it, a URL the tenant does not OWN is refused by origin
+(never by prefix), a market nobody asked for is refused, and the traffic/run
+QUOTA is checked before anything launches — a 430-page sweep against a tenant
+with 100 MB left is refused up front rather than dying at page 90 on a 407 that
+looks like a broken proxy. A traffic figure that could not be read is
+`unmeasured`, warns, and proceeds; the run ceiling still applies because that
+number is ours. Omitting `--tenant` is not an error, and no tenant rule applies
+then.
 
 Every command accepts `--json`, and **the JSON shape is the integration
 contract** — agent-to-agent callers must never parse the human-readable output. It
@@ -91,10 +115,12 @@ than silently running agent-browser.
 run prints which of the two it used; a malformed, unknown-key, credential-bearing
 or unreadable file exits 2 rather than falling back.
 
-Two keys documented in `geoqa.config.example.json` are **still inert**
-(`evidence.retention`, `network.cooldownMs`) — see
+Every key documented in `geoqa.config.example.json` is now honoured at a call
+site — `evidence.retention` and `network.cooldownMs` were the last two inert ones
+and travel on `RunSpec`/`ExecuteOptions` now (invariant 32). Read
 [gaps B-1](docs/gaps.md#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site)
-before adding a third.
+before adding a key: parsing one that nothing reads is the defect that module
+exists to prevent, and it has recurred twice inside it.
 
 Real-browser commands (`browser verify`, `proxy verify`, `journey run`,
 `matrix run`, `experiment run`) need `pnpm browser:install` first, or
@@ -105,25 +131,40 @@ neither — the whole suite runs against an injected fake runtime.
 
 The engine lives in `packages/engine/src`. `apps/ui` is the Vite console.
 `apps/console` is `pnpm dev` (loads `.env`, refuses without auth, spawns API + UI).
-Dependencies point one way; each layer knows only the one below it.
+Dependencies point one way; each layer knows only the one below it — the order of
+this list IS that direction, so a new module goes above everything it imports.
 
 ```
 cli/          parse → dispatch → print (index.ts is thin; commands.ts holds the judgement)
 assist/       claude -p AFTER judgement (explain a brief). Never imported by run/journeys/geo
 config/       geoqa.config.json: schema + credential guard + IMPORTED defaults
-watch/        operator surface: YAML spec → tick (when to start) → live board
+tenant/       registry (who owns what) → quota (refuse before launch) → usage-probe (the vendor's figure)
+watch/        operator surface: YAML spec → tick (when to start) → journey-pick (seeded) → live board
+server/       the operator console's HTTP side: auth → router → accept-run → watch-loop
 run/          context (RunSpec) → stages → execute (one run) → matrix (many, bounded)
+gate/         publish.ts — may this page go live? allow / block / unknown, DEFAULT DENY
+keywords/     where a tenant ranks per term × market; one real search credit per row, budgeted
+report/       Measured<T> + the view model and the trends the UI renders
+analysis/     site- and content-level SEO signals, computed over the history
+history/      runs.jsonl, a DERIVED cache over the evidence tree + the regressions in it
 journeys/     spec (YAML DSL) → engine (executes) → assertions (pure judgement) + random (seeded)
 geo/          profile → observe (both axes) → verify (three-valued verdicts)
 network/      GeoNetworkProvider (direct | http-proxy) + a persisted cooldown store
 evidence/     redact-at-write → store → manifest (tiered retention) → prune (shelf life)
 findings/     classify: step results → severity + confidence + how a human re-checks it
 confidence/   five independent axes, overall capped by the weakest
+search/       SERP → the fifth axis, or an honest null (serpapi behind SearchProvider)
 browser/      the ONLY layer that knows an engine exists
 experiments/  harness + definitions; per-experiment sampling logic in cli/samplers.ts
 temporal/     the same run/ stages, wrapped as durable Activities
 fixtures/     a local HTTP server: deliberately broken pages, a contact form, an /ipinfo route
 ```
+
+`apps/console/src/console.ts` starts the API and Vite together and **polls
+`GET /health` until the API answers** before it reports ready: Vite is up in
+tens of milliseconds and `tsx` + the watch attach is not, so starting both at
+once is how the first `/dashboard.json` hits ECONNREFUSED and a healthy server
+looks broken.
 
 `config/` sits below `cli/` and imports only constants and types from `geo/`,
 `network/` and `evidence/` — never the other way round, because a default must come
@@ -206,8 +247,10 @@ so occurrences can never exceed attempts. Per-activity retry policies and their
 reasoning are in `temporal/workflows.ts`; the durable path has no repeat of its own
 yet ([gaps B-4](docs/gaps.md)).
 **8. Confidence axes stay separate.** `overall` is weighted *and then capped by
-the weakest axis*. `searchObservation` is `null` and stays `null` until a SERP
-source exists — never invent a number for something unmeasured.
+the weakest axis*. `searchObservation` is a REAL number only when a SERP source
+produced one (`search/observation.ts`, `serpapi.ts` behind `SearchProvider`) and
+`null` for every run that did not ask — which is almost all of them. Never invent
+a number for something unmeasured, and never read the `null` as a zero.
 **9. Ordering in `run/stages.ts`.** `applyDeviceProfile` → `verifyEnvironment` →
 journey → evidence. The device must be applied before anything is observed (a
 mobile profile silently rendered at 1280px once, and every check passed), and geo
@@ -240,7 +283,9 @@ whole normalised name or its last camel/separator segment, never a substring:
 substring matching masked `MetricSpec.key` and destroyed the identity of every
 metric in every committed experiment summary, and going further would mask
 `className` (contains `ssn`). A HAR is written by the browser and never passes
-through this layer at all — see [gaps B-3](docs/gaps.md#b-3--har-is-recorded-now-and-still-absent-from-every-manifest).
+through this layer at all, which is why invariant 31 deletes it rather than
+redacting it — see
+[gaps B-3](docs/gaps.md#b-3--closed--the-har-is-recorded-listed-flagged-and-deleted-when-unretained).
 **12. Two execution modes, one implementation.** The CLI calls the
 `run/stages.ts` functions in sequence in one process; each Temporal Activity
 calls exactly one of them. A stage may never import from `temporal/` — that
@@ -285,8 +330,10 @@ be **absent**; an unknown key is **rejected** (a dropped `verifyEndoint` typo is
 same defect by accident); every default is **imported** from the constant the code
 already uses, never retyped, or left unset to mean "that module decides"; an absent
 file is fine and the run **says which it used**; a broken file is fatal rather than
-a quiet fall back to defaults. Two keys are currently inert and it is a tracked
-defect, not a precedent ([gaps B-1](docs/gaps.md#b-1--the-config-file-is-read-now--except-for-two-keys)).
+a quiet fall back to defaults. The last two inert keys are honoured now
+(invariant 32), and the history of how they got that way is the reason this rule
+reads as strictly as it does
+([gaps B-1](docs/gaps.md#b-1--closed--every-key-in-the-example-is-honoured-at-the-call-site)).
 **18. The layer map is a tool, not a memory.** `pnpm boundaries` is a CI gate of
 its own, before the tests. Adding a rule means adding a `comment` naming the
 failure it prevents, and **proving it fires** against a deliberate violation — a
@@ -319,9 +366,10 @@ run that turned out to need one. Reading instead of arming is a measurement erro
 not a shortcut: Chromium's event-timing buffer retains only entries slower than
 ~104ms, so an observer registered at vitals time reports a *fast* page as never
 interacted with. Where arming means the artifact exists on every run, the tier is
-honoured by **deleting** rather than by not starting — which HAR does not do yet,
-and is why a passing run currently leaves an unlisted `network.har` behind
-([gaps B-3](docs/gaps.md#b-3--har-is-recorded-now-and-still-absent-from-every-manifest)).
+honoured by **deleting** rather than by not starting — which is exactly what
+invariant 31 does for the HAR, and closed the unlisted `network.har` a passing run
+used to leave behind
+([gaps B-3](docs/gaps.md#b-3--closed--the-har-is-recorded-listed-flagged-and-deleted-when-unretained)).
 
 **22. A session key inside a vendor username contains no separator the vendor
 parses.** A residential proxy username is a `-`-delimited parameter list, so a
@@ -339,6 +387,13 @@ city-match rate mean anything you wanted. `compareCity` measures great-circle
 distance against `CITY_RADIUS_KM` when coordinates exist, which makes `mismatch`
 reachable. Without coordinates it falls back to names and keeps the old asymmetry:
 no distance, no proof of wrongness.
+
+Making the verdict a distance made the COORDINATE PARSE load-bearing, and
+`parseLoc` (`geo/observe.ts`) guards it: `Number("")` is `0`, not `NaN`, so a
+`loc` of `"59.9139,"` — a latitude with the longitude truncated — passed every
+finite/range check and placed the exit on the prime meridian, 600km into the North
+Sea, which is a proven `mismatch` against a correctly-routed Oslo exit. A missing
+half is `null`, never a zero.
 
 **24. A path that escapes its tenant's root is a security defect, not a bug.**
 Tenant ids are pattern-constrained AND every resolved path is re-checked with
@@ -467,6 +522,16 @@ the evidence described a context that had never visited the site (gaps D-6). The
 was a comment true of agent-browser (a daemon) recorded as a property of the model, and
 false for Playwright, which launches a browser per opener call. `prepare` stays separate
 because it opens no browser.
+
+**41. A periodic sweep DRAWS its journey, and the draw is seeded.** Expanding the
+full cartesian product every tick is five journeys × 26 cities × 2 URLs = 260
+residential sessions an hour, against a VPS pulse of 52. `watch/journey-pick.ts`
+takes one journey per city × URL cell instead, at
+`seedFrom(UTC-hour + market + url) % pool` over a sorted, de-duplicated pool — so
+"why did Oslo get `search` at 14:00?" is answered by that string rather than by
+chance. Device is in the cell and NOT in the seed, so a two-device watch runs the
+same journey from both. `Math.random` is banned here for invariant 15's reason: an
+unseeded pick cannot be replayed, and a seed is part of the evidence.
 
 ## Testing conventions
 
@@ -598,25 +663,39 @@ deliberately. A bare `evidence/` matches at any depth and silently excluded
 `src/evidence/` — the entire module — from the first push. Everything built
 locally because the files were on disk; a clean clone did not compile.
 
-One comment in there is now wrong: `/geoqa.config.json` is annotated "local config
-carries proxy credentials", and it cannot — credentials come from `GEOQA_PROXY_*`
-only and the loader refuses credential-shaped keys by name. It is ignored because it
-is a per-checkout override, which is a different reason.
+`/geoqa.config.json` is ignored because evidence roots, timeouts and retention are
+machine-local choices and a committed one would silently retune everyone else's
+runs — **not** because it carries credentials. It cannot: credentials come from
+`GEOQA_PROXY_*` only, and the loader refuses credential-shaped keys by name.
 
 ## Status
 
-Phase 0 (feasibility) complete; Phase 1 has landed as **capability, not yet as
-evidence**. Two engines, 16 profiles, human-paced journeys with seeded variation,
-journeys that fill forms and change state, a bounded matrix runner, a config file
-that is read, evidence pruning, an enforced layer map, a versioned wire contract.
-What has not happened is the measurement: EXP-007 has never run, the matrix has
-never been executed against a live site, and the central geographic claim still has
-no exit IP behind it.
+Phase 0 (feasibility) complete, and Phase 1 is capability **with** evidence behind
+its central claim now. Two engines, every market on both devices (`profile list`
+reads the directory — 39 markets and 11 journeys at the time of writing, and both
+counts move), human-paced journeys with seeded variation, journeys that fill forms
+and change state, a bounded matrix runner in both execution modes, per-tenant
+ownership and quota, a publish gate, a run history with regressions, evidence
+pruning, an enforced layer map, a versioned wire contract.
+
+The geographic claim has an exit IP behind it. `docs/milestone.md` records **102
+live sessions** through Decodo residential against `digilist.no` — 17 pages × 3
+markets × 2 devices, concurrency 4, replayable from base seed `20260813` — meeting
+three of four thresholds: country match 100%, journey completion 98%, evidence on
+every failed run 3/3, and **city match 84.3%, short of the ≥90% target**. That miss
+is the open measurement question, not the routing.
+
+EXP-007 has now been run once (2026-08-13): completion, verdict agreement and
+egress-hold all 100%, wall-clock factor 0.92 — and an overall verdict of
+`unmeasured`, because `peak-memory-per-session` produced no reading and invariant 5
+will not let four passes carry a fifth that was never taken.
 
 Deterministic, no LLM anywhere in the pipeline — a failing run must be
 reproducible.
 
-**Before starting anything, read [docs/gaps.md](docs/gaps.md).** One entry there is
-red on the current tree: the e2e suite asserts a trace filename the Playwright
-engine no longer writes. It is one filename, and it is ahead of whatever you were
-about to do.
+**Before starting anything, read [docs/audit-2026-08-18.md](docs/audit-2026-08-18.md),
+then [docs/gaps.md](docs/gaps.md).** The audit is the fresher of the two and says
+where the older one is wrong: `gaps.md` pins itself to `9f10d48`, and several
+entries it calls open — including the B-10 trace filename its header points at as
+"red right now" — are closed in the tree. What IS red is the quota test, and the
+audit's first finding is why.

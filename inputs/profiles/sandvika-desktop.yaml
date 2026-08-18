@@ -1,0 +1,16 @@
+# Sandvika on the wide layout — Sandvika Storsenter and the E16, neither of which an Oslo-only hero mentions.
+id: sandvika-desktop
+label: Sandvika, desktop
+market:
+  id: sandvika
+  country: NO
+  city: Sandvika
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.89, 10.5264]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

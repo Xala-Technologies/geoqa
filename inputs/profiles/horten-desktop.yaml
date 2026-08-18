@@ -1,0 +1,16 @@
+# Horten at desktop width, where a Vestfold tourism strip still opens on Tonsberg.
+id: horten-desktop
+label: Horten, desktop
+market:
+  id: horten
+  country: NO
+  city: Horten
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.4172, 10.4834]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

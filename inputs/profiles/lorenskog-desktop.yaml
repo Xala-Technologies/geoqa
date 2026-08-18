@@ -1,0 +1,16 @@
+# Lorenskog at desktop width, where a map of Akershus venues still pins every result on Oslo S.
+id: lorenskog-desktop
+label: Lorenskog, desktop
+market:
+  id: lorenskog
+  country: NO
+  city: Lorenskog
+  language: nb-NO
+  timezone: Europe/Oslo
+  currency: NOK
+  coordinates: [59.8989, 10.9642]
+device:
+  id: desktop
+  kind: desktop
+  viewport: { width: 1440, height: 900 }
+visitorType: anonymous

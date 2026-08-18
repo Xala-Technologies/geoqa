@@ -200,11 +200,15 @@ export function asset(path: string, deps: RouterDeps): ServerResponse {
       // The dashboard's data must never be served from cache: a console showing yesterday's
       // runs while claiming to be live is the one failure a monitoring tool cannot have.
       "cache-control": wanted.endsWith(".json") || wanted === "/index.html" ? "no-store" : "public, max-age=3600",
-      // The app is self-contained: no CDN, no inline event handlers, no framing.
+      // Self-contained except the two typefaces the shell names. Google Fonts
+      // must be listed: style-src 'self' blocked the stylesheet and every
+      // page rendered in the fallback stack. script-src 'self' is the theme
+      // boot file — an inline tag was blocked by default-src and the first
+      // paint ignored the stored theme.
       // img-src must name data: — frames are data URLs after a credentialed
       // JSON fetch, and default-src 'self' blocked those as a third-party
       // image. The visit page then showed a broken icon next to a full log.
-      "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+      "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'",
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer",
     },

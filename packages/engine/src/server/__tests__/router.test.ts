@@ -252,12 +252,23 @@ describe("static assets", () => {
   it("sets the security headers the app needs to stay self-contained", () => {
     const d = deps();
     const out = route(req({ path: "/", headers: withSession(d) }), d);
-    expect(out.headers["content-security-policy"]).toContain("default-src 'self'");
-    expect(out.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    const csp = out.headers["content-security-policy"] ?? "";
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
     // Frames load as data URLs (the session cookie is on the JSON fetch, not
     // on <img src>). default-src 'self' alone blocks those, so the visit page
     // showed a broken icon next to a complete step log.
-    expect(out.headers["content-security-policy"]).toContain("img-src 'self' data:");
+    expect(csp).toContain("img-src 'self' data:");
+    // The shell loads Familjen Grotesk and IBM Plex Mono from Google Fonts.
+    // A policy that names only 'self' blocked the stylesheet and the typefaces
+    // fell back to Avenir / system mono — the page looked unsigned-in even
+    // after a successful login.
+    expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
+    expect(csp).toContain("font-src 'self' https://fonts.gstatic.com");
+    // Theme boot is a file, not an inline tag. default-src 'self' already
+    // covers /theme-boot.js; naming script-src keeps a future inline from
+    // silently shipping.
+    expect(csp).toContain("script-src 'self'");
     expect(out.headers["x-content-type-options"]).toBe("nosniff");
   });
 });

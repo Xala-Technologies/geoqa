@@ -36,6 +36,14 @@ markets:
     narvik,
     kongsberg,
     svolvaer,
+    moss,
+    asker,
+    lorenskog,
+    sandvika,
+    horten,
+    steinkjer,
+    lillestrom,
+    sola,
   ]
 # An allowlist, and it is a security control rather than convenience. This engine
 # drives a real browser from residential IPs on a schedule; a target it was not
@@ -56,9 +64,9 @@ proxyCredentials: null
 # account's figure describes every tenant on it.
 proxySubUser: GEOQA_SUBUSER_DIGILIST
 quota:
-  # Measured, not guessed: a 430-page sweep of digilist.no costs roughly 0.5 GB, so
-  # 5 GB is ten full sweeps a month. The number exists because one sweep once
-  # consumed an entire allowance and every later run returned an opaque 407.
-  trafficMb: 5000
-  runsPerDay: 200
+  # Sized for the hourly watch pulse: 34 cities × 2 URLs × 1 journey = 68
+  # runs/hour → 1,632/day. 1,800 leaves room for a console "Run now".
+  # Traffic is 1 MB per page load × 1,632 × 30 days ≈ 49 GB.
+  trafficMb: 50000
+  runsPerDay: 1800
 retentionDays: 30
