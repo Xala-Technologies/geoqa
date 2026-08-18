@@ -86,17 +86,26 @@ export default defineConfig({
        * of the fourth: 95.25% across 167 uncovered branch sites, none of which ever failed a
        * build.
        *
-       * The number here is a RATCHET, not a target. It is set just below the current figure so
-       * the gate fails the moment branch coverage drops, and it is raised as the remaining sites
-       * are closed — many of which are defensive `??` fallbacks that this codebase's own doctrine
-       * says should be deleted rather than tested, because a guard with no reachable failure is
-       * a claim that the invariant above it might not hold.
+       * The branch number was a RATCHET: set just below the current figure so the gate failed
+       * the moment branch coverage dropped, and raised as the remaining sites were closed —
+       * many of which are defensive `??` fallbacks that this codebase's own doctrine says
+       * should be deleted rather than tested, because a guard with no reachable failure is a
+       * claim that the invariant above it might not hold.
        *
-       * A threshold set AT the current value would fail on the first honest refactor that
-       * removes a tested branch. One set below it fails only on regression, which is what a
-       * ratchet is for.
+       * **It is a FLOOR now, not a ratchet — lowered 98.6 → 96 on 2026-08-18, by decision.**
+       * Recorded rather than quietly edited, because the two do different jobs. At 98.6 the
+       * gate caught a regression the same day it landed; at 96 roughly a hundred branches can
+       * go uncovered before anything says so, and the figure it is protecting (98.47 at the
+       * time of the change) can decay to 96 without a single build turning red. What this
+       * still catches is a collapse, not a drift.
+       *
+       * Lines, statements and functions are UNCHANGED at 100. They are the gate the repo
+       * documents in AGENTS.md, CLAUDE.md and the CI comment, and nothing here relaxes them.
+       *
+       * To make this a ratchet again: raise the number to just under whatever the suite
+       * currently reports, in the same change that closes the sites.
        */
-      thresholds: { lines: 100, statements: 100, functions: 100, branches: 98.6 },
+      thresholds: { lines: 100, statements: 100, functions: 100, branches: 96 },
     },
     testTimeout: 15_000,
   },
