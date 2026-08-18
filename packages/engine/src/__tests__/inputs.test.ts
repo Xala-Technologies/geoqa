@@ -117,7 +117,7 @@ describe("tenant digilist", () => {
     expect(watch.value.allowWrites).toBe(false);
     expect(watch.value.enabled).toBe(true);
     expect(watch.value.mode).toBe("periodic");
-    expect(watch.value.everyMinutes).toBe(90);
+    expect(watch.value.everyMinutes).toBe(180);
     expect(watch.value.devices).toEqual(["desktop"]);
     expect(watch.value.targets).toEqual([
       "https://digilist.no",

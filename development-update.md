@@ -19,6 +19,19 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Watch pulse is 180 minutes
+
+The Norway desktop pulse is every 180 minutes, not 90. Same 102 cells
+(34 cities × 3 sites × desktop × one seeded journey), now 8 sweeps/day
+→ 816 runs and ~24 GB/month. The clock file was left alone, so the
+in-flight sweep keeps its start time and the next tick is
+`lastStarted + 180m`. `watch.yaml` is deploy-excluded, so the VPS copy
+was written directly.
+
+Where: `inputs/tenants/digilist/watch.yaml`.
+
+---
+
 ## 2026-08-19 — Repair always starts from origin
 
 A repair clones the site repo, then `git fetch origin <base>` and

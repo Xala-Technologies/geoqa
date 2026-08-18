@@ -76,11 +76,11 @@ proxyCredentials: null
 # account's figure describes every tenant on it.
 proxySubUser: GEOQA_SUBUSER_DIGILIST
 quota:
-  # Sized for the 90-minute pulse: 34 cities × 3 URLs × desktop × 1 journey = 102
-  # cells × 16 sweeps/day = 1,632 runs. 1,800 leaves ~10% for a console
-  # "Run now". Traffic is 1 MB × 1,632 × 30 days ≈ 49 GB against a 50 GB
+  # Sized for the 180-minute pulse: 34 cities × 3 URLs × desktop × 1 journey = 102
+  # cells × 8 sweeps/day = 816 runs. 1,800 leaves headroom for a console
+  # "Run now". Traffic is 1 MB × 816 × 30 days ≈ 24 GB against a 50 GB
   # account. Hourly on three sites would be 2,448/day and ~73 GB — over
-  # the account — so the tick is 90 minutes on purpose.
+  # the account — so the tick is 180 minutes on purpose.
   trafficMb: 50000
   runsPerDay: 1800
 retentionDays: 30

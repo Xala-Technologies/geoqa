@@ -3,14 +3,14 @@
 #
 # 34 cities × 3 URLs × desktop × 1 seeded journey = 102 cells. Hourly that is 2,448
 # runs/day and ~73 GB/month against a 50 GB Decodo account, so the tick is
-# 90 minutes (16 sweeps/day → 1,632 runs, ~49 GB). The draw is UTC-hour +
+# 180 minutes (8 sweeps/day → 816 runs, ~24 GB). The draw is UTC-hour +
 # market + url — not Math.random(). contact-form / explore stay off until
 # allowWrites is on. returning-visitor is off the pool (audit 2026-08-18 §2).
 # dev.digilist.no stays off this pulse (staging).
 tenantId: digilist
 enabled: true
 mode: periodic
-everyMinutes: 90
+everyMinutes: 180
 restSeconds: 60
 markets:
   - oslo
