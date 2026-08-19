@@ -15,10 +15,9 @@ import { hashPassword, readAuthConfig, TOKEN_ENV } from "./auth.js";
 import { assetReader, createGeoqaServer } from "./listen.js";
 import { buildSettings } from "./settings.js";
 import { consoleEvidenceRoot, loadTenant } from "../tenant/registry.js";
-import { loadJourney } from "../journeys/spec.js";
-import { journeysRoot, profilesRoot, tenantsRoot } from "../repo.js";
+import { profilesRoot, tenantsRoot } from "../repo.js";
 import { loadConfig, configPath } from "../config/load.js";
-import { dashboardBuild, defaultDeps, findingsFile, findingsRepair, renderFindingsRepair } from "../cli/commands.js";
+import { dashboardBuild, defaultDeps, findingsFile, findingsRepair, journeyList, renderFindingsRepair } from "../cli/commands.js";
 import { createRepairGate } from "./repair-control.js";
 import { nodeHistoryFs } from "../history/store.js";
 import { attachWatch } from "./watch-loop.js";
@@ -44,25 +43,6 @@ const nodePackageFs: PackageFs = {
   readBytes: (p) => readFileSync(p),
 };
 
-/** Every journey on disk, with what a caller must supply to run it. */
-function journeys(repoRoot: string): { id: string; title: string; writes: boolean; requiredVars: string[] }[] {
-  const dir = journeysRoot(repoRoot);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".yaml"))
-    .map((f) => {
-      const loaded = loadJourney(path.join(dir, f), (p) => readFileSync(p, "utf8"));
-      if (!loaded.ok) return null;
-      const raw = readFileSync(path.join(dir, f), "utf8");
-      // The variables a run must supply, read from the file rather than the parsed journey:
-      // `resolveSteps` leaves an unfilled placeholder intact, so the placeholders ARE the
-      // contract, and `{target}` is supplied by every run.
-      const vars = [...new Set([...raw.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? ""))].filter((v) => v !== "target" && v !== "");
-      return { id: loaded.value.id, title: loaded.value.title, writes: loaded.value.writes === true, requiredVars: vars };
-    })
-    .filter((j): j is { id: string; title: string; writes: boolean; requiredVars: string[] } => j !== null);
-}
-
 export function startServer(options: StartOptions): { ok: true; close: () => void } | { ok: false; error: string } {
   const auth = readAuthConfig(options.env);
   if (!auth.ok) return { ok: false, error: auth.error };
@@ -73,9 +53,15 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
 
   const markets = marketsOnDisk(options.repoRoot);
   const tenants = tenantsOnDisk(options.repoRoot);
-  const listedJourneys = journeys(options.repoRoot);
   const tenant = tenants[0];
   const evidenceRoot = consoleEvidenceRoot(options.evidenceRoot, tenant?.id);
+  const commandDeps = defaultDeps(options.repoRoot, {
+    evidenceRoot,
+    env: options.env,
+    log: options.log,
+    ...(tenant !== undefined ? { tenantId: tenant.id } : {}),
+  });
+  const listedJourneys = journeyList(commandDeps).journeys.filter((j) => !j.title.startsWith("INVALID:"));
   const watch =
     tenant === undefined
       ? null
@@ -94,12 +80,6 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
           },
         });
   const gate = createRepairGate();
-  const commandDeps = defaultDeps(options.repoRoot, {
-    evidenceRoot,
-    env: options.env,
-    log: options.log,
-    ...(tenant !== undefined ? { tenantId: tenant.id } : {}),
-  });
   const server = createGeoqaServer({
     auth: auth.config,
     now: Date.now,

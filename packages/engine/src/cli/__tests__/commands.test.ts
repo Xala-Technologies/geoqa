@@ -250,6 +250,15 @@ describe("list commands", () => {
     expect(journeys.every((j) => j.steps > 0)).toBe(true);
   });
 
+  it("lists a tenant-only writes journey such as login, which the shared folder does not have", () => {
+    const shared = journeyList(deps()).journeys.map((j) => j.id);
+    expect(shared).not.toContain("login");
+    const scoped = journeyList(deps({ tenantId: "digilist" })).journeys;
+    const login = scoped.find((j) => j.id === "login");
+    expect(login).toMatchObject({ writes: true, requiredVars: ["email"] });
+    expect(scoped.map((j) => j.id)).toContain("login-reachable");
+  });
+
   it("marks an invalid file INVALID rather than throwing the whole listing away", () => {
     const brokenRoot = mkdtempSync(path.join(tmpdir(), "geoqa-broken-"));
     const { mkdirSync, writeFileSync } = require("node:fs") as typeof import("node:fs");

@@ -19,6 +19,19 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Watch sees tenant journeys
+
+`login` lives under `inputs/tenants/digilist/journeys/`. The console
+listed only `inputs/journeys/`, so every e2e tick refused `no such e2e
+journey: login` and, when both clocks were due, blocked the geo pulse
+too. Watch now uses the same tenant-first listing as `journey list`.
+A refused e2e no longer cancels a due pulse or retries every five
+seconds.
+
+Where: `cli/commands.ts` `journeyList`, `server/start.ts`, `server/watch-loop.ts`.
+
+---
+
 ## 2026-08-19 — Digest mail is a brief, not a spreadsheet
 
 The daily mail now opens with one summary paragraph, groups failures

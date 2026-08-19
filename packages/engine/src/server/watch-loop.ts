@@ -8,7 +8,7 @@
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { controlRun, defaultDeps, findingsFile, findingsRepair, loginVarsFromEnv, matrixRun, renderFindingsFile, renderFindingsRepair, resolveProfileId } from "../cli/commands.js";
+import { controlRun, defaultDeps, findingsFile, findingsRepair, loginVarsFromEnv, matrixRun, renderFindingsFile, renderFindingsRepair, resolveDataPath, resolveProfileId } from "../cli/commands.js";
 import { liveDashboardUrl } from "../cli/events.js";
 import { loadJourney } from "../journeys/spec.js";
 import { acceptRun, type AcceptedRun } from "./accept-run.js";
@@ -20,7 +20,7 @@ import { addTarget, removeTarget } from "../watch/targets.js";
 import { applyWatchPatch, dropOrphanTargetJourneys, loadWatch, saveWatch, watchPath, type WatchAllowed } from "../watch/store.js";
 import { expandMatrix } from "../run/matrix.js";
 import { emptyClock, loadWatchClock, saveWatchClock, watchClockPath } from "../watch/clock.js";
-import { journeysRoot, tenantsRoot } from "../repo.js";
+import { tenantsRoot } from "../repo.js";
 import { nextSlice } from "../watch/cursor.js";
 import { expandWatchCells, pickSeededCells } from "../watch/journey-pick.js";
 import { parseWatch, type WatchSpec } from "../watch/spec.js";
@@ -159,17 +159,28 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
   };
 
   const launch = async (spec: WatchSpec, decision: Extract<TickDecision, { action: "start" }>): Promise<void> => {
-    const e2ePlan =
+    let e2ePlan =
       spec.e2e.journeys.length > 0
         ? planE2e(spec, options.tenant, options.journeys)
         : { ok: true as const, cells: [], writes: false };
     if (!e2ePlan.ok) {
+      // A missing tenant journey must not also cancel the geo pulse, and must
+      // not retry every tick — that filled the watch log this morning.
       refuse(e2ePlan.error);
-      return;
+      if (decision.e2e) {
+        lastE2eStartedMs = options.now();
+        persistClock();
+      }
+      if (!decision.pulse) return;
+      e2ePlan = { ok: true, cells: [], writes: false };
     }
     const planned = decision.pulse ? planSweep(spec, options.tenant, options.journeys) : null;
     if (planned !== null && !planned.ok) {
       refuse(planned.error);
+      if (decision.pulse) {
+        lastStartedMs = options.now();
+        persistClock();
+      }
       return;
     }
     inFlight += 1;
@@ -501,8 +512,9 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
           extraTargets: current().targets,
           resolveProfile: (selection) => resolveProfileId(deps, selection),
           loadJourney: (id) => {
-            const file = path.join(journeysRoot(options.repoRoot), `${id}.yaml`);
-            const loaded = loadJourney(file);
+            const file = resolveDataPath(deps, "journeys", id);
+            if (!file.ok) return file;
+            const loaded = loadJourney(file.value);
             return loaded.ok ? { ok: true, writes: loaded.value.writes === true } : loaded;
           },
         });

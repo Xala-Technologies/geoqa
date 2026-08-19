@@ -335,6 +335,14 @@ export function loadJourney(
  * than replaced with an empty string — `open ""` would navigate somewhere
  * meaningless and report a page failure for what is really a config typo.
  */
+/**
+ * Placeholders a caller must supply. `{target}` is omitted because every
+ * run already has one. Duplicates collapse — `{email}` twice is still one var.
+ */
+export function requiredVarsFromSource(source: string): string[] {
+  return [...new Set([...source.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? ""))].filter((v) => v !== "target" && v !== "");
+}
+
 export function interpolate(input: string, vars: Record<string, string>): string {
   return input.replace(/\{(\w+)\}/g, (whole, name: string) => vars[name] ?? whole);
 }

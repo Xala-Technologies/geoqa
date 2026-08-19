@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { interpolate, loadJourney, parseJourney, parseStep, resolveSteps, type Step } from "../spec.js";
+import { interpolate, loadJourney, parseJourney, parseStep, requiredVarsFromSource, resolveSteps, type Step } from "../spec.js";
 import { findRepoRoot, journeysRoot } from "../../repo.js";
 
 const repoRoot = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
@@ -179,6 +179,13 @@ describe("the journeys that actually ship", () => {
     if (!out.ok) throw new Error(out.errors.join("\n"));
     expect(out.value.id).toBe(file.replace(/\.yaml$/, ""));
     expect(out.value.steps.length).toBeGreaterThan(2);
+  });
+});
+
+describe("requiredVarsFromSource", () => {
+  it("names placeholders a run must supply and ignores target", () => {
+    expect(requiredVarsFromSource("fill {email} on {target} then {email}")).toEqual(["email"]);
+    expect(requiredVarsFromSource("no placeholders")).toEqual([]);
   });
 });
 

@@ -56,7 +56,7 @@ import { observeBrowser, observeNetwork, observeNetworkVia, DEFAULT_VERIFY_ENDPO
 import { loadGeoProfile, toSessionConfig, type ParseResult } from "../geo/profile.js";
 import type { GeoProfile } from "../geo/types.js";
 import { verifyGeo, withCorroboration } from "../geo/verify.js";
-import { loadJourney } from "../journeys/spec.js";
+import { loadJourney, requiredVarsFromSource } from "../journeys/spec.js";
 import { seedFrom } from "../journeys/random.js";
 import { redactProxyUrl, selectProvider, type TcpProbe } from "../network/provider.js";
 import type { DurableMatrixResult } from "../temporal/client.js";
@@ -762,11 +762,22 @@ export function resolveProfileId(
   return { ok: true, id: (matches[0] as { id: string }).id };
 }
 
-export function journeyList(deps: CommandDeps): { journeys: { id: string; title: string; steps: number }[] } {
+export function journeyList(deps: CommandDeps): {
+  journeys: { id: string; title: string; steps: number; writes: boolean; requiredVars: string[] }[];
+} {
   const journeys = availableData(deps, "journeys").map(({ file, dir }) => {
-    const loaded = loadJourney(path.join(dir, file));
-    if (!loaded.ok) return { id: file.replace(/\.yaml$/, ""), title: `INVALID: ${loaded.errors[0]}`, steps: 0 };
-    return { id: loaded.value.id, title: loaded.value.title, steps: loaded.value.steps.length };
+    const full = path.join(dir, file);
+    const loaded = loadJourney(full);
+    if (!loaded.ok) {
+      return { id: file.replace(/\.yaml$/, ""), title: `INVALID: ${loaded.errors[0]}`, steps: 0, writes: false, requiredVars: [] };
+    }
+    return {
+      id: loaded.value.id,
+      title: loaded.value.title,
+      steps: loaded.value.steps.length,
+      writes: loaded.value.writes === true,
+      requiredVars: requiredVarsFromSource(readFileSync(full, "utf8")),
+    };
   });
   return { journeys };
 }
