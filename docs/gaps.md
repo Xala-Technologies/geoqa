@@ -1282,6 +1282,67 @@ is visible in the step detail rather than inferred.
 
 Where: `browser/playwright-launch.ts` (`DEFAULT_ACTION_TIMEOUT_MS`).
 
+**Amended by [C-21](#c-21--closed--the-navigation-budget-is-sized-for-a-residential-egress-now).**
+"Navigations keep the long budget" above assumed Playwright's 30-second default
+*was* the long budget. It was not long enough, and the shortfall was measured.
+
+---
+
+### C-21 · CLOSED — the navigation budget is sized for a residential egress now
+
+C-9 split the action timeout off from the navigation one and left navigations on
+Playwright's implicit 30-second default, on the reasoning that a cold page on a
+residential proxy "legitimately takes ten seconds to load". The estimate was three
+times short, and the run that established it is
+`run_1787087183173_stavanger-desktop-search-9` — J03 against `digilist.no` from
+`stavanger-desktop`, filed as issue #53:
+
+```
+! land on the page                [critical]  ERROR  — open failed: timeout —
+                                                       page.goto: Timeout 30000ms exceeded
+  (the remaining 25 steps: skipped)
+```
+
+Nothing on the page was wrong. Its own HAR records 28 requests, every one of them
+200 or 206:
+
+| | |
+|---|---|
+| document | 200, TTFB 1,169ms |
+| `assets/index-*.js` | 200, **85.8 seconds** |
+| `fonts/newsreader-latin-italic.woff2` | 200, 55.1 seconds |
+| `load` fired | **89.5 seconds** |
+
+The observed egress latency for the run was 2,124ms. The site was being pulled
+down a slow residential line, `goto` waits for `load`, and it gave up at 30 seconds
+on a navigation that finished at 89.5.
+
+`domcontentloaded` would not have rescued it. digilist ships Vite module scripts,
+which block DCL, so DCL landed at roughly 87 seconds too — the wait is the bundle,
+not the fonts and images after it.
+
+The damage is C-9's shape and worse in degree. `open` is state-changing, so its
+failure skipped the other 25 steps, and `ERROR` outranks everything
+([R-19](prd.md)) — so a run with nothing wrong in it was filed as an URGENT
+*"geoqa could not complete land on the page"*, which sends a reader after a broken
+proxy. The engine blamed itself for a slow line.
+
+**What it does now.** `DEFAULT_NAVIGATION_TIMEOUT_MS = 120_000` in
+`browser/playwright-launch.ts`, applied to `goto` and `reload` only; actions keep
+C-9's 8 seconds. Two minutes rather than the 89.5 that were measured, because one
+sample is a floor and not a budget — a value fitted to it fails on the next
+slightly slower run. It is affordable because a navigation that truly hangs costs
+this once, at step 0, rather than once per step.
+
+**Residue.** The `screenshot` taken after the failed navigation timed out at 30
+seconds of its own ("waiting for fonts to load"), which is why that run's manifest
+lists `missing: ["screenshot"]` at 89% completeness. Not addressed here: with the
+navigation no longer abandoned mid-load, the fonts are in by the time a frame is
+taken. If a screenshot times out on a run whose navigation *succeeded*, that is a
+separate budget and should get its own entry.
+
+Where: `browser/playwright-launch.ts` (`DEFAULT_NAVIGATION_TIMEOUT_MS`).
+
 ### C-10 · digilist.no: the search box is reachable at no profile width (live finding)
 
 Not a geoqa gap — a **finding about tenant zero**, recorded here because it is the
