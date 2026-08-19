@@ -419,12 +419,15 @@ step. Zero stays a REAL reading where zero is meaningful: a CLS of 0 means nothi
 moved.
 
 **27. An action's timeout is not a navigation's.** `DEFAULT_ACTION_TIMEOUT_MS =
-8_000` for `click`/`fill`/`selectOption`/`check`; navigations keep the long budget.
-A cold page on a residential proxy legitimately takes ten seconds, so a short
-navigation timeout would invent failures on healthy sites — but an element an action
-names either resolved during that load or is not coming. The 30 seconds this
-replaces were not merely wasted: `ERROR` outranks `FAIL`, so they ended by
-relabelling *the search box is not visible* as *we could not verify*.
+8_000` for `click`/`fill`/`selectOption`/`check`; `DEFAULT_NAVIGATION_TIMEOUT_MS =
+120_000` for `goto`/`reload`. Neither is Playwright's implicit 30 seconds, and the
+cost of that one number was measured in both directions. Too long for an action: an
+element it names either resolved during the load or is not coming, and `ERROR`
+outranks `FAIL`, so waiting relabelled *the search box is not visible* as *we could
+not verify* ([C-9](gaps.md)). Too short for a navigation: digilist.no through the
+residential gateway fired `load` at 89.5 seconds with every request returning 200,
+and `goto` abandoned it at 30 — a healthy page filed as URGENT *could not land*
+([C-21](gaps.md)).
 
 **28. An ambiguous action is RECORDED, never refused.** A `click`/`fill`/`select`/
 `check` whose selector matched more than one VISIBLE element gets a note in its step

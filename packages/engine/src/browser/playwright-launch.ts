@@ -73,6 +73,8 @@ export interface PlaywrightContextOptions {
   /** Override the visibility budget. Lowered in tests so they stay fast. */
   visibilityTimeoutMs?: number;
   actionTimeoutMs?: number;
+  /** Override the navigation budget. Lowered in tests so a hung `goto` cannot stall the suite. */
+  navigationTimeoutMs?: number;
 }
 
 /**
@@ -160,10 +162,10 @@ export const DEFAULT_VISIBILITY_TIMEOUT_MS = 5_000;
 /**
  * How long an ACTION may wait, as against a navigation.
  *
- * Playwright's default is 30 seconds for everything, and that is right for `goto` — a slow
- * market really can take twenty seconds, and a run that gave up early would report a site
- * defect that is really a network. It is wrong for a click or a fill, and the cost was
- * measured: J06 asserted `selector-visible` on a search box, the check correctly FAILED
+ * Playwright's default is 30 seconds for everything. That is far too long for a click or a
+ * fill — and, as `DEFAULT_NAVIGATION_TIMEOUT_MS` below records, too SHORT for a `goto`
+ * through a residential egress. One number was never going to serve both. The cost of the
+ * action half was measured: J06 asserted `selector-visible` on a search box, the check correctly FAILED
  * because digilist hides it at every profile width, and the `fill` on the same selector then
  * waited the full thirty seconds for an element the run had already established was not there.
  *
@@ -174,6 +176,38 @@ export const DEFAULT_VISIBILITY_TIMEOUT_MS = 5_000;
  * fails as a finding rather than as an outage.
  */
 export const DEFAULT_ACTION_TIMEOUT_MS = 8_000;
+
+/**
+ * How long a NAVIGATION may wait, which is a different question from an action.
+ *
+ * Playwright's implicit 30-second default was never sized for this engine's egress, and the
+ * gap was measured. Run `run_1787087183173_stavanger-desktop-search-9` — J03 against
+ * digilist.no from the `stavanger-desktop` profile, through the residential gateway, observed
+ * egress latency 2,124ms — died at step 0 with `open failed: timeout — page.goto: Timeout
+ * 30000ms exceeded`, and the run's own HAR says the page was fine:
+ *
+ *   document               200, TTFB 1,169ms
+ *   assets/index-*.js      200, 85.8 SECONDS
+ *   newsreader italic      200, 55.1 seconds
+ *   `load` fired at        89.5 seconds
+ *
+ * Nothing failed. Every one of the 28 requests returned 200 or 206. The site was simply being
+ * pulled down a slow residential line, and `goto` waits for `load`, so it gave up at 30
+ * seconds on a navigation that completed at 89.5. `domcontentloaded` would not have rescued
+ * it either: digilist ships Vite module scripts, which block DCL, so DCL was ~87 seconds too.
+ *
+ * The damage is the same shape as C-9's and worse in degree. `open` is a state-changing step,
+ * so its failure SKIPS the remaining 25 steps, and `ERROR` outranks everything — so a run that
+ * had nothing wrong with it was filed as an URGENT "geoqa could not complete land on the
+ * page", sending a reader after a broken proxy. The engine blamed itself for a slow line.
+ *
+ * Two minutes, not the 89.5 seconds that were measured: one sample is a floor, not a budget,
+ * and a value fitted to it fails again on the next slightly slower run. It stays generous for
+ * the reason the visibility budget does — the cost of waiting is a slow run, the cost of not
+ * waiting is a fabricated defect — and it is affordable because a navigation that truly hangs
+ * costs this once, at step 0, rather than once per step.
+ */
+export const DEFAULT_NAVIGATION_TIMEOUT_MS = 120_000;
 
 const asLocator = (page: Page, selector: string, visibilityTimeoutMs: number, actionTimeoutMs: number): PwLocator => {
   const all = page.locator(selector);
@@ -254,12 +288,17 @@ const asLocator = (page: Page, selector: string, visibilityTimeoutMs: number, ac
   };
 };
 
-const asPage = (page: Page, visibilityTimeoutMs: number, actionTimeoutMs: number): PwPage => ({
+const asPage = (
+  page: Page,
+  visibilityTimeoutMs: number,
+  actionTimeoutMs: number,
+  navigationTimeoutMs: number,
+): PwPage => ({
   goto: async (url) => {
-    await page.goto(url);
+    await page.goto(url, { timeout: navigationTimeoutMs });
   },
   reload: async () => {
-    await page.reload();
+    await page.reload({ timeout: navigationTimeoutMs });
   },
   title: () => page.title(),
   url: () => page.url(),
@@ -419,7 +458,12 @@ export async function openContext(browser: Browser, options: PlaywrightContextOp
   });
 
   return {
-    page: asPage(page, options.visibilityTimeoutMs ?? DEFAULT_VISIBILITY_TIMEOUT_MS, options.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS),
+    page: asPage(
+      page,
+      options.visibilityTimeoutMs ?? DEFAULT_VISIBILITY_TIMEOUT_MS,
+      options.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS,
+      options.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS,
+    ),
     context: asContext(context),
     observed,
     deviceName: options.deviceName,
