@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findingHref, routeFromHash } from "./route.ts";
+import { decodeHashRest, findingHref, routeFromHash } from "./route.ts";
 
 describe("routeFromHash", () => {
   it("opens a finding by its ticket key, even when the key has spaces and colons", () => {
@@ -15,5 +15,15 @@ describe("routeFromHash", () => {
     expect(routeFromHash("#/unknown")).toEqual({ view: "runs" });
     expect(routeFromHash("#/")).toEqual({ view: "runs" });
     expect(routeFromHash("#/run")).toEqual({ view: "runs" });
+  });
+
+  it("opens a geography page by its URL, encoded or raw", () => {
+    const target = "https://digilist.no/login";
+    expect(routeFromHash(`#/geography/${encodeURIComponent(target)}`)).toEqual({
+      view: "geography",
+      pageTarget: target,
+    });
+    expect(routeFromHash(`#/geography/${target}`)).toEqual({ view: "geography", pageTarget: target });
+    expect(decodeHashRest(["%"])).toBe("%");
   });
 });

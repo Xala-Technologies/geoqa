@@ -27,10 +27,19 @@ const VIEWS: ViewId[] = [
   "settings",
 ];
 
-export type Route = { view: ViewId; runId?: string; liveId?: string; findingKey?: string };
+export type Route = { view: ViewId; runId?: string; liveId?: string; findingKey?: string; pageTarget?: string };
 
 export function findingHref(key: string): string {
   return `#/findings/${encodeURIComponent(key)}`;
+}
+
+export function decodeHashRest(rest: string[]): string {
+  const joined = rest.join("/");
+  try {
+    return decodeURIComponent(joined);
+  } catch {
+    return joined;
+  }
 }
 
 export function routeFromHash(hash: string): Route {
@@ -39,7 +48,10 @@ export function routeFromHash(hash: string): Route {
   if (head === "run" && rest.length > 0) return { view: "runs", runId: rest.join("/") };
   if (head === "live" && rest.length > 0) return { view: "live", liveId: rest.join("/") };
   if (head === "findings" && rest.length > 0) {
-    return { view: "findings", findingKey: decodeURIComponent(rest.join("/")) };
+    return { view: "findings", findingKey: decodeHashRest(rest) };
+  }
+  if (head === "geography" && rest.length > 0) {
+    return { view: "geography", pageTarget: decodeHashRest(rest) };
   }
   return { view: VIEWS.some((id) => id === head) ? (head as ViewId) : "runs" };
 }

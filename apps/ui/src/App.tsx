@@ -26,6 +26,7 @@ import { Live } from "./views/Live.tsx";
 import { Shell, type ModeId, type ShellLink, type ShellMode } from "./Shell.tsx";
 import type { NavIcon } from "./icons.tsx";
 import { routeFromHash, type ViewId } from "./route.ts";
+import { pageLabel } from "./views/geography.ts";
 
 const MODES: ShellMode[] = [
   { id: "work", href: "#/runs", label: "Work", icon: "workspace" },
@@ -77,7 +78,7 @@ const VIEWS: {
     id: "geography",
     label: "By market",
     mode: "compare",
-    purpose: "The same page from different cities. Quiet until they disagree.",
+    purpose: "The same page from different cities. Open a city. Compare two.",
     hint: "Same page, different city",
     icon: "people",
   },
@@ -159,9 +160,11 @@ export function App(): JSX.Element {
     document.title =
       ticket !== undefined
         ? `geoqa — ${ticket.title}`
-        : route.runId
-          ? `geoqa — run ${route.runId}`
-          : `geoqa — ${VIEWS.find((v) => v.id === route.view)?.label.toLowerCase() ?? "runs"}`;
+        : route.pageTarget !== undefined
+          ? `geoqa — ${pageLabel(route.pageTarget)}`
+          : route.runId
+            ? `geoqa — run ${route.runId}`
+            : `geoqa — ${VIEWS.find((v) => v.id === route.view)?.label.toLowerCase() ?? "runs"}`;
   }, [route, view]);
 
   /**
@@ -329,18 +332,22 @@ export function App(): JSX.Element {
           ? run.journeyId
           : ticket !== undefined
             ? ticket.title
-            : route.liveId !== undefined
-              ? "Now"
-              : (current?.label ?? "geoqa")
+            : route.pageTarget !== undefined
+              ? pageLabel(route.pageTarget)
+              : route.liveId !== undefined
+                ? "Now"
+                : (current?.label ?? "geoqa")
       }
       paneHint={
         run !== undefined
           ? "This one visit — what it did, the frames it kept, and whether we can trust it."
           : ticket !== undefined
             ? "The same brief that is on the GitHub issue — problem, cause, breaking changes, evidence."
-            : route.liveId !== undefined
-              ? "Still on Now — the frame and the steps, as they happen."
-              : (current?.purpose ?? "")
+            : route.pageTarget !== undefined
+              ? "This page from every city that measured it. Click a city to open the visit."
+              : route.liveId !== undefined
+                ? "Still on Now — the frame and the steps, as they happen."
+                : (current?.purpose ?? "")
       }
       links={links}
       liveCount={liveCount}
@@ -368,7 +375,9 @@ export function App(): JSX.Element {
           {...(route.findingKey !== undefined ? { ticketKey: route.findingKey } : {})}
         />
       )}
-      {route.runId === undefined && route.view === "geography" && <Geography view={view} />}
+      {route.runId === undefined && route.view === "geography" && (
+        <Geography view={view} {...(route.pageTarget !== undefined ? { pageTarget: route.pageTarget } : {})} />
+      )}
       {route.runId === undefined && route.view === "coverage" && <Coverage view={view} />}
       {route.runId === undefined && route.view === "trends" && <Trends view={view} />}
       {route.runId === undefined && route.view === "watch" && <Watch />}

@@ -19,6 +19,19 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Geography is an instrument
+
+`#/geography` is no longer two tables. Pick a page, scan every city
+as a card, colour by verdict / TTFB / LCP / confidence, filter and
+sort, and click through to the visit. Compare mode puts two cities
+side by side across every page; a TTFB delta is absent unless both
+sides produced a reading. An ERROR-only city is marked ours, not a
+site fail. Deep link: `#/geography/<url>`.
+
+Where: `apps/ui` Geography, GeoExplore, GeoCompare, `geography.ts`.
+
+---
+
 ## 2026-08-19 — Findings open into the issue brief
 
 A row on `#/findings` is now a drill-down. Click it and the console
