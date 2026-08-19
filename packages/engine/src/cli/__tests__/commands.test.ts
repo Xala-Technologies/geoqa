@@ -2021,6 +2021,7 @@ describe("runs history", () => {
         write: (p, t) => { store[p] = t; },
         mkdir: () => {},
         listDirs: (p) => dirs[p] ?? [],
+        listFiles: () => [],
       },
     });
   };
@@ -2380,6 +2381,7 @@ describe("siteAnalyse", () => {
         write: () => {},
         mkdir: () => {},
         listDirs: () => [],
+        listFiles: () => [],
       },
     });
   };
@@ -2458,6 +2460,7 @@ describe("dashboardBuild", () => {
           write: (p, t) => { store[p] = t; },
           mkdir: () => {},
           listDirs: () => [],
+          listFiles: () => [],
         },
       }),
     };

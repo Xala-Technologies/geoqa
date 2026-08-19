@@ -30,6 +30,11 @@ export interface HistoryFs {
   write: (p: string, text: string) => void;
   mkdir: (p: string) => void;
   listDirs: (p: string) => string[];
+  /**
+   * File names in a directory. Used to surface auto-frames a run.json
+   * written before screenshots were recorded never named.
+   */
+  listFiles: (p: string) => string[];
 }
 
 export const nodeHistoryFs: HistoryFs = {
@@ -39,6 +44,11 @@ export const nodeHistoryFs: HistoryFs = {
   write: (p, text) => writeFileSync(p, text),
   mkdir: (p) => mkdirSync(p, { recursive: true }),
   listDirs: (p) => readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name),
+  listFiles: (p) =>
+    readdirSync(p, { withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => e.name)
+      .sort(),
 };
 
 export const historyPath = (evidenceRoot: string): string => path.join(evidenceRoot, HISTORY_FILE);

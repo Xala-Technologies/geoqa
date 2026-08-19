@@ -84,6 +84,18 @@ describe("parseEvidencePackage", () => {
     expect(pack?.screenshots.find((s) => s.label === "00-open-target")?.present).toBe(true);
   });
 
+  it("honours journey.screenshots so auto-frames appear without listing the folder", () => {
+    const pack = parseEvidencePackage(
+      { ...runJson, journey: { ...runJson.journey, screenshots: ["00-open-target", "landing"] } },
+      [],
+    );
+    expect(pack?.screenshots).toEqual([
+      { label: "00-open-target", file: "00-open-target.png", present: false },
+      { label: "after-scroll", file: "after-scroll.png", present: false },
+      { label: "landing", file: "landing.png", present: false },
+    ]);
+  });
+
   it("returns null rather than inventing a package from junk", () => {
     expect(parseEvidencePackage(null, [])).toBeNull();
     expect(parseEvidencePackage({ runId: "run_1" }, [])).toBeNull();
@@ -167,6 +179,34 @@ describe("readJourneyFromRunJson", () => {
       { label: "after-scroll", file: "after-scroll.png", present: false },
       { label: "landing", file: "landing.png", present: true },
     ]);
+  });
+
+  it("lists the run folder so auto-frames survive a run.json that never named them", () => {
+    const root = "/e";
+    const id = "run_1786798894551_bergen-mobile";
+    const fs = {
+      exists: (p: string) =>
+        p === `${root}/${id}/run.json` || p === `${root}/${id}/00-open-target.png` || p === `${root}/${id}/landing.png`,
+      read: () => JSON.stringify(runJson),
+      listFiles: () => ["run.json", "00-open-target.png", "landing.png"],
+    };
+    const pack = readJourneyFromRunJson(root, id, fs);
+    expect(pack?.screenshots.map((s) => s.label)).toEqual(["00-open-target", "after-scroll", "landing"]);
+    expect(pack?.screenshots.find((s) => s.label === "00-open-target")?.present).toBe(true);
+  });
+
+  it("still returns the journey when listing the folder throws", () => {
+    const root = "/e";
+    const id = "run_1786798894551_bergen-mobile";
+    const pack = readJourneyFromRunJson(root, id, {
+      exists: (p: string) => p === `${root}/${id}/run.json` || p === `${root}/${id}/landing.png`,
+      read: () => JSON.stringify(runJson),
+      listFiles: () => {
+        throw new Error("EACCES");
+      },
+    });
+    expect(pack?.steps).toHaveLength(4);
+    expect(pack?.screenshots.map((s) => s.label)).toEqual(["after-scroll", "landing"]);
   });
 
   it("returns null for a run.json it cannot parse, like one that is not there", () => {

@@ -1,37 +1,17 @@
 import type { JSX, ReactNode } from "react";
-import { LiveDots, NAV_ICONS, type NavIcon } from "./icons.tsx";
+import { LiveDots, NAV_ICONS } from "./icons.tsx";
+import { Mark } from "./Logo.tsx";
+import type { NavSection } from "./nav.ts";
 import { ThemeToggle } from "./ThemeToggle.tsx";
-
-export type ModeId = "work" | "compare" | "setup";
-
-export type ShellLink = {
-  id: string;
-  href: string;
-  label: string;
-  hint: string;
-  icon: NavIcon;
-  current: boolean;
-  count?: number;
-  alert?: boolean;
-};
-
-export type ShellMode = {
-  id: ModeId;
-  href: string;
-  label: string;
-  icon: NavIcon;
-};
 
 export type ShellStat = { k: string; v: string };
 
 type ShellProps = {
-  modes: ShellMode[];
-  mode: ModeId;
   title: string;
   hint: string;
   paneTitle: string;
   paneHint: string;
-  links: ShellLink[];
+  sections: NavSection[];
   liveCount: number;
   stats: ShellStat[];
   servedWithSession: boolean;
@@ -42,13 +22,11 @@ type ShellProps = {
 };
 
 export function Shell({
-  modes,
-  mode,
   title,
   hint,
   paneTitle,
   paneHint,
-  links,
+  sections,
   liveCount,
   stats,
   servedWithSession,
@@ -61,56 +39,43 @@ export function Shell({
   return (
     <main className="app">
       <aside className="sidebar">
-        <nav className="mode-rail" aria-label="Product mode">
-          {modes.map((item) => {
-            const on = mode === item.id;
-            return (
-              <a
-                key={item.id}
-                href={item.href}
-                aria-current={on ? "page" : undefined}
-                data-mode={item.id}
-                className={`pressable mode-link${on ? " on" : ""}`}
-              >
-                <span className={on ? "text-accent" : ""}>{NAV_ICONS[item.icon]}</span>
-                <span className="mode-label">{item.label}</span>
-              </a>
-            );
-          })}
-        </nav>
-        <div className="sidebar-panel">
-          <header className="sidebar-head">
-            <span className={`mark-blob${live ? " avatar-breathe" : ""}${mode === "work" && live ? " filament" : ""}`}>
-              <span className="mark-dot" />
-            </span>
-            <div className="min-w-0">
-              <p className="sidebar-title">{title}</p>
-              <p className="sidebar-hint">{hint}</p>
-            </div>
-          </header>
-          <nav className="sidebar-nav scrollbar-thin" aria-label={title}>
-            {links.map((item) => (
-              <a
-                key={item.id}
-                href={item.href}
-                aria-current={item.current ? "page" : undefined}
-                className={`pressable nav-row${item.current ? " on" : ""}${item.id === "live" && live ? " row-awake" : ""}`}
-              >
-                <span className="nav-icon">{NAV_ICONS[item.icon]}</span>
-                <span className="min-w-0 grow">
-                  <span className="nav-label">{item.label}</span>
-                  <span className={`nav-hint${item.id === "live" && live ? " text-accent" : ""}`}>
-                    {item.id === "live" && live ? <LiveDots /> : null}
-                    {item.hint}
+        <header className="sidebar-head">
+          <span className={`mark-blob${live ? " avatar-breathe" : ""}`}>
+            <Mark size={18} />
+          </span>
+          <div className="min-w-0">
+            <p className="sidebar-title">{title}</p>
+            <p className="sidebar-hint">{hint}</p>
+          </div>
+        </header>
+        <nav className="sidebar-nav scrollbar-thin" aria-label="geoqa">
+          {sections.map((section) => (
+            <div className="nav-section" key={section.id}>
+              <p className="nav-section-k">{section.label}</p>
+              <p className="nav-section-hint">{section.hint}</p>
+              {section.links.map((item) => (
+                <a
+                  key={item.id}
+                  href={item.href}
+                  aria-current={item.current ? "page" : undefined}
+                  className={`pressable nav-row${item.current ? " on" : ""}${item.id === "live" && live ? " row-awake" : ""}`}
+                >
+                  <span className="nav-icon">{NAV_ICONS[item.icon]}</span>
+                  <span className="min-w-0 grow">
+                    <span className="nav-label">{item.label}</span>
+                    <span className={`nav-hint${item.id === "live" && live ? " text-accent" : ""}`}>
+                      {item.id === "live" && live ? <LiveDots /> : null}
+                      {item.hint}
+                    </span>
                   </span>
-                </span>
-                {item.count !== undefined && item.count > 0 ? (
-                  <span className={`nav-count${item.alert === true ? " alert" : ""}`}>{item.count}</span>
-                ) : null}
-              </a>
-            ))}
-          </nav>
-        </div>
+                  {item.count !== undefined && item.count > 0 ? (
+                    <span className={`nav-count${item.alert === true ? " alert" : ""}`}>{item.count}</span>
+                  ) : null}
+                </a>
+              ))}
+            </div>
+          ))}
+        </nav>
       </aside>
 
       <section className="pane">
@@ -146,9 +111,7 @@ export function Shell({
         {live ? (
           <div className="strip-wake activity-strip">
             <LiveDots />
-            <p>
-              {liveCount === 1 ? "1 session just woke up" : `${liveCount} sessions are awake`}
-            </p>
+            <p>{liveCount === 1 ? "1 session just woke up" : `${liveCount} sessions are awake`}</p>
           </div>
         ) : null}
         <div className="readout scrollbar-thin">{children}</div>

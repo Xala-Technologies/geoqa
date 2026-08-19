@@ -415,6 +415,11 @@ export async function runJourney(
         expected: result.expected, observed: result.observed, durationMs: now() - stepStarted,
       });
       log(`  ${outcome === "passed" ? "✓" : outcome === "failed" ? "✗" : "!"} ${label}`);
+      // The page we judged. Without this, a login flow keeps stills for
+      // `open`/`click` and the explicit screenshot, and nothing for the
+      // asserts that are the whole point of the journey.
+      const frame = await captureFrame(runtime, options.screenshotDir, index, label);
+      if (frame !== null) screenshots.push(frame);
       continue;
     }
 

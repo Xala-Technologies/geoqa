@@ -334,9 +334,32 @@ describe("runJourney", () => {
       ]),
       opts,
     );
-    expect(result.screenshots).toEqual(["00-open-target", "02-scroll", "03-click"]);
-    expect(shots).toEqual(["/e/00-open-target.png", "/e/02-scroll.png", "/e/03-click.png"]);
+    expect(result.screenshots).toEqual(["00-open-target", "01-title-exists", "02-scroll", "03-click"]);
+    expect(shots).toEqual([
+      "/e/00-open-target.png",
+      "/e/01-title-exists.png",
+      "/e/02-scroll.png",
+      "/e/03-click.png",
+    ]);
     expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("captures a frame after a failed assert — that is the page we judged", async () => {
+    const shots: string[] = [];
+    const result = await runJourney(
+      runtime({
+        getTitle: () => Promise.resolve(ok("")),
+        screenshot: (p) => {
+          shots.push(p);
+          return Promise.resolve(ok(null));
+        },
+      }),
+      journey([assertStep({ check: "title-exists" }, "critical")]),
+      opts,
+    );
+    expect(result.steps[0]?.outcome).toBe("failed");
+    expect(result.screenshots).toEqual(["00-title-exists"]);
+    expect(shots).toEqual(["/e/00-title-exists.png"]);
   });
 
   it("does not invent a frame when the capture itself failed", async () => {

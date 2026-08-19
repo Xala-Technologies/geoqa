@@ -23,98 +23,10 @@ import { RunDetail } from "./views/RunDetail.tsx";
 import { Settings } from "./views/Settings.tsx";
 import { Watch } from "./views/Watch.tsx";
 import { Live } from "./views/Live.tsx";
-import { Shell, type ModeId, type ShellLink, type ShellMode } from "./Shell.tsx";
-import type { NavIcon } from "./icons.tsx";
+import { Shell } from "./Shell.tsx";
+import { navSections, viewMeta } from "./nav.ts";
 import { routeFromHash, type ViewId } from "./route.ts";
 import { pageLabel } from "./views/geography.ts";
-
-const MODES: ShellMode[] = [
-  { id: "work", href: "#/runs", label: "Work", icon: "workspace" },
-  { id: "compare", href: "#/geography", label: "Compare", icon: "people" },
-  { id: "setup", href: "#/watch", label: "Setup", icon: "gear" },
-];
-
-const VIEWS: {
-  id: ViewId;
-  label: string;
-  mode: ModeId;
-  purpose: string;
-  hint: string;
-  icon: NavIcon;
-}[] = [
-  {
-    id: "overview",
-    label: "At a glance",
-    mode: "work",
-    purpose: "A briefing. The work is Visits.",
-    hint: "Briefing",
-    icon: "workspace",
-  },
-  {
-    id: "live",
-    label: "Now",
-    mode: "work",
-    purpose: "A visit happening right now. You watch. You do not drive.",
-    hint: "On screen now",
-    icon: "pulse",
-  },
-  {
-    id: "runs",
-    label: "Visits",
-    mode: "work",
-    purpose: "Every finished visit. Open one to see what it did and the frames it kept.",
-    hint: "Finished evidence",
-    icon: "ticket",
-  },
-  {
-    id: "findings",
-    label: "To fix",
-    mode: "work",
-    purpose: "Checks that failed. One row per site — the same grouping as the GitHub issue.",
-    hint: "Tickets to fix",
-    icon: "book",
-  },
-  {
-    id: "geography",
-    label: "By market",
-    mode: "compare",
-    purpose: "The same page from different cities. Open a city. Compare two.",
-    hint: "Same page, different city",
-    icon: "people",
-  },
-  {
-    id: "coverage",
-    label: "Gaps",
-    mode: "compare",
-    purpose: "Cities and pages nobody has visited yet.",
-    hint: "Never measured",
-    icon: "folder",
-  },
-  {
-    id: "trends",
-    label: "Over time",
-    mode: "compare",
-    purpose: "Whether a number is getting better or worse. Needs several visits.",
-    hint: "Direction of a metric",
-    icon: "pulse",
-  },
-  {
-    id: "watch",
-    label: "Schedule",
-    mode: "setup",
-    purpose: "When to visit, from where. Off until you turn it on.",
-    hint: "Cadence and URLs",
-    icon: "clock",
-  },
-  {
-    id: "settings",
-    label: "This machine",
-    mode: "setup",
-    purpose: "What this install can do. Read-only — it reports the files a run already reads.",
-    hint: "Host report",
-    icon: "gear",
-  },
-];
 
 /**
  * `#/runs`, `#/run/<id>` for a finished visit, `#/live/<id>` for one on the board,
@@ -164,7 +76,7 @@ export function App(): JSX.Element {
           ? `geoqa — ${pageLabel(route.pageTarget)}`
           : route.runId
             ? `geoqa — run ${route.runId}`
-            : `geoqa — ${VIEWS.find((v) => v.id === route.view)?.label.toLowerCase() ?? "runs"}`;
+            : `geoqa — ${viewMeta(route.view)?.label.toLowerCase() ?? "runs"}`;
   }, [route, view]);
 
   /**
@@ -303,29 +215,18 @@ export function App(): JSX.Element {
     findings: view.runs.some((r) => r.findings.total > 0),
     geography: view.site.geographicallyDivergent.length > 0,
     coverage: view.site.coverageGaps.length > 0,
+    trends: view.allTrends.some((s) => s.direction === "worsening"),
   };
 
-  const current = VIEWS.find((v) => v.id === route.view);
-  const mode = current?.mode ?? "work";
+  const current = viewMeta(route.view);
   const run = route.runId === undefined ? undefined : view.runs.find((r) => r.runId === route.runId);
   const ticket =
     route.findingKey === undefined ? undefined : view.tickets.find((row) => row.key === route.findingKey);
-  const links: ShellLink[] = VIEWS.filter((item) => item.mode === mode).map((item) => ({
-    id: item.id,
-    href: `#/${item.id}`,
-    label: item.label,
-    hint: item.hint,
-    icon: item.icon,
-    current: route.view === item.id,
-    count: counts[item.id],
-    alert: alerts[item.id] === true,
-  }));
+  const sections = navSections(route.view, counts, alerts);
 
   return (
     <Shell
-      modes={MODES}
-      mode={mode}
-      title={mode === "work" ? "Work" : mode === "compare" ? "Compare" : "Setup"}
+      title="geoqa"
       hint={liveCount ? `${liveCount} waking` : `${view.summary.total} visits`}
       paneTitle={
         run !== undefined
@@ -349,7 +250,7 @@ export function App(): JSX.Element {
                 ? "Still on Now — the frame and the steps, as they happen."
                 : (current?.purpose ?? "")
       }
-      links={links}
+      sections={sections}
       liveCount={liveCount}
       stats={[
         { k: "runs", v: String(view.summary.total) },
@@ -379,7 +280,9 @@ export function App(): JSX.Element {
         <Geography view={view} {...(route.pageTarget !== undefined ? { pageTarget: route.pageTarget } : {})} />
       )}
       {route.runId === undefined && route.view === "coverage" && <Coverage view={view} />}
-      {route.runId === undefined && route.view === "trends" && <Trends view={view} />}
+      {route.runId === undefined && route.view === "trends" && (
+        <Trends view={view} {...(route.trendKey !== undefined ? { trendKey: route.trendKey } : {})} />
+      )}
       {route.runId === undefined && route.view === "watch" && <Watch />}
       {route.runId === undefined && route.view === "settings" && <Settings />}
     </Shell>

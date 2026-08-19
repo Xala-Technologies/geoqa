@@ -27,7 +27,14 @@ const VIEWS: ViewId[] = [
   "settings",
 ];
 
-export type Route = { view: ViewId; runId?: string; liveId?: string; findingKey?: string; pageTarget?: string };
+export type Route = {
+  view: ViewId;
+  runId?: string;
+  liveId?: string;
+  findingKey?: string;
+  pageTarget?: string;
+  trendKey?: string;
+};
 
 export function findingHref(key: string): string {
   return `#/findings/${encodeURIComponent(key)}`;
@@ -52,6 +59,9 @@ export function routeFromHash(hash: string): Route {
   }
   if (head === "geography" && rest.length > 0) {
     return { view: "geography", pageTarget: decodeHashRest(rest) };
+  }
+  if (head === "trends" && rest.length > 0) {
+    return { view: "trends", trendKey: decodeHashRest(rest) };
   }
   return { view: VIEWS.some((id) => id === head) ? (head as ViewId) : "runs" };
 }

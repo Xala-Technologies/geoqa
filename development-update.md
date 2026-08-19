@@ -19,6 +19,45 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Over time is an instrument
+
+`#/trends` was a table of series. It is now filterable by metric,
+direction, market and page; a card opens the series; a tick opens the
+visit. A worsening drift can copy a brief, and tickets already filed
+on that host are linked. It does not invent a GitHub issue from a
+number — a trend is not a failed check.
+
+Where: `apps/ui` Trends, `trends.ts`, `#/trends/<key>`.
+
+---
+
+## 2026-08-19 — A visit is a flow, not a film strip
+
+A passing login run kept three stills and showed them beside a step
+table, so the evidence looked thin. The console now walks the visit
+step by step, each card carrying the still taken at that moment.
+Asserts keep a frame too — that is the page we judged. `run.json`
+records the screenshot labels, and a dashboard rebuild lists PNGs
+already on disk so an older run (Ålesund desktop `login-reachable`)
+shows `open`, `click`, and `login-form` in place. The two asserts on
+that run have no still: they were never captured. The next visit will.
+
+Where: `journeys/engine.ts`, `run/stages.ts`, `evidence/package.ts`,
+`history/store.ts`, `apps/ui` RunJourney and `run-flow.ts`.
+
+---
+
+## 2026-08-19 — One sidebar
+
+The mode rail and the second nav were the same map drawn twice. The
+console now has one sidebar: Operate, Compare, Setup, every view
+visible, counts still only when they mean something. The readout
+gains the width the rail used to take.
+
+Where: `apps/ui` Shell, `nav.ts`.
+
+---
+
 ## 2026-08-19 — Geography is an instrument
 
 `#/geography` is no longer two tables. Pick a page, scan every city

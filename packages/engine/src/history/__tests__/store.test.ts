@@ -32,6 +32,7 @@ const memoryFs = (files: Record<string, string> = {}, dirs: Record<string, strin
   },
   mkdir: () => {},
   listDirs: (p) => dirs[p] ?? [],
+  listFiles: () => [],
 });
 
 const record = (over: Partial<RunRecord> = {}): RunRecord => ({
@@ -426,6 +427,7 @@ describe("nodeHistoryFs", () => {
     writeFileSync(path.join(nested, "not-a-dir.txt"), "x");
     // Directories only: a stray file must not be mistaken for a run.
     expect(nodeHistoryFs.listDirs(nested)).toEqual(["run_1_a"]);
+    expect(nodeHistoryFs.listFiles(nested)).toEqual(["not-a-dir.txt", "runs.jsonl"]);
   });
 
   it("appends and rebuilds end to end through the real filesystem", () => {

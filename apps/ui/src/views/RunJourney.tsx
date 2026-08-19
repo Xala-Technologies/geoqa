@@ -1,13 +1,14 @@
 /**
- * What the journey actually did: stills first, then the step log, then
- * the ticket text if anything failed.
+ * The visit as a flow: each step, with the still taken at that moment.
  *
- * Frames do not play. A rotating GIF hides the still you need to file an
- * issue against. Click a thumbnail to enlarge it.
+ * A film strip beside a table is two lists of the same events. The
+ * operator is asking "what did the visitor see here?" — one card per
+ * step answers that. Frames do not play.
  */
 import { useEffect, useState, type JSX } from "react";
 import { getJson } from "../api.ts";
 import type { RunView } from "../types.ts";
+import { attachShotsToSteps, leftoverShots, type FlowStep, type Shot } from "./run-flow.ts";
 import { RunIssues, type ConsoleRow, type IssueRow } from "./RunIssues.tsx";
 
 interface EvidencePack {
@@ -28,6 +29,7 @@ export function RunJourney({
   screenshots: RunView["screenshots"];
 }): JSX.Element {
   const [pack, setPack] = useState<EvidencePack | null>(null);
+  const [urls, setUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -41,60 +43,14 @@ export function RunJourney({
   }, [runId]);
 
   const log = pack?.steps ?? steps;
-  const present = (pack?.screenshots ?? screenshots).filter((s) => s.present);
-
-  return (
-    <>
-      <Frames runId={runId} shots={present} />
-      <RunIssues issues={pack?.issues ?? []} console={pack?.console ?? []} brief={pack?.brief ?? ""} />
-      <div className="panel">
-        <div className="panel-head">
-          <h3>What it did</h3>
-          <p className="hint">Every step, in order. A click names the selector and the URL it landed on.</p>
-        </div>
-        {log.length === 0 ? (
-          <div className="empty">
-            <strong>No step log on this visit.</strong>
-            Rebuild the dashboard so it reads this run&rsquo;s <code>run.json</code>.
-          </div>
-        ) : (
-          <div className="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Step</th>
-                  <th>Did</th>
-                  <th>Landed</th>
-                  <th>Ms</th>
-                </tr>
-              </thead>
-              <tbody>
-                {log.map((step) => (
-                  <tr key={`${step.index}:${step.label}`}>
-                    <td className="num dim">{step.index + 1}</td>
-                    <td>
-                      <span className={`outcome outcome-${step.outcome}`}>{step.outcome}</span> {step.label}
-                    </td>
-                    <td className="step-did">{step.detail || step.action}</td>
-                    <td className="dim">{step.observed ?? step.expected ?? "—"}</td>
-                    <td className="num dim">{step.durationMs}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </>
+  const shots = pack?.screenshots ?? screenshots;
+  const flow = attachShotsToSteps(log, shots);
+  const extra = leftoverShots(log, shots);
+  const labels = [...flow.map((s) => s.shot?.label), ...extra.map((s) => s.label)].filter(
+    (label): label is string => label !== undefined,
   );
-}
+  const shotKey = labels.join(",");
 
-function Frames({ runId, shots }: { runId: string; shots: RunView["screenshots"] }): JSX.Element {
-  const [cursor, setCursor] = useState(0);
-  const [urls, setUrls] = useState<Record<string, string>>({});
-
-  const shotKey = shots.map((s) => s.label).join(",");
   useEffect(() => {
     let cancelled = false;
     for (const label of shotKey === "" ? [] : shotKey.split(",")) {
@@ -108,45 +64,74 @@ function Frames({ runId, shots }: { runId: string; shots: RunView["screenshots"]
     };
   }, [runId, shotKey]);
 
-  const current = shots[cursor];
-  const src = current === undefined ? "" : (urls[current.label] ?? "");
-
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <div>
-          <h3>Screenshots</h3>
-          <p className="hint">Stills this visit kept. Click one. They do not play.</p>
-        </div>
-      </div>
-      {shots.length === 0 ? (
-        <div className="empty">
-          <strong>No frames kept.</strong>
-          This journey did not take a screenshot, or the file is gone.
-        </div>
-      ) : (
-        <div className="film">
-          <figure className="film-hero">
-            {src !== "" ? <img src={src} alt={current?.label ?? ""} /> : <div className="film-wait">loading frame…</div>}
-            <figcaption>
-              {current?.label} · {cursor + 1}/{shots.length}
-            </figcaption>
-          </figure>
-          <div className="film-strip">
-            {shots.map((shot, i) => (
-              <button
-                key={shot.label}
-                type="button"
-                className={i === cursor ? "film-thumb on" : "film-thumb"}
-                onClick={() => setCursor(i)}
-              >
-                {urls[shot.label] !== undefined ? <img src={urls[shot.label]} alt={shot.label} /> : <span className="film-wait">…</span>}
-                <span>{shot.label}</span>
-              </button>
-            ))}
+    <>
+      <div className="panel">
+        <div className="panel-head">
+          <div>
+            <h3>What the visitor did</h3>
+            <p className="hint">Every step, with the still taken then. They do not play.</p>
           </div>
         </div>
+        {log.length === 0 ? (
+          <div className="empty">
+            <strong>No step log on this visit.</strong>
+            Rebuild the dashboard so it reads this run&rsquo;s <code>run.json</code>.
+          </div>
+        ) : (
+          <ol className="flow">
+            {flow.map((step) => (
+              <FlowCard key={`${step.index}:${step.label}`} step={step} src={step.shot ? (urls[step.shot.label] ?? "") : ""} />
+            ))}
+          </ol>
+        )}
+        {extra.length > 0 ? <AlsoKept shots={extra} urls={urls} /> : null}
+      </div>
+      <RunIssues issues={pack?.issues ?? []} console={pack?.console ?? []} brief={pack?.brief ?? ""} />
+    </>
+  );
+}
+
+function FlowCard({ step, src }: { step: FlowStep; src: string }): JSX.Element {
+  return (
+    <li className="flow-card" data-outcome={step.outcome}>
+      <div className="flow-meta">
+        <span className="flow-n">{step.index + 1}</span>
+        <div>
+          <p className="flow-title">
+            <span className={`outcome outcome-${step.outcome}`}>{step.outcome}</span> {step.label}
+          </p>
+          <p className="flow-did">{step.detail || step.action}</p>
+          {step.observed !== null || step.expected !== null ? (
+            <p className="flow-landed">{step.observed ?? step.expected}</p>
+          ) : null}
+        </div>
+        <span className="flow-ms">{step.durationMs} ms</span>
+      </div>
+      {step.shot !== null ? (
+        <figure className="flow-still">
+          {src !== "" ? <img src={src} alt={step.shot.label} /> : <div className="film-wait">loading frame…</div>}
+          <figcaption>{step.shot.label}</figcaption>
+        </figure>
+      ) : (
+        <p className="flow-gap">No still — this step did not keep a frame.</p>
       )}
+    </li>
+  );
+}
+
+function AlsoKept({ shots, urls }: { shots: Shot[]; urls: Record<string, string> }): JSX.Element {
+  return (
+    <div className="flow-extra">
+      <p className="hint">Also kept, not attached to a step</p>
+      <div className="film-strip">
+        {shots.map((shot) => (
+          <figure key={shot.label} className="film-thumb">
+            {urls[shot.label] !== undefined ? <img src={urls[shot.label]} alt={shot.label} /> : <span className="film-wait">…</span>}
+            <span>{shot.label}</span>
+          </figure>
+        ))}
+      </div>
     </div>
   );
 }

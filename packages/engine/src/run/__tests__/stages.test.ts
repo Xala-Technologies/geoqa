@@ -583,6 +583,10 @@ describe("collectEvidence", () => {
     const manifest = await collectEvidence(fakeRuntime(), await input(journeyResult({ screenshots: ["hero"] })));
     const shot = manifest.artifacts.find((a) => a.kind === "screenshot");
     expect(shot).toMatchObject({ label: "hero", path: "hero.png", risk: "low" });
+    const written = JSON.parse(readFileSync(path.join(root, "run_1", "run.json"), "utf8")) as {
+      journey: { screenshots?: string[] };
+    };
+    expect(written.journey.screenshots).toEqual(["hero"]);
   });
 
   /** A runtime whose `traceStop` really writes a file, so the artifact is non-empty. */

@@ -84,6 +84,13 @@ export function parseEvidencePackage(raw: unknown, files: string[]): EvidencePac
     screenshots.push({ label: step.label, file, present: names.has(file) });
     seen.add(step.label);
   }
+  const declared = Array.isArray(journey.screenshots) ? journey.screenshots : [];
+  for (const label of declared) {
+    if (typeof label !== "string" || !SHOT_LABEL.test(label) || seen.has(label)) continue;
+    const file = `${label}.png`;
+    screenshots.push({ label, file, present: names.has(file) });
+    seen.add(label);
+  }
   for (const file of files) {
     if (!file.endsWith(".png") || file.includes("/")) continue;
     const label = file.slice(0, -4);
@@ -129,14 +136,25 @@ export function parseEvidencePackage(raw: unknown, files: string[]): EvidencePac
 export function readJourneyFromRunJson(
   root: string,
   runId: string,
-  fs: { exists: (path: string) => boolean; read: (path: string) => string },
+  fs: {
+    exists: (path: string) => boolean;
+    read: (path: string) => string;
+    /** File names in the run directory. Absent or throwing is not a missing journey. */
+    listFiles?: (dir: string) => string[];
+  },
 ): EvidencePackage | null {
   const dir = evidenceRunDir(root, runId);
   if (dir === null) return null;
   const file = path.join(dir, "run.json");
   if (!fs.exists(file)) return null;
   try {
-    const pack = parseEvidencePackage(JSON.parse(fs.read(file)), []);
+    let files: string[] = [];
+    try {
+      files = fs.listFiles?.(dir) ?? [];
+    } catch {
+      files = [];
+    }
+    const pack = parseEvidencePackage(JSON.parse(fs.read(file)), files);
     if (pack === null) return null;
     return {
       ...pack,

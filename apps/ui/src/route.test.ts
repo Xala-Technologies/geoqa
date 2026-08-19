@@ -12,6 +12,7 @@ describe("routeFromHash", () => {
     expect(routeFromHash("#/run/run_1")).toEqual({ view: "runs", runId: "run_1" });
     expect(routeFromHash("#/live/sess_1")).toEqual({ view: "live", liveId: "sess_1" });
     expect(routeFromHash("#/geography")).toEqual({ view: "geography" });
+    expect(routeFromHash("#/trends")).toEqual({ view: "trends" });
     expect(routeFromHash("#/unknown")).toEqual({ view: "runs" });
     expect(routeFromHash("#/")).toEqual({ view: "runs" });
     expect(routeFromHash("#/run")).toEqual({ view: "runs" });
@@ -25,5 +26,11 @@ describe("routeFromHash", () => {
     });
     expect(routeFromHash(`#/geography/${target}`)).toEqual({ view: "geography", pageTarget: target });
     expect(decodeHashRest(["%"])).toBe("%");
+  });
+
+  it("opens a trend by metric or by the series key", () => {
+    expect(routeFromHash("#/trends/lcp")).toEqual({ view: "trends", trendKey: "lcp" });
+    const key = "ttfb:alesund:https://digilist.no/";
+    expect(routeFromHash(`#/trends/${encodeURIComponent(key)}`)).toEqual({ view: "trends", trendKey: key });
   });
 });

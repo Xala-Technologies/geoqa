@@ -318,6 +318,10 @@ export async function collectEvidence(
         seed: journey.seed,
         writes: journey.writes,
         touchedForm: journey.touchedForm,
+        // Labels of stills the journey kept, including auto-frames. The
+        // dashboard used to invent this list from screenshot *steps* only,
+        // which hid every `NN-slug` frame taken after open/click/assert.
+        screenshots: journey.screenshots,
         // The MERGED steps: the worst outcome at each index across every attempt. `attempts`
         // below says what that merge was over; it does not promise a list per attempt.
         steps: journey.steps,
