@@ -19,6 +19,16 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Digest mail is a brief, not a spreadsheet
+
+The daily mail now opens with one summary paragraph, groups failures
+by host as cards, and ships both themes: dark inline (Gmail's default)
+and light via `prefers-color-scheme`. The five-column table is gone.
+
+Where: `digest/html.ts`, `digest/summary.ts`.
+
+---
+
 ## 2026-08-19 — Daily digest mail from AgentMail
 
 `geoqa digest send` mails one operator brief from the last 24 hours of

@@ -36,7 +36,10 @@ describe("renderDigestHtml", () => {
   it("is a full HTML document in the Xala palette and never leaves a raw angle-bracket label unescaped", () => {
     const html = renderDigestHtml({
       ...digest(),
-      failed: [{ ...digest().failed[0]!, labels: ["<script>alert(1)</script>"] }],
+      failed: [
+        { ...digest().failed[0]!, labels: ["<script>alert(1)</script>"] },
+        digest().failed[1]!,
+      ],
     });
     expect(html.startsWith("<!DOCTYPE html>")).toBe(true);
     expect(html).toContain("#0b1612");
@@ -46,6 +49,13 @@ describe("renderDigestHtml", () => {
     expect(html).toContain("search");
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("prefers-color-scheme: light");
+    expect(html).toContain('color-scheme" content="light dark');
+    expect(html).toContain("Summary");
+    expect(html).toContain("2 runs in this window");
+    expect(html).toContain("app.digilist.no");
+    expect(html).not.toContain(">Market</td>");
+    expect(html).not.toContain('colspan="5"');
   });
 
   it("renders empty sections and a missing run link without inventing a number", () => {
@@ -65,7 +75,18 @@ describe("renderDigestHtml", () => {
     const linked = renderDigestHtml({
       ...digest(),
       failed: [{ ...digest().failed[0]!, href: null, labels: [] }],
-      repaired: [{ key: "k", status: "opened", at: "2026-08-18T16:00:00.000Z" }],
+      filed: [
+        { key: "a", number: 1, url: "https://github.com/x/y/issues/1", at: "t" },
+        { key: "b", number: 2, url: "https://github.com/x/y/issues/2", at: "t" },
+      ],
+      repaired: [
+        { key: "k", status: "opened", at: "2026-08-18T16:00:00.000Z" },
+        { key: "m", status: "no-changes", at: "2026-08-18T17:00:00.000Z" },
+      ],
+      suggestions: [
+        { title: "one", why: "first" },
+        { title: "two", why: "second" },
+      ],
     });
     expect(linked).not.toContain("href=\"null\"");
     const text = renderDigestText({
