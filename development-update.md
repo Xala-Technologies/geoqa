@@ -19,6 +19,33 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Issues and PRs name breaking changes
+
+The brief now has a Breaking changes section on both the issue and
+the PR. A site finding says restoring the missing check is typically
+additive, and that removing a route, API, auth flow, or locale string
+is breaking. An ERROR, geo mismatch, or rotated egress says there is
+no product breaking change — a markup PR would itself be the break.
+The repair prompt is told to prefer additive restores. Existing
+GitHub issues stay thin until the next `findings file`.
+
+Where: `findings/brief.ts`, `findings/tickets.ts`, `assist/repair-prompt.ts`.
+
+---
+
+## 2026-08-19 — Issues and PRs carry a brief
+
+A filed finding is no longer a title plus a run table. The issue now
+has Problem, What this is, Root cause, What this is not, What we saw,
+a next step, and Evidence. Root cause stays inside the evidence — a
+site check that failed after a page read does not guess CSS; an
+ERROR does not become a product bug. The PR repeats that brief and
+adds a Change section that names the repo and `Fixes` the issue.
+
+Where: `findings/brief.ts`, `findings/tickets.ts`, `assist/repair.ts`.
+
+---
+
 ## 2026-08-19 — Watch sees tenant journeys
 
 `login` lives under `inputs/tenants/digilist/journeys/`. The console

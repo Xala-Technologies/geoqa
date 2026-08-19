@@ -9,6 +9,7 @@
 import { containedPath } from "../tenant/registry.js";
 import type { FiledIssue } from "../findings/github.js";
 import { routeTicket, type SiteRepo } from "../findings/repos.js";
+import { prBody } from "../findings/brief.js";
 import type { TicketDraft } from "../findings/tickets.js";
 import { runClaudePrint, type ClaudeSpawn } from "./claude.js";
 import { nodeClaudeSpawn } from "./claude-spawn.js";
@@ -247,7 +248,7 @@ export async function repairOne(
       "--title",
       `Fix #${job.issueNumber}: ${job.title}`,
       "--body",
-      `Fixes ${job.issueUrl}\n\nOpened by geoqa after a watch finding on ${job.site}.`,
+      prBody(job),
     ],
     env,
     60_000,

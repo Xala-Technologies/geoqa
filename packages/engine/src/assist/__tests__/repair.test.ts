@@ -65,6 +65,8 @@ describe("buildRepairPrompt", () => {
     expect(prompt).toContain("has a search box on xala.no");
     expect(prompt).toContain("failed on the page");
     expect(prompt).toContain("Do not invent");
+    expect(prompt).toContain("Breaking changes");
+    expect(prompt).toContain("additive");
     expect(prompt).toContain("CANNOT_FIX");
     expect(prompt).toContain("Do not push");
     expect(prompt).toContain("instrumentation");
@@ -154,6 +156,11 @@ describe("repairOne", () => {
     expect(exec.argv.some((a) => a.includes("checkout") && a.includes("geoqa/issue-48") && a.includes("origin/main"))).toBe(true);
     expect(exec.argv.some((a) => a.includes("rebase") && a.includes("origin/main"))).toBe(true);
     expect(exec.argv.some((a) => a.includes("pr") && a.includes("create") && a.includes("main"))).toBe(true);
+    const created = exec.argv.find((a) => a.includes("pr") && a.includes("create"));
+    expect(created?.join("\n")).toContain("## Change");
+    expect(created?.join("\n")).toContain("Fixes https://github.com/xalatechnologies/xala-web-cloner/issues/48");
+    expect(created?.join("\n")).toContain("## Problem");
+    expect(created?.join("\n")).toContain("## Breaking changes");
     expect(exec.argv.some((a) => a.includes("--auto") && a.includes("--squash"))).toBe(true);
     expect(exec.envs.some((e) => e.GIT_CONFIG_VALUE_1 === "!gh auth git-credential")).toBe(true);
     expect(exec.argv.flat().includes("t")).toBe(false);

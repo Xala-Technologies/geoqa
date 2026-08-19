@@ -46,6 +46,13 @@ describe("draftsFromRuns", () => {
     expect(drafts[0]?.runIds).toEqual(["a", "b"]);
     expect(drafts[0]?.title).toContain("has a search box");
     expect(drafts[0]?.title).toContain("xala.no");
+    expect(drafts[0]?.body).toContain("## Problem");
+    expect(drafts[0]?.body).toContain("## Root cause");
+    expect(drafts[0]?.body).toContain("does not invent");
+    expect(drafts[0]?.body).toContain("## Breaking changes");
+    expect(drafts[0]?.body).toContain("additive");
+    expect(drafts[0]?.body).toContain("bergen");
+    expect(drafts[0]?.body).toContain("tromso");
   });
 
   it("a navigate that never completed is urgent, and a fill that follows a missing search box is not", () => {
@@ -68,6 +75,8 @@ describe("draftsFromRuns", () => {
     expect(drafts.find((d) => d.key.startsWith("urgent:"))?.labels).toContain("urgent");
     expect(drafts.find((d) => d.key.startsWith("urgent:"))?.labels).toContain("site:digilist.no");
     expect(drafts.find((d) => d.key.startsWith("urgent:"))?.site).toBe("geoqa");
+    expect(drafts.find((d) => d.key.startsWith("urgent:"))?.body).toContain("not a site defect");
+    expect(drafts.find((d) => d.key.startsWith("urgent:"))?.body).toContain("No product breaking change");
     expect(drafts.some((d) => d.key.includes("type the query"))).toBe(false);
   });
 
@@ -93,6 +102,10 @@ describe("draftsFromRuns", () => {
     expect(drafts[0]?.urgent).toBe(true);
     expect(drafts[0]?.body).toContain("Stavanger");
     expect(drafts[0]?.body).toContain("Oslo");
+    expect(drafts[0]?.body).toContain("## Problem");
+    expect(drafts[0]?.body).toContain("distance");
+    expect(drafts[0]?.body).toContain("load-bearing");
+    expect(drafts[0]?.body).toContain("No product breaking change");
   });
 
   it("an egress that rotated mid-journey is urgent, and a broken console URL is not a link", () => {
@@ -116,6 +129,8 @@ describe("draftsFromRuns", () => {
     );
     expect(drafts.map((d) => d.key)).toEqual(["urgent:run:egress-held"]);
     expect(drafts[0]?.body).not.toContain("#/run/");
+    expect(drafts[0]?.body).toContain("rotated");
+    expect(drafts[0]?.body).toContain("cannot be attributed to one visitor");
   });
 
   it("links the console when a base URL is given, and stays silent when it is not", () => {

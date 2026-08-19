@@ -9,6 +9,7 @@
  * Pure. Talking to GitHub is `github.ts`. A draft here is what would be
  * filed, not a promise that it was.
  */
+import { formatBrief, seenLine } from "./brief.js";
 
 export interface TicketRun {
   runId: string;
@@ -182,12 +183,31 @@ function runLine(run: TicketRun, origin: string | null): string {
 const TABLE = "| Run | Profile | Journey | URL | Verdict |\n|---|---|---|---|---|";
 
 function runBody(label: string, runs: TicketRun[], origin: string | null): string {
-  return [
-    `geoqa could not complete **${label}**. An ERROR is ours or the vendor's, not a site defect.`,
-    "",
-    TABLE,
-    ...runs.map((r) => runLine(r, origin)),
-  ].join("\n");
+  const evidence = [TABLE, ...runs.map((r) => runLine(r, origin))].join("\n");
+  if (label === "egress-held") {
+    return formatBrief({
+      problem: "The egress IP rotated mid-journey. One session used more than one exit.",
+      what: "An instrumentation / vendor defect. geoqa marks this ERROR.",
+      rootCause:
+        "A rotating residential exit mid-journey takes LCP from one visitor and CLS from another. Those readings cannot be attributed to one visitor.",
+      notThis: "Not a site defect. Do not change product markup to 'fix' a rotated exit.",
+      observed: seenLine(runs),
+      next: "Check the closing IP probe on the run. If the vendor rotated the sticky session, hold the session or drop the cell — do not file the page.",
+      breaking: "No product breaking change. A markup or copy change filed against this would itself be the break.",
+      evidence,
+    });
+  }
+  return formatBrief({
+    problem: `geoqa could not complete **${label}**. The run ended ERROR.`,
+    what: "Ours or the vendor's — not a site defect. ERROR means we could not finish the action, not that the page was wrong.",
+    rootCause:
+      "The named step never produced a page reading (instrumentation). Typical companions already seen: a residential CONNECT miss, a hung navigation, or a tool timeout. The evidence names the step; it does not prove which companion it was unless the run log says so.",
+    notThis: "Not a content or markup bug. Do not change Digilist or xala.no to 'fix' this.",
+    observed: seenLine(runs),
+    next: "Open the run log. If it is ERR_TUNNEL_CONNECTION_FAILED or a proxy 407, that is Decodo — retry the cell, do not file the site.",
+    breaking: "No product breaking change. Do not ship a site or API change to 'clear' an ERROR.",
+    evidence,
+  });
 }
 
 function geoBody(runs: TicketRun[], origin: string | null): string {
@@ -198,20 +218,30 @@ function geoBody(runs: TicketRun[], origin: string | null): string {
     const seen = `${run.geo.observedCity ?? "unverified"}, ${run.geo.observedCountry ?? "unverified"}`;
     return `| ${ref} | ${asked} | ${seen} | city ${run.geo.city} / country ${run.geo.country} |`;
   });
-  return [
-    "The exit was not the city or country we asked Decodo for.",
-    "",
-    "| Run | Asked | Observed | Verdicts |",
-    "|---|---|---|---|",
-    ...rows,
-  ].join("\n");
+  return formatBrief({
+    problem: "The exit was not the city or country we asked Decodo for.",
+    what: "A vendor / routing finding. Urgent because a wrong-country run dresses a Norwegian claim in the wrong exit.",
+    rootCause:
+      "A city verdict is a distance, not a string comparison. Decodo names the exchange suburb, so Skui can sit 15 km from Oslo and still be the right country. Country is the load-bearing axis.",
+    notThis: "A city mismatch with a country match is not proof the page was served from the wrong country, and it is not a site defect.",
+    observed: seenLine(runs),
+    next: "Keep country as the gate. Treat city as a distance band. Do not 'fix' the product to match an exchange suburb name.",
+    breaking: "No product breaking change. Changing city copy or hreflang to match an exchange suburb would be the break.",
+    evidence: ["| Run | Asked | Observed | Verdicts |", "|---|---|---|---|", ...rows].join("\n"),
+  });
 }
 
 function siteBody(label: string, host: string, runs: TicketRun[], origin: string | null): string {
-  return [
-    `Check **${label}** failed on **${host}** after reading the page. This is a site finding.`,
-    "",
-    TABLE,
-    ...runs.map((r) => runLine(r, origin)),
-  ].join("\n");
+  return formatBrief({
+    problem: `The check **${label}** failed on **${host}** after geoqa read the page. A visitor in the markets below did not get what the journey required.`,
+    what: "A site finding. The page was readable. This is not a proxy failure and not an instrumentation ERROR.",
+    rootCause:
+      "The journey asserted this check after load, and the assertion did not hold. geoqa does not invent whether markup, CSS, a geo-specific template, or a broken selector is at fault — that belongs in the product repo.",
+    notThis: "Not an ERROR, not a Decodo city-string miss, and not a reason to 'fix' geoqa instead of the page.",
+    observed: seenLine(runs),
+    next: "Open a failing run, confirm the screenshot, then change the page or the journey — not both at once.",
+    breaking:
+      "Restoring the missing check (the element, copy, or status the journey already expected) is typically additive. Removing or renaming a route, API, auth flow, or locale string is breaking — re-run the other markets in this table before merge. geoqa does not classify a diff it has not seen.",
+    evidence: [TABLE, ...runs.map((r) => runLine(r, origin))].join("\n"),
+  });
 }
