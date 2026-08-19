@@ -16,6 +16,37 @@ export interface BriefParts {
   evidence: string;
 }
 
+export interface BriefSection {
+  heading: string;
+  text: string;
+}
+
+/** Split a filed body into the sections a console can render one panel at a time. */
+export function parseBrief(body: string): BriefSection[] {
+  const trimmed = body.trim();
+  if (trimmed === "") return [];
+  if (!/^## /m.test(trimmed)) return [{ heading: "Problem", text: trimmed }];
+  const sections: BriefSection[] = [];
+  let heading = "";
+  let buf: string[] = [];
+  const flush = (): void => {
+    if (heading === "") return;
+    sections.push({ heading, text: buf.join("\n").trim() });
+  };
+  for (const line of trimmed.split("\n")) {
+    const match = /^## (.+)$/.exec(line);
+    if (match?.[1] !== undefined) {
+      flush();
+      heading = match[1];
+      buf = [];
+      continue;
+    }
+    buf.push(line);
+  }
+  flush();
+  return sections;
+}
+
 export function formatBrief(parts: BriefParts): string {
   return [
     "## Problem",

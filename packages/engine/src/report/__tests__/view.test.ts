@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { ticketsForView } from "../tickets.js";
 import { axisTone, ms, ratio, score, toDashboardView, toRunView, verdictTone } from "../view.js";
 import type { RunRecord } from "../../history/records.js";
 import { findRepoRoot } from "../../repo.js";
@@ -227,6 +228,23 @@ describe("the UI's mirrored types do not drift", () => {
     nested("vitals");
     nested("confidence");
     nested("findings");
+    const ticket = ticketsForView(
+      [
+        {
+          key: "site:has a search box:xala.no",
+          title: "has a search box on xala.no",
+          body: "## Problem\nmissing",
+          labels: ["findings"],
+          urgent: false,
+          runIds: ["run_1"],
+          site: "xala.no",
+          hosts: ["xala.no"],
+        },
+      ],
+      [],
+      [],
+    )[0];
+    for (const field of Object.keys(ticket ?? {})) expect(uiTypes, `FindingTicket.${field}`).toContain(`${field}:`);
   });
 
   it("keeps the Measured union, which is the contract that stops a 0 standing in for a null", () => {
@@ -262,6 +280,25 @@ describe("the UI's mirrored types do not drift", () => {
     }
     for (const key of Object.keys(view.site)) {
       expect(sources, `site.${key} is declared but no component reads it`).toContain(key);
+    }
+    const ticket = ticketsForView(
+      [
+        {
+          key: "site:title:xala.no",
+          title: "title",
+          body: "brief",
+          labels: [],
+          urgent: false,
+          runIds: ["run_1"],
+          site: "xala.no",
+          hosts: ["xala.no"],
+        },
+      ],
+      [],
+      [],
+    )[0];
+    for (const field of Object.keys(ticket ?? {})) {
+      expect(sources, `FindingTicket.${field} is declared but no component reads it`).toContain(field);
     }
   });
 });

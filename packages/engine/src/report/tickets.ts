@@ -23,6 +23,8 @@ export interface FindingTicket {
   pr: Measured<{ url: string }>;
   /** A PR exists. The row is struck out; cannot-fix is not this. */
   fixed: boolean;
+  /** The same brief that was filed (or would be filed) on GitHub. */
+  body: string;
 }
 
 export interface FiledRef {
@@ -56,6 +58,7 @@ export function ticketsForView(drafts: TicketDraft[], filed: readonly FiledRef[]
           : measured({ number: issue.number, url: issue.url }, `#${issue.number}`),
       pr: prOf(repair),
       fixed: isFixed(repair),
+      body: draft.body,
     };
   });
 }

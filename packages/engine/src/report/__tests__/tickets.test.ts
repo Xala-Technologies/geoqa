@@ -22,6 +22,7 @@ describe("ticketsForView", () => {
     expect(rows[0]?.issue.measured).toBe(false);
     if (rows[0]?.issue.measured === false) expect(rows[0].issue.reason).toContain("not filed");
     expect(rows[0]?.pr.measured).toBe(false);
+    expect(rows[0]?.body).toBe("failed");
   });
 
   it("attaches the GitHub issue and the PR when both exist", () => {

@@ -117,4 +117,6 @@ export interface FindingTicket {
   pr: Measured<{ url: string }>;
   /** A PR exists. The row is struck out. */
   fixed: boolean;
+  /** The same brief that was filed (or would be filed) on GitHub. */
+  body: string;
 }

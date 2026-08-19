@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBrief, prBody, seenLine } from "../brief.js";
+import { formatBrief, parseBrief, prBody, seenLine } from "../brief.js";
 
 describe("formatBrief", () => {
   it("is a short brief with named sections, not a table alone", () => {
@@ -20,6 +20,35 @@ describe("formatBrief", () => {
     expect(text).toContain("## Breaking changes");
     expect(text).toContain("none expected");
     expect(text).toContain("| a |");
+  });
+
+  it("splits a brief into named sections, and a thin body is still a Problem", () => {
+    const sections = parseBrief(
+      formatBrief({
+        problem: "the check failed",
+        what: "a site finding",
+        rootCause: "the assertion did not hold",
+        notThis: "not a proxy miss",
+        observed: "2 runs",
+        next: "open the run",
+        breaking: "additive",
+        evidence: "| a |",
+      }),
+    );
+    expect(sections.map((s) => s.heading)).toEqual([
+      "Problem",
+      "What this is",
+      "Root cause",
+      "What this is not",
+      "What we saw",
+      "Suggested next step",
+      "Breaking changes",
+      "Evidence",
+    ]);
+    expect(sections.find((s) => s.heading === "Breaking changes")?.text).toBe("additive");
+    expect(parseBrief("one line from an old ticket")).toEqual([{ heading: "Problem", text: "one line from an old ticket" }]);
+    expect(parseBrief("")).toEqual([]);
+    expect(parseBrief("preamble\n## Problem\nlater")).toEqual([{ heading: "Problem", text: "later" }]);
   });
 });
 

@@ -25,11 +25,7 @@ import { Watch } from "./views/Watch.tsx";
 import { Live } from "./views/Live.tsx";
 import { Shell, type ModeId, type ShellLink, type ShellMode } from "./Shell.tsx";
 import type { NavIcon } from "./icons.tsx";
-
-type ViewId = "overview" | "live" | "runs" | "findings" | "geography" | "coverage" | "trends" | "watch" | "settings";
-
-/** A route is a view, or a drill-down into one run. */
-type Route = { view: ViewId; runId?: string; liveId?: string };
+import { routeFromHash, type ViewId } from "./route.ts";
 
 const MODES: ShellMode[] = [
   { id: "work", href: "#/runs", label: "Work", icon: "workspace" },
@@ -120,19 +116,13 @@ const VIEWS: {
 ];
 
 /**
- * `#/runs`, `#/run/<id>` for a finished visit, `#/live/<id>` for one on the board.
+ * `#/runs`, `#/run/<id>` for a finished visit, `#/live/<id>` for one on the board,
+ * `#/findings/<key>` for a ticket brief.
  *
  * A live card must stay on Now. Sending it to `#/run/<id>` left the feed and
  * opened a page that only knows the dashboard index — which is rebuilt after
  * the sweep, so the visit you were watching said it did not exist.
  */
-const routeFromHash = (): Route => {
-  const raw = window.location.hash.replace(/^#\/?/, "");
-  const [head, ...rest] = raw.split("/");
-  if (head === "run" && rest.length > 0) return { view: "runs", runId: rest.join("/") };
-  if (head === "live" && rest.length > 0) return { view: "live", liveId: rest.join("/") };
-  return { view: VIEWS.some((v) => v.id === head) ? (head as ViewId) : "runs" };
-};
 
 export function App(): JSX.Element {
   const [view, setView] = useState<DashboardView | null>(null);
@@ -151,12 +141,12 @@ export function App(): JSX.Element {
   const [servedWithSession, setServedWithSession] = useState(false);
   /** Null when idle; a message while a rebuild is in flight or has just finished. */
   const [rebuilding, setRebuilding] = useState<string | null>(null);
-  const [route, setRoute] = useState<Route>(routeFromHash);
+  const [route, setRoute] = useState(() => routeFromHash(window.location.hash));
   /** Sessions currently on the live board — the badge that says something is on screen. */
   const [liveCount, setLiveCount] = useState(0);
 
   useEffect(() => {
-    const onHash = (): void => setRoute(routeFromHash());
+    const onHash = (): void => setRoute(routeFromHash(window.location.hash));
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -164,10 +154,15 @@ export function App(): JSX.Element {
   // The tab title follows the view. With five of them, a static title makes two open tabs
   // indistinguishable — and this is a console somebody keeps open beside their work.
   useEffect(() => {
-    document.title = route.runId
-      ? `geoqa — run ${route.runId}`
-      : `geoqa — ${VIEWS.find((v) => v.id === route.view)?.label.toLowerCase() ?? "runs"}`;
-  }, [route]);
+    const ticket =
+      route.findingKey !== undefined && view !== null ? view.tickets.find((row) => row.key === route.findingKey) : undefined;
+    document.title =
+      ticket !== undefined
+        ? `geoqa — ${ticket.title}`
+        : route.runId
+          ? `geoqa — run ${route.runId}`
+          : `geoqa — ${VIEWS.find((v) => v.id === route.view)?.label.toLowerCase() ?? "runs"}`;
+  }, [route, view]);
 
   /**
    * Load the dashboard, and let its answer tell us which mode we are in.
@@ -310,6 +305,8 @@ export function App(): JSX.Element {
   const current = VIEWS.find((v) => v.id === route.view);
   const mode = current?.mode ?? "work";
   const run = route.runId === undefined ? undefined : view.runs.find((r) => r.runId === route.runId);
+  const ticket =
+    route.findingKey === undefined ? undefined : view.tickets.find((row) => row.key === route.findingKey);
   const links: ShellLink[] = VIEWS.filter((item) => item.mode === mode).map((item) => ({
     id: item.id,
     href: `#/${item.id}`,
@@ -327,13 +324,23 @@ export function App(): JSX.Element {
       mode={mode}
       title={mode === "work" ? "Work" : mode === "compare" ? "Compare" : "Setup"}
       hint={liveCount ? `${liveCount} waking` : `${view.summary.total} visits`}
-      paneTitle={run !== undefined ? run.journeyId : route.liveId !== undefined ? "Now" : (current?.label ?? "geoqa")}
+      paneTitle={
+        run !== undefined
+          ? run.journeyId
+          : ticket !== undefined
+            ? ticket.title
+            : route.liveId !== undefined
+              ? "Now"
+              : (current?.label ?? "geoqa")
+      }
       paneHint={
         run !== undefined
           ? "This one visit — what it did, the frames it kept, and whether we can trust it."
-          : route.liveId !== undefined
-            ? "Still on Now — the frame and the steps, as they happen."
-            : (current?.purpose ?? "")
+          : ticket !== undefined
+            ? "The same brief that is on the GitHub issue — problem, cause, breaking changes, evidence."
+            : route.liveId !== undefined
+              ? "Still on Now — the frame and the steps, as they happen."
+              : (current?.purpose ?? "")
       }
       links={links}
       liveCount={liveCount}
@@ -354,7 +361,13 @@ export function App(): JSX.Element {
       {route.runId === undefined && route.view === "overview" && <Overview view={view} />}
       {route.runId === undefined && route.view === "live" && <Live selectedId={route.liveId} />}
       {route.runId === undefined && route.view === "runs" && <Runs view={view} />}
-      {route.runId === undefined && route.view === "findings" && <Findings view={view} onReload={load} />}
+      {route.runId === undefined && route.view === "findings" && (
+        <Findings
+          view={view}
+          onReload={load}
+          {...(route.findingKey !== undefined ? { ticketKey: route.findingKey } : {})}
+        />
+      )}
       {route.runId === undefined && route.view === "geography" && <Geography view={view} />}
       {route.runId === undefined && route.view === "coverage" && <Coverage view={view} />}
       {route.runId === undefined && route.view === "trends" && <Trends view={view} />}

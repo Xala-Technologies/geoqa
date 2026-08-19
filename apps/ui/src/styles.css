@@ -999,6 +999,37 @@ tr.link {
   cursor: pointer;
 }
 
+.brief-prose {
+  padding: 1.25rem 1.35rem 1.4rem;
+}
+
+.brief-prose p {
+  margin: 0 0 0.85rem;
+  max-width: 72ch;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  color: var(--fg-primary);
+}
+
+.brief-prose p:last-child {
+  margin-bottom: 0;
+}
+
+.brief-prose strong {
+  font-weight: 550;
+}
+
+.brief-cell {
+  white-space: normal;
+}
+
+.brief-gauge {
+  font-size: var(--text-headline);
+  line-height: var(--text-headline--line-height);
+  letter-spacing: var(--tracking-tight);
+  white-space: normal;
+}
+
 tr.link:hover td {
   box-shadow: inset 3px 0 0 var(--fg-accent);
 }

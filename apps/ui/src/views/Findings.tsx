@@ -1,14 +1,16 @@
 /**
  * What is wrong, aggregated the same way GitHub issues are.
  *
- * A check that failed on three hosts is three rows. Fixed rows stay on
- * the page, struck out, so the count of what Claude already opened is
- * visible next to what is still open. The Fix button starts that work
- * from here — it does not wait for the next sweep.
+ * A check that failed on three hosts is three rows. Click a row for the
+ * brief. Fixed rows stay on the page, struck out, so the count of what
+ * Claude already opened is visible next to what is still open. The Fix
+ * button starts that work from here — it does not wait for the next sweep.
  */
 import { useEffect, useMemo, useState, type JSX } from "react";
 import { getJson, sendJson } from "../api.ts";
+import { findingHref } from "../route.ts";
 import type { DashboardView, FindingTicket, RunView } from "../types.ts";
+import { FindingDetail } from "./FindingDetail.tsx";
 
 const SEVERITY_RANK = ["critical", "high", "medium", "low", "info"];
 
@@ -30,7 +32,15 @@ interface RepairStatus {
   reason?: string;
 }
 
-export function Findings({ view, onReload }: { view: DashboardView; onReload: () => void }): JSX.Element {
+export function Findings({
+  view,
+  onReload,
+  ticketKey,
+}: {
+  view: DashboardView;
+  onReload: () => void;
+  ticketKey?: string;
+}): JSX.Element {
   const [market, setMarket] = useState("");
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<RepairStatus | null>(null);
@@ -85,12 +95,21 @@ export function Findings({ view, onReload }: { view: DashboardView; onReload: ()
     });
   };
 
+  if (ticketKey !== undefined) {
+    return (
+      <>
+        {action !== null ? <p className="hint">{action}</p> : null}
+        <FindingDetail view={view} ticketKey={ticketKey} onFix={fix} running={running} />
+      </>
+    );
+  }
+
   return (
     <>
       <div className="head">
         <p className="hint">
-          One row per site and check. A ticket Claude already opened a PR for is struck out.
-          Fix starts that work now, without waiting for the next sweep.
+          One row per site and check. Click a row for the brief — problem, cause,
+          breaking changes, evidence. A ticket Claude already opened a PR for is struck out.
         </p>
       </div>
 
@@ -143,7 +162,14 @@ export function Findings({ view, onReload }: { view: DashboardView; onReload: ()
                   const seen = view.runs.find((r) => r.runId === latest);
                   const severity = worstSeverity(ticket, view.runs);
                   return (
-                    <tr key={ticket.key} className={ticket.fixed ? "struck" : undefined}>
+                    <tr
+                      key={ticket.key}
+                      className={ticket.fixed ? "link struck" : "link"}
+                      onClick={() => {
+                        window.location.hash = findingHref(ticket.key);
+                      }}
+                      title={`open ${ticket.title}`}
+                    >
                       <td>
                         <span className={`pill ${ticket.urgent ? "bad" : (TONE[severity] ?? "unknown")}`}>
                           {ticket.urgent ? "geoqa" : ticket.site}
@@ -161,13 +187,21 @@ export function Findings({ view, onReload }: { view: DashboardView; onReload: ()
                       </td>
                       <td className="num">{ticket.runIds.length}</td>
                       <td className="dim">
-                        <a className="tag" href={`#/run/${latest ?? ""}`}>
+                        <a className="tag" href={`#/run/${latest ?? ""}`} onClick={(e) => e.stopPropagation()}>
                           {(seen?.startedAt ?? "").slice(0, 10)} &rarr;
                         </a>
                       </td>
                       <td>
                         {ticket.fixed ? null : (
-                          <button className="btn btn-quiet" type="button" disabled={running} onClick={() => fix([ticket.key])}>
+                          <button
+                            className="btn btn-quiet"
+                            type="button"
+                            disabled={running}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              fix([ticket.key]);
+                            }}
+                          >
                             Fix
                           </button>
                         )}
@@ -201,7 +235,7 @@ function LinkOrAbsence<T>({
     );
   }
   return (
-    <a className="tag" href={href(measured.value)} target="_blank" rel="noreferrer">
+    <a className="tag" href={href(measured.value)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
       {label(measured.value)}
     </a>
   );

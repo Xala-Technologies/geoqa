@@ -19,6 +19,20 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — Findings open into the issue brief
+
+A row on `#/findings` is now a drill-down. Click it and the console
+shows the same brief that is (or will be) on the GitHub issue:
+Problem, What this is, Root cause, What this is not, What we saw,
+Suggested next step, Breaking changes, and Evidence. The dashboard
+ticket now carries `body`, so a rebuild is required before an
+already-built index shows those sections.
+
+Where: `findings/brief.ts`, `report/tickets.ts`, `apps/ui` Findings
+and `#/findings/<key>`.
+
+---
+
 ## 2026-08-19 — Issues and PRs name breaking changes
 
 The brief now has a Breaking changes section on both the issue and
