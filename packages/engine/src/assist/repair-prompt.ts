@@ -13,10 +13,11 @@ export function buildRepairPrompt(job: {
   base: string;
   site: string;
   urgent: boolean;
+  branch: string;
 }): string {
   return [
     `You are Claude Code in a git checkout of ${job.codeRepo}.`,
-    `The current branch is geoqa/issue-${job.issueNumber}, created from ${job.base}.`,
+    `The current branch is ${job.branch}, created from ${job.base}.`,
     "",
     "Fix this geoqa finding in this repository. Commit locally when you change files.",
     "Do not push. Do not open a pull request — the porter does that.",
@@ -34,6 +35,10 @@ export function buildRepairPrompt(job: {
     "  CANNOT_FIX: <one-line reason>",
     "  and change no files.",
     "- Keep the change small. Do not refactor unrelated code.",
+    "- Do not weaken this repository's own checks to make your change pass. Deleting or skipping a",
+    "  test, lowering a threshold, widening a type, adding @ts-ignore or eslint-disable, regenerating",
+    "  a snapshot, or passing --force is a rejected fix, not a fix. If the repo's checks fail on your",
+    "  change, change your change.",
     "- Prefer an additive restore of the asserted check. Do not remove a route, API, auth flow, or locale string unless the issue says to.",
     `- Commit message starts with Fix #${job.issueNumber}:`,
     "",

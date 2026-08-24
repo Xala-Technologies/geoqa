@@ -83,8 +83,37 @@ export default {
         "import it: a silent call from executeRun would turn --repeat into a " +
         "measurement of the model. cli/ is the only caller.",
       severity: "error",
+      // `fix/` is included on the right-hand side because it is a SUPERSET of the
+      // hazard: it composes assist/ with two finding sources and commit rights, so
+      // a measurement module reaching it would put a model on the measurement path
+      // by a longer route.
       from: { path: "^src/(run|journeys|geo|findings|confidence|browser|watch|evidence)/" },
-      to: { path: "^src/assist/" },
+      to: { path: "^src/(assist|fix)/" },
+    },
+    {
+      name: "fix-is-only-called-by-cli",
+      comment:
+        "`fix/` clones customer repositories, runs two models against them and " +
+        "opens pull requests. It is the top of the layer map and it composes " +
+        "`assist/` — so exactly one caller, `cli/`, the same rule assist/ already " +
+        "lives under. A server route or a watch tick that could reach it would be " +
+        "a model with commit rights on the measurement path, which is invariant " +
+        "10 by a longer route.",
+      severity: "error",
+      from: { path: "^src/", pathNot: "^src/(cli|fix)/" },
+      to: { path: "^src/fix/" },
+    },
+    {
+      name: "fix-must-not-know-the-browser",
+      comment:
+        "`fix/` is a composition layer, not a measurement one. It reads findings " +
+        "that already exist and acts on them; a run, a journey or a browser " +
+        "session reached from here would mean the thing proposing the fix also " +
+        "took the reading that justified it — invariant 3, in the one place it " +
+        "would be hardest to notice.",
+      severity: "error",
+      from: { path: "^src/fix/" },
+      to: { path: "^src/(browser|run|journeys|geo)/" },
     },
     {
       name: "browser-is-the-bottom-layer",

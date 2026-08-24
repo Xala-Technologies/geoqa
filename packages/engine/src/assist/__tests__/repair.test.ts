@@ -26,6 +26,7 @@ const job = (over: Partial<RepairJob> = {}): RepairJob => ({
   base: "main",
   site: "xala.no",
   urgent: false,
+  branch: "geoqa/issue-48",
   ...over,
 });
 

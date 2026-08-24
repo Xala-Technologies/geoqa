@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   fileTickets,
   githubAddLabels,
+  githubComment,
+  githubListIssues,
   githubCreate,
   parseGithubRepo,
   type FiledStore,
@@ -363,5 +365,98 @@ describe("githubAddLabels", () => {
         (async () => new Response("nope", { status: 401 })) as typeof fetch,
       ),
     ).rejects.toMatchObject({ status: 401, message: "nope" });
+  });
+});
+
+describe("githubListIssues", () => {
+  const req = { repo: "acme/geoqa", token: "t", labels: ["findings", "agent: approved"], limit: 50 };
+
+  it("ANDs the labels GitHub is asked for — the opt-in is two labels a human put there", async () => {
+    const seen: string[] = [];
+    await githubListIssues(req, (async (url: string) => {
+      seen.push(url);
+      return new Response("[]");
+    }) as unknown as typeof fetch);
+    const query = new URL(seen[0] as string);
+    expect(query.pathname).toBe("/repos/acme/geoqa/issues");
+    expect(query.searchParams.get("labels")).toBe("findings,agent: approved");
+    expect(query.searchParams.get("state")).toBe("open");
+    expect(query.searchParams.get("per_page")).toBe("50");
+  });
+
+  it("clamps per_page into GitHub's range and omits labels when there are none", async () => {
+    const seen: string[] = [];
+    const fetchFn = (async (url: string) => {
+      seen.push(url);
+      return new Response("[]");
+    }) as unknown as typeof fetch;
+    await githubListIssues({ ...req, labels: [], limit: 5_000 }, fetchFn);
+    await githubListIssues({ ...req, labels: [], limit: 0 }, fetchFn);
+    expect(new URL(seen[0] as string).searchParams.get("per_page")).toBe("100");
+    expect(new URL(seen[1] as string).searchParams.get("per_page")).toBe("1");
+    expect(new URL(seen[0] as string).searchParams.has("labels")).toBe(false);
+  });
+
+  it("reads object labels and string labels alike, and marks pull requests as such", async () => {
+    const issues = await githubListIssues(
+      req,
+      (async () =>
+        new Response(
+          JSON.stringify([
+            { number: 343, html_url: "https://github.com/acme/geoqa/issues/343", title: "t", body: "b", labels: [{ name: "findings" }, "agent: approved", 7, null] },
+            { number: 344, html_url: "https://github.com/acme/geoqa/pull/344", pull_request: { url: "x" } },
+            { number: 345, html_url: "https://github.com/acme/geoqa/issues/345", labels: "not an array" },
+            // Rows GitHub could not have sent, dropped rather than guessed at.
+            { html_url: "no number" },
+            { number: 9 },
+            "not an object",
+            null,
+          ]),
+        )) as typeof fetch,
+    );
+    expect(issues).toEqual([
+      { number: 343, title: "t", body: "b", url: "https://github.com/acme/geoqa/issues/343", labels: ["findings", "agent: approved"], pullRequest: false },
+      { number: 344, title: "", body: "", url: "https://github.com/acme/geoqa/pull/344", labels: [], pullRequest: true },
+      { number: 345, title: "", body: "", url: "https://github.com/acme/geoqa/issues/345", labels: [], pullRequest: false },
+    ]);
+  });
+
+  it("throws rather than returning an empty list when GitHub said no", async () => {
+    await expect(githubListIssues({ ...req, repo: "nope" }, (async () => new Response("[]")) as typeof fetch)).rejects.toMatchObject({ status: 400 });
+    await expect(githubListIssues(req, (async () => new Response("", { status: 403 })) as typeof fetch)).rejects.toMatchObject({
+      status: 403,
+      message: "GitHub 403",
+    });
+    await expect(githubListIssues(req, (async () => new Response("rate limited", { status: 429 })) as typeof fetch)).rejects.toMatchObject({
+      message: "rate limited",
+    });
+    // A 200 that is not a list is not "no issues" — it is a shape we do not know.
+    await expect(githubListIssues(req, (async () => new Response(`{"message":"x"}`)) as typeof fetch)).rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe("githubComment", () => {
+  const req = { repo: "acme/geoqa", token: "t", number: 343, body: "the fix was rejected" };
+
+  it("posts the reason on the issue — a red label with no reason is one nobody can answer", async () => {
+    const sent: { url: string; init: RequestInit }[] = [];
+    await githubComment(req, (async (url: string, init: RequestInit) => {
+      sent.push({ url, init });
+      return new Response("{}", { status: 201 });
+    }) as unknown as typeof fetch);
+    expect(sent[0]?.url).toBe("https://api.github.com/repos/acme/geoqa/issues/343/comments");
+    expect(sent[0]?.init.method).toBe("POST");
+    expect(JSON.parse(String(sent[0]?.init.body))).toEqual({ body: "the fix was rejected" });
+  });
+
+  it("refuses a malformed repo and surfaces GitHub's own refusal", async () => {
+    await expect(githubComment({ ...req, repo: "nope" }, (async () => new Response("")) as typeof fetch)).rejects.toMatchObject({ status: 400 });
+    await expect(githubComment(req, (async () => new Response("", { status: 403 })) as typeof fetch)).rejects.toMatchObject({
+      status: 403,
+      message: "GitHub 403",
+    });
+    await expect(githubComment(req, (async () => new Response("locked", { status: 410 })) as typeof fetch)).rejects.toMatchObject({
+      message: "locked",
+    });
   });
 });

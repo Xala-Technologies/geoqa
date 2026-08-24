@@ -67,6 +67,12 @@ export default defineConfig({
         // Spawns git/gh for an unattended repair. The suite must never
         // clone a customer repo; every decision lives in assist/repair.ts.
         "src/assist/repair-exec.ts",
+        // Opens a socket to the growth database and news up a `pg.Pool`. The
+        // suite must never reach the live growth schema. Every decision about a
+        // row — which rows are candidates, how they group, what the write-back
+        // may and may not overwrite — lives in fix/growth-db.ts and
+        // fix/intake-growth.ts and is covered against an injected GrowthDb.
+        "src/fix/growth-pg.ts",
         // Every activity is a thin wrapper that news up a real provider /
         // runtime and delegates; the logic each one calls is at 100%.
         "src/temporal/activities.ts",

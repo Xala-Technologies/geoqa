@@ -37,6 +37,8 @@ import {
   digestSend,
   findingsFile,
   findingsRepair,
+  fixRun,
+  renderFixRun,
   renderFindingsFile,
   renderFindingsRepair,
   enforceQuota,
@@ -578,6 +580,30 @@ async function main(argv: string[]): Promise<number> {
     emit(result, renderFindingsRepair(result));
     if (result.skipped === "store-unreadable" || result.failed.length > 0) return 1;
     return 0;
+  }
+
+  if (group === "fix" && (action === "run" || action === undefined)) {
+    const source = flagString(args, "source", "both");
+    if (source !== "both" && source !== "growth" && source !== "github") {
+      console.error("--source is both, growth or github");
+      return 2;
+    }
+    const only = flagList(argv, "only");
+    const result = await fixRun(deps, {
+      dryRun: flagBool(args, "dry-run"),
+      source,
+      merge: flagBool(args, "merge"),
+      triggeredBy: flagBool(args, "timer") ? "timer" : "manual",
+      ...(only.length > 0 ? { only } : {}),
+      ...(args.flags.max !== undefined ? { maxItems: flagNumber(args, "max", 3) } : {}),
+      ...(args.flags["budget-min"] !== undefined ? { budgetMin: flagNumber(args, "budget-min", 240) } : {}),
+    });
+    emit(result, renderFixRun(result));
+    // A REJECTED fix is the agent working correctly and must not turn a timer
+    // red. What is red: we could not read a source, we could not take the lock,
+    // or a step threw.
+    if (result.skipped === "no-sources" || result.skipped === "store-unreadable" || result.skipped === "locked") return 1;
+    return result.outcomes.some((outcome) => outcome.status === "failed") ? 1 : 0;
   }
 
   if (group === "runs" && action === "rebuild") {

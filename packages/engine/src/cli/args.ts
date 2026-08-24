@@ -532,6 +532,34 @@ Multi-tenancy:
       for. Already-repaired keys are skipped. A missing token is not an
       error. Exits 1 when a store is unreadable or a repair fails.
 
+  geoqa fix run [--dry-run] [--source both|growth|github] [--max <n>]
+                [--budget-min <n>] [--only <key>] [--merge] [--tenant <id>] [--json]
+      The implementation agent. Reads findings from BOTH sources — the growth
+      fleet's growth.agent_findings in Postgres and geoqa's own filed issues —
+      groups them by the GitHub issue they already share, ranks them, and for
+      each of at most --max items clones the destination repo, lets claude -p
+      fix it, has a SECOND model review the diff, runs the target repo's own
+      checks in the clone, and only then pushes and opens a PR.
+
+      A rejected review or a failed check stops the item BEFORE anything
+      reaches origin, comments the reason on the issue and labels it
+      agent: changes-requested. Nothing here ever weakens a target repo's
+      tests, thresholds or lint rules to make a fix pass.
+
+      Auto-merge is OFF. --merge asks for it and is refused unless the tenant
+      file also sets fix.automerge: true.
+
+      --max caps items per run (default 3); --budget-min caps total wall clock
+      (default 240). The budget is checked before an item starts and never
+      interrupts one. --only <key> may be repeated.
+
+      An issue with no growth or geoqa row is picked up only when a human has
+      labelled it BOTH findings and agent: approved. GEOQA_GITHUB_TOKEN and
+      GEOQA_GITHUB_REPO required; POSTGRES_PASSWORD turns the growth source on.
+      Exits 1 when every source was unreachable, a store is unreadable, another
+      run holds the lock, or an item failed. A REJECTED fix is the agent working
+      and exits 0.
+
   geoqa evidence inspect <runId> [--json]
       Show a run's evidence manifest, what is missing, and its completeness.
 

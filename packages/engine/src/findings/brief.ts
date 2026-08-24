@@ -84,14 +84,58 @@ export function seenLine(runs: { profileId: string; journeyId: string; verdict: 
   return `${n} ${n === 1 ? "run" : "runs"}. Markets: ${listed(runs.map((r) => marketOf(r.profileId)))}. Journeys: ${listed(runs.map((r) => r.journeyId))}. Verdicts: ${listed(runs.map((r) => r.verdict))}.`;
 }
 
-export function prBody(job: {
-  title: string;
-  body: string;
-  issueUrl: string;
-  site: string;
-  codeRepo: string;
-  base: string;
-}): string {
+/**
+ * What a second model and the target repo's own checks said about this diff.
+ *
+ * Optional because `findings repair` has neither and must keep printing the
+ * body it always printed. When it IS present the wording is deliberately flat:
+ * a model approving another model's diff is a filter, not an approval, and a PR
+ * that implied otherwise would manufacture exactly the confidence this is meant
+ * to avoid.
+ */
+export interface PrReviewNote {
+  verdict: "approve" | "reject";
+  verifyState: "passed" | "failed" | "skipped";
+  steps: { name: string; exitCode: number }[];
+}
+
+const reviewBlock = (note: PrReviewNote): string => {
+  const rows =
+    note.steps.length === 0
+      ? ["| — | — |"]
+      : note.steps.map((step) => `| \`${step.name}\` | ${step.exitCode === 0 ? "pass" : `exit ${step.exitCode}`} |`);
+  const verify =
+    note.verifyState === "passed"
+      ? "This repository's own checks ran in the clone and passed."
+      : note.verifyState === "skipped"
+        ? "This repository defines no checks this agent could run, so NOTHING was verified. A human must read the diff."
+        : "This repository's own checks failed.";
+  return [
+    "",
+    "## Review",
+    `Reviewed by a second model, not a human. Verdict: **${note.verdict}**.`,
+    "The reviewer could not edit the checkout and answered from the issue and the diff only.",
+    "",
+    verify,
+    "No check, threshold or lint rule in this repository was changed to make this diff pass — a fix that needed that is rejected before it reaches a branch.",
+    "",
+    "| Step | Result |",
+    "|---|---|",
+    ...rows,
+  ].join("\n");
+};
+
+export function prBody(
+  job: {
+    title: string;
+    body: string;
+    issueUrl: string;
+    site: string;
+    codeRepo: string;
+    base: string;
+  },
+  note?: PrReviewNote,
+): string {
   const brief = job.body.includes("## Problem") ? job.body : `## Problem\n${job.title}\n\n${job.body}`;
   const breaking = job.body.includes("## Breaking changes")
     ? ""
@@ -109,6 +153,7 @@ export function prBody(job: {
     `Opened by geoqa after a watch finding on **${job.site}**. Proposed fix in \`${job.codeRepo}\` from \`${job.base}\`. The issue is the authority — review the diff against that brief.`,
     "If this diff removes a public route, API, or locale string, treat it as breaking even when the finding looked additive.",
     breaking,
+    ...(note === undefined ? [] : [reviewBlock(note)]),
     "",
     `Fixes ${job.issueUrl}`,
   ].join("\n");

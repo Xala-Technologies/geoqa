@@ -69,6 +69,30 @@ repositories:
   - host: xala.no
     repo: xalatechnologies/xala-web-cloner
     base: main
+# growth-fleet writes `growth.agent_findings.target_repo` as a LOGICAL key, not a
+# host — `marketing`, `app`, `platform`. The host map above cannot answer a row
+# whose `site` column is a site id, so the fix agent needs both.
+#
+# `platform` is taken from xaheen.config.example.json and NOT from the live
+# config, which lives on the site VPS. If the slug is wrong the clone fails and
+# the item is a `failed` outcome — a wrong slug cannot produce a wrong PR.
+growth:
+  repoKeys:
+    - key: marketing
+      repo: Xala-Technologies/booking-brilliance
+      base: main
+    - key: app
+      repo: Xala-Technologies/Digilist
+      base: dev
+    - key: platform
+      repo: Xala-Technologies/platform
+      base: main
+  # Empty means every agent in the fleet. Name slugs here to narrow it.
+  agents: []
+# A human merges. See tenant/types.ts for why this is a decision and not a
+# placeholder, and AGENTS.md for what has to be true before it changes.
+fix:
+  automerge: false
 # The NAME of an environment variable, never a credential. R-26: credentials come
 # from the environment only. null means "use the shared default", which is what this
 # tenant does today — its own Decodo sub-user is slice 7.

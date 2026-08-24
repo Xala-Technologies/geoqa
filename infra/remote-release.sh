@@ -30,9 +30,12 @@ install -m 644 "$ROOT/infra/geoqa.service" /etc/systemd/system/geoqa.service
 install -m 644 "$ROOT/infra/geoqa-bridge.service" /etc/systemd/system/geoqa-bridge.service
 install -m 644 "$ROOT/infra/geoqa-digest.service" /etc/systemd/system/geoqa-digest.service
 install -m 644 "$ROOT/infra/geoqa-digest.timer" /etc/systemd/system/geoqa-digest.timer
+install -m 644 "$ROOT/infra/geoqa-fix.service" /etc/systemd/system/geoqa-fix.service
+install -m 644 "$ROOT/infra/geoqa-fix.timer" /etc/systemd/system/geoqa-fix.timer
 systemctl daemon-reload
 systemctl enable --now geoqa-bridge.service
 systemctl enable --now geoqa-digest.timer
+systemctl enable --now geoqa-fix.timer
 systemctl restart geoqa.service
 
 for _ in $(seq 1 30); do

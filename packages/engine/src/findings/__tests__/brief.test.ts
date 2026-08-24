@@ -95,3 +95,49 @@ describe("prBody", () => {
     expect(thin).toContain("one line");
   });
 });
+
+describe("prBody — the review note", () => {
+  const job = {
+    title: "Meta description is 187 characters",
+    body: "## Problem\ntoo long",
+    issueUrl: "https://github.com/x/y/issues/343",
+    site: "digilist.no",
+    codeRepo: "x/y",
+    base: "main",
+  };
+
+  it("prints nothing at all when there was no review — `findings repair` keeps its old body", () => {
+    expect(prBody(job)).not.toContain("## Review");
+  });
+
+  it("says a MODEL reviewed it, never a human, and states that no check was weakened", () => {
+    const text = prBody(job, {
+      verdict: "approve",
+      verifyState: "passed",
+      steps: [
+        { name: "install", exitCode: 0 },
+        { name: "test", exitCode: 0 },
+      ],
+    });
+    expect(text).toContain("## Review");
+    expect(text).toContain("Reviewed by a second model, not a human");
+    expect(text).toContain("could not edit the checkout");
+    expect(text).toContain("This repository's own checks ran in the clone and passed.");
+    expect(text).toContain("No check, threshold or lint rule in this repository was changed to make this diff pass");
+    expect(text).toContain("| `install` | pass |");
+    expect(text).toContain("| `test` | pass |");
+  });
+
+  it("says in words that a SKIPPED verify verified nothing, rather than implying a pass", () => {
+    const text = prBody(job, { verdict: "approve", verifyState: "skipped", steps: [] });
+    expect(text).toContain("NOTHING was verified");
+    expect(text).toContain("A human must read the diff.");
+    expect(text).toContain("| — | — |");
+  });
+
+  it("prints a non-zero exit code rather than the word pass", () => {
+    const text = prBody(job, { verdict: "approve", verifyState: "failed", steps: [{ name: "test", exitCode: 1 }] });
+    expect(text).toContain("This repository's own checks failed.");
+    expect(text).toContain("| `test` | exit 1 |");
+  });
+});
