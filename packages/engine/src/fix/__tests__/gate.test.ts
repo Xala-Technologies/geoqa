@@ -624,3 +624,31 @@ describe("verify — the target repository's own checks", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Auth must come from config, never from the machine
+// ---------------------------------------------------------------------------
+
+describe("gh invocations carry an explicit GH_TOKEN", () => {
+  it("ghPrOpen passes GEOQA_GITHUB_TOKEN through as GH_TOKEN", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(__dirname, "..", "..", "cli", "commands.ts"), "utf8");
+    const fn = src.slice(src.indexOf("const ghPrOpen"), src.indexOf("const ghPrOpen") + 1400);
+
+    // The failure this pins: `env: input.env` lets gh fall back to
+    // ~/.config/gh/hosts.yml. A stale token there once made every `gh pr list`
+    // throw, and because an unanswerable "does a PR exist?" is read as YES, the
+    // run skipped all 54 items and opened nothing while reporting success.
+    expect(fn).toContain("gh");
+    expect(fn).toMatch(/env:\s*ghEnv\(/);
+    expect(fn).not.toMatch(/env:\s*input\.env\s*,/);
+  });
+
+  it("ghEnv actually sets GH_TOKEN", async () => {
+    const { ghEnv } = await import("../../assist/repair.js");
+    const out = ghEnv("tok-123", { PATH: "/usr/bin" } as NodeJS.ProcessEnv);
+    expect(out.GH_TOKEN).toBe("tok-123");
+    expect(out.PATH).toBe("/usr/bin");
+  });
+});

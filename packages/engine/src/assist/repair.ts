@@ -177,10 +177,28 @@ function workdirFor(workRoot: string, repo: string, issueNumber: number): { ok: 
  * through GIT_CONFIG_* so the token never appears on argv — a clone that
  * could pull but not push is how four local commits never became PRs.
  */
-const gitEnv = (token: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
+/**
+ * The minimum a `gh` invocation needs to be OURS rather than the machine's.
+ *
+ * Without GH_TOKEN, `gh` falls back to ~/.config/gh/hosts.yml — whatever
+ * credential someone last ran `gh auth login` with. That is ambient machine
+ * state, and an unattended agent that depends on it works for months and then
+ * stops the day a human re-auths the CLI, or the day the box is rebuilt. It
+ * happened: a stale classic PAT in hosts.yml outranked a valid token in .env,
+ * every `gh pr list` failed the org's token-lifetime policy, and because an
+ * unanswerable "does a PR exist?" is treated as YES, the run skipped every item
+ * and opened nothing. Safe, but silent.
+ *
+ * Exported so every `gh` call site can be explicit about its credential.
+ */
+export const ghEnv = (token: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
   ...env,
   GH_TOKEN: token,
   GH_PROMPT_DISABLED: "1",
+});
+
+const gitEnv = (token: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
+  ...ghEnv(token, env),
   GIT_TERMINAL_PROMPT: "0",
   GIT_CONFIG_COUNT: "2",
   GIT_CONFIG_KEY_0: "credential.helper",
