@@ -42,15 +42,20 @@ const deps = (over: Record<string, unknown> = {}) =>
   defaultDeps(repoRoot, { evidenceRoot, tenantId: "digilist", env: ENV, now: () => 1, log: () => undefined, ...over });
 
 /** A `RepairExec` that carries `repairOne` to an open PR, and records every argv. */
-function recordingExec(): RepairExec & { argv: string[][] } {
+function recordingExec(): RepairExec & { argv: string[][]; envs: NodeJS.ProcessEnv[] } {
   const argv: string[][] = [];
+  // The ENV matters as much as the argv. Without GH_TOKEN, `gh` falls back to
+  // ~/.config/gh/hosts.yml — a credential nobody in this codebase chose.
+  const envs: NodeJS.ProcessEnv[] = [];
   return {
     argv,
+    envs,
     mkdir: () => undefined,
     exists: () => false,
     rm: () => undefined,
     run: async (input) => {
       argv.push(input.argv);
+      envs.push(input.env ?? {});
       const key = input.argv.join(" ");
       if (key.includes("git diff --numstat")) return { stdout: "3\t1\tsrc/x.ts\n", stderr: "", exitCode: 0 };
       if (key.includes("git diff")) return { stdout: "--- a/src/x.ts\n+++ b/src/x.ts\n+<input name=q>", stderr: "", exitCode: 0 };
@@ -274,6 +279,15 @@ describe("fixRun — the gate this command wires up", () => {
       "number",
     ]);
     expect(result.outcomes[0]?.status).toBe("opened");
+
+    // …and it must carry OUR token, not the machine's. Passing the raw process
+    // env let `gh` read ~/.config/gh/hosts.yml instead. When the token stored
+    // there failed the org's token-lifetime policy, every `gh pr list` threw —
+    // and because an unanswerable "does a PR exist?" is deliberately read as
+    // YES, the run skipped all 54 items, opened nothing, and reported success.
+    const askedAt = exec.argv.findIndex((a) => a.join(" ").includes("gh pr list"));
+    expect(askedAt).toBeGreaterThanOrEqual(0);
+    expect(exec.envs[askedAt]?.GH_TOKEN).toBe(ENV.GEOQA_GITHUB_TOKEN);
   });
 
   it("treats a pull request it CAN see as a night already spent", async () => {

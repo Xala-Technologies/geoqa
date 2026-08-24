@@ -628,27 +628,21 @@ describe("verify — the target repository's own checks", () => {
 // ---------------------------------------------------------------------------
 // Auth must come from config, never from the machine
 // ---------------------------------------------------------------------------
+// Auth must come from config, never from the machine
+// ---------------------------------------------------------------------------
 
-describe("gh invocations carry an explicit GH_TOKEN", () => {
-  it("ghPrOpen passes GEOQA_GITHUB_TOKEN through as GH_TOKEN", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const src = readFileSync(join(__dirname, "..", "..", "cli", "commands.ts"), "utf8");
-    const fn = src.slice(src.indexOf("const ghPrOpen"), src.indexOf("const ghPrOpen") + 1400);
-
-    // The failure this pins: `env: input.env` lets gh fall back to
-    // ~/.config/gh/hosts.yml. A stale token there once made every `gh pr list`
-    // throw, and because an unanswerable "does a PR exist?" is read as YES, the
-    // run skipped all 54 items and opened nothing while reporting success.
-    expect(fn).toContain("gh");
-    expect(fn).toMatch(/env:\s*ghEnv\(/);
-    expect(fn).not.toMatch(/env:\s*input\.env\s*,/);
-  });
-
-  it("ghEnv actually sets GH_TOKEN", async () => {
+describe("ghEnv", () => {
+  // The behavioural half of this contract — that the real ghPrOpen actually
+  // passes GH_TOKEN when it shells out — lives in cli/__tests__/fix-run.test.ts,
+  // which INVOKES it and inspects the env it handed to exec. A source-text grep
+  // lived here first; it asserted the right thing and covered nothing, which is
+  // how ghPrOpen stayed uncovered and only CI's 100% function threshold noticed.
+  it("sets GH_TOKEN and preserves the rest of the environment", async () => {
     const { ghEnv } = await import("../../assist/repair.js");
-    const out = ghEnv("tok-123", { PATH: "/usr/bin" } as NodeJS.ProcessEnv);
+    const out = ghEnv("tok-123", { PATH: "/usr/bin", HOME: "/root" } as NodeJS.ProcessEnv);
     expect(out.GH_TOKEN).toBe("tok-123");
+    expect(out.GH_PROMPT_DISABLED).toBe("1");
     expect(out.PATH).toBe("/usr/bin");
+    expect(out.HOME).toBe("/root");
   });
 });

@@ -1,17 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { FindingTicket, TrendSeries } from "../types.ts";
 import {
+  DIRECTION_LABEL,
   directionCounts,
   driftBrief,
+  explainSeries,
   filterSeries,
   isFilingCandidate,
   latestMeasured,
   parseTrendKey,
+  pointsNeeded,
   relatedTickets,
   seriesKey,
   sortSeries,
   trendDelta,
   trendsHref,
+  visitRows,
 } from "./trends.ts";
 
 const measured = (value: number) => ({ measured: true as const, value, text: String(value) });
@@ -53,6 +57,7 @@ describe("parseTrendKey / trendsHref", () => {
     expect(parseTrendKey(undefined)).toEqual({});
     expect(parseTrendKey("")).toEqual({});
     expect(parseTrendKey("lcp")).toEqual({ metric: "lcp" });
+    expect(parseTrendKey("insufficient-data")).toEqual({ direction: "insufficient-data" });
     expect(parseTrendKey("nope")).toEqual({});
     expect(parseTrendKey("ttfb:alesund:https://digilist.no/login")).toEqual({
       metric: "ttfb",
@@ -162,5 +167,36 @@ describe("relatedTickets / driftBrief", () => {
     const ours = driftBrief(series({ metric: "confidence" }));
     expect(ours).toContain("Not a site defect");
     expect(ours).toContain("Confidence");
+  });
+});
+
+describe("explainSeries", () => {
+  it("says how many more visits a thin series needs, in words a reader can act on", () => {
+    const thin = series({
+      direction: "insufficient-data",
+      measuredPoints: 2,
+      earlier: absent("only 2"),
+      later: absent("only 2"),
+    });
+    expect(pointsNeeded(thin)).toBe(4);
+    expect(DIRECTION_LABEL["insufficient-data"]).toBe("Not enough visits yet");
+    const sections = explainSeries(thin);
+    expect(sections.map((s) => s.heading)).toEqual(["What this means", "What this number is", "What we saw", "What to do next"]);
+    expect(sections[0]?.text).toContain("2 of the 6");
+    expect(sections[0]?.text).toContain("4 more");
+    expect(sections[1]?.text).toContain("first byte");
+    expect(explainSeries(series())[0]?.text).toContain("Getting worse");
+    expect(explainSeries(series())[3]?.text).toContain("Open the latest visit");
+    expect(explainSeries(series({ direction: "stable" }))[0]?.text).toContain("noise");
+    expect(explainSeries(series({ direction: "improving" }))[0]?.text).toContain("Getting better");
+    expect(explainSeries(series({ direction: "improving" }))[3]?.text).toContain("Nothing to file");
+    expect(explainSeries(thin)[3]?.text).toContain("4 more");
+    expect(explainSeries(series({ metric: "inp", direction: "insufficient-data", measuredPoints: 0 }))[0]?.text).toContain(
+      "no visit that measured it",
+    );
+    expect(visitRows(thin).some((row) => row.gap)).toBe(true);
+    expect(explainSeries(series({ direction: "insufficient-data", measuredPoints: 0 }))[3]?.text).toContain(
+      "Until a reading exists",
+    );
   });
 });

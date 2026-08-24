@@ -30,6 +30,7 @@ describe("routeFromHash", () => {
 
   it("opens a trend by metric or by the series key", () => {
     expect(routeFromHash("#/trends/lcp")).toEqual({ view: "trends", trendKey: "lcp" });
+    expect(routeFromHash("#/trends/insufficient-data")).toEqual({ view: "trends", trendKey: "insufficient-data" });
     const key = "ttfb:alesund:https://digilist.no/";
     expect(routeFromHash(`#/trends/${encodeURIComponent(key)}`)).toEqual({ view: "trends", trendKey: key });
   });

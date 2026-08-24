@@ -19,6 +19,19 @@ Three companion documents, each answering a different question:
 
 ---
 
+## 2026-08-19 — A trend opens like a finding
+
+Clicking a series on `#/trends` now leaves the list and opens a page:
+what the label means, what the number is, each visit, what to do next.
+**Not enough visits yet** is the usual state — fewer than six readings
+from that city — and the page says how many more it needs. Gauges
+filter to that verdict. The old default hid those series, so there
+was nothing to click.
+
+Where: `apps/ui` Trends, `trends.ts`.
+
+---
+
 ## 2026-08-19 — Over time is an instrument
 
 `#/trends` was a table of series. It is now filterable by metric,

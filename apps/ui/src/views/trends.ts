@@ -13,6 +13,10 @@ export type DirectionFilter = "" | "all" | TrendDirection;
 export type TrendSort = "direction" | "delta" | "page" | "market";
 
 export const TREND_METRICS: TrendMetricId[] = ["lcp", "cls", "ttfb", "inp", "confidence"];
+export const TREND_DIRECTIONS: TrendDirection[] = ["worsening", "improving", "stable", "insufficient-data"];
+
+/** Same floor as the engine. A direction from fewer readings is a story, not a measurement. */
+export const MIN_POINTS_FOR_DIRECTION = 6;
 
 export const METRIC_LABEL: Record<TrendMetricId, string> = {
   lcp: "Largest paint",
@@ -21,6 +25,33 @@ export const METRIC_LABEL: Record<TrendMetricId, string> = {
   inp: "Interaction",
   confidence: "Confidence",
 };
+
+export const METRIC_MEANING: Record<TrendMetricId, string> = {
+  lcp: "When the main content appeared, in milliseconds. Lower is better.",
+  cls: "How much the page jumped while it loaded. Zero means nothing moved.",
+  ttfb: "How long until the browser saw the first byte. Lower is better.",
+  inp: "How long a click took to show a response. It does not exist until something is clicked.",
+  confidence: "How far this visit's readings can be trusted. Ours, not the page's.",
+};
+
+export const DIRECTION_LABEL: Record<TrendDirection, string> = {
+  worsening: "Getting worse",
+  improving: "Getting better",
+  stable: "No real change",
+  "insufficient-data": "Not enough visits yet",
+};
+
+export interface TrendSection {
+  heading: string;
+  text: string;
+}
+
+export interface TrendVisit {
+  at: string;
+  runId: string;
+  reading: string;
+  gap: boolean;
+}
 
 const DIR_RANK: Record<TrendDirection, number> = {
   worsening: 0,
@@ -39,11 +70,13 @@ export function seriesKey(series: Pick<TrendSeries, "metric" | "marketId" | "tar
 
 export function parseTrendKey(key: string | undefined): {
   metric?: TrendMetricId;
+  direction?: TrendDirection;
   marketId?: string;
   target?: string;
 } {
   if (key === undefined || key === "") return {};
   if ((TREND_METRICS as string[]).includes(key)) return { metric: key as TrendMetricId };
+  if ((TREND_DIRECTIONS as string[]).includes(key)) return { direction: key as TrendDirection };
   const first = key.indexOf(":");
   const second = key.indexOf(":", first + 1);
   if (first < 0 || second < 0) return {};
@@ -136,6 +169,51 @@ export function relatedTickets(target: string, tickets: FindingTicket[]): Findin
   const host = hostOf(target);
   if (host === null) return [];
   return tickets.filter((ticket) => ticket.hosts.includes(host) || ticket.site === host);
+}
+
+export function pointsNeeded(series: TrendSeries): number {
+  return Math.max(0, MIN_POINTS_FOR_DIRECTION - series.measuredPoints);
+}
+
+export function visitRows(series: TrendSeries): TrendVisit[] {
+  return series.points.map((point) => ({
+    at: point.at,
+    runId: point.runId,
+    reading: point.value === null ? "not measured" : String(point.value),
+    gap: point.value === null,
+  }));
+}
+
+export function explainSeries(series: TrendSeries): TrendSection[] {
+  const page = pageLabel(series.target);
+  const needed = pointsNeeded(series);
+  const meaning =
+    series.direction === "insufficient-data"
+      ? series.measuredPoints === 0
+        ? `Not enough visits yet. ${METRIC_LABEL[series.metric]} in ${series.marketId} on ${page} has no visit that measured it. A direction needs ${MIN_POINTS_FOR_DIRECTION} readings. Two or three visits would be a story, not a measurement.`
+        : `Not enough visits yet. ${METRIC_LABEL[series.metric]} in ${series.marketId} on ${page} has ${series.measuredPoints} of the ${MIN_POINTS_FOR_DIRECTION} readings a direction needs. ${needed} more measured visit(s) from this city and we can say whether it moved.`
+      : series.direction === "stable"
+        ? `No real change. The number moved, but inside the noise — a few percent, or less than anyone would act on. That is the internet, not a regression.`
+        : series.direction === "improving"
+          ? `Getting better. The later half of visits measured a lower ${METRIC_LABEL[series.metric].toLowerCase()} than the earlier half, by enough to clear both floors.`
+          : `Getting worse. The later half of visits measured a higher ${METRIC_LABEL[series.metric].toLowerCase()} than the earlier half, by enough to clear both floors.`;
+  const next =
+    series.direction === "insufficient-data"
+      ? needed === MIN_POINTS_FOR_DIRECTION
+        ? `Wait for the watch to visit this page from ${series.marketId}. Until a reading exists, there is nothing to file.`
+        : `Let the watch visit this page from ${series.marketId} ${needed} more time(s). Do not treat the current number as a trend.`
+      : series.direction === "worsening"
+        ? `Open the latest visit. If a journey check failed, that ticket is already on To fix. If every check passed, keep watching — a slower TTFB is often the exit, not the page.`
+        : `Nothing to file. Open a visit if you want the stills; the number is not asking for a change.`;
+  return [
+    { heading: "What this means", text: meaning },
+    { heading: "What this number is", text: METRIC_MEANING[series.metric] },
+    {
+      heading: "What we saw",
+      text: `${series.measuredPoints} of ${series.points.length} visit(s) produced a reading. A hollow tick is a visit that did not measure this number — never a zero.`,
+    },
+    { heading: "What to do next", text: next },
+  ];
 }
 
 export function isFilingCandidate(series: TrendSeries): boolean {

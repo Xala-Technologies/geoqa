@@ -745,6 +745,15 @@ select:focus-visible {
   color: var(--fg-muted);
 }
 
+a.gauge {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.gauge.on {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg-accent) 55%, transparent);
+}
+
 .meter {
   display: flex;
   overflow: hidden;
@@ -1127,6 +1136,8 @@ th[aria-sort="descending"] .sort-mark {
   border: 1px solid var(--stroke-default);
   border-radius: var(--radius-card);
   background: var(--bg-elevated);
+  color: inherit;
+  text-decoration: none;
 }
 
 .trend-card.on {

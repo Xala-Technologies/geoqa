@@ -1,30 +1,32 @@
 /**
  * Whether a number is drifting — then the visit that last measured it.
  *
- * A table of every series trains nobody. This is the instrument: filter,
- * open a series, jump to the visit or the tickets already filed on that
- * host. A worsening TTFB is not itself a GitHub issue.
+ * The list is a cut. A series opens as its own page, the same way a
+ * finding does, so "not enough visits yet" has somewhere to be explained.
  */
 import { useMemo, useState, type JSX } from "react";
-import type { DashboardView, TrendSeries } from "../types.ts";
+import type { DashboardView, TrendDirection, TrendSeries } from "../types.ts";
 import { MeasuredValue } from "../Measured.tsx";
 import { findingHref } from "../route.ts";
 import { geographyHref, pageLabel } from "./geography.ts";
 import {
-  TREND_METRICS,
+  DIRECTION_LABEL,
   METRIC_LABEL,
-  directionCounts,
+  MIN_POINTS_FOR_DIRECTION,
+  TREND_METRICS,
   driftBrief,
+  explainSeries,
   filterSeries,
   isFilingCandidate,
   latestMeasured,
   parseTrendKey,
+  pointsNeeded,
   relatedTickets,
   seriesKey,
   sortSeries,
   trendDelta,
   trendsHref,
-  type DirectionFilter,
+  visitRows,
   type TrendSort,
 } from "./trends.ts";
 
@@ -37,45 +39,78 @@ const TONE: Record<string, string> = {
 
 export function Trends({ view, trendKey }: { view: DashboardView; trendKey?: string }): JSX.Element {
   const parsed = parseTrendKey(trendKey);
-  const [direction, setDirection] = useState<DirectionFilter>(parsed.metric === undefined && view.trends.length === 0 ? "all" : "");
-  const [market, setMarket] = useState(parsed.marketId ?? "");
-  const [q, setQ] = useState("");
-  const [sort, setSort] = useState<TrendSort>("direction");
-  const [copied, setCopied] = useState(false);
-
-  const counts = directionCounts(view.allTrends);
-  const markets = [...new Set(view.allTrends.map((s) => s.marketId))].sort();
-  const metric = parsed.metric ?? "";
-  const rows = useMemo(
-    () => sortSeries(filterSeries(view.allTrends, { metric, direction, market, page: q }), sort),
-    [view.allTrends, metric, direction, market, q, sort],
-  );
   const selectedKey =
     parsed.metric !== undefined && parsed.marketId !== undefined && parsed.target !== undefined
       ? seriesKey({ metric: parsed.metric, marketId: parsed.marketId, target: parsed.target })
       : null;
   const selected = selectedKey === null ? null : (view.allTrends.find((s) => seriesKey(s) === selectedKey) ?? null);
 
+  if (selectedKey !== null) {
+    if (selected === null) {
+      return (
+        <div className="empty">
+          <strong>This series is not in the current dashboard.</strong>
+          Rebuild, or go back to{" "}
+          <a className="tag" href="#/trends">
+            Over time
+          </a>
+          .
+        </div>
+      );
+    }
+    return <TrendDetail view={view} row={selected} />;
+  }
+
+  return <TrendList view={view} metric={parsed.metric ?? ""} direction={parsed.direction ?? "all"} />;
+}
+
+function TrendList({
+  view,
+  metric,
+  direction,
+}: {
+  view: DashboardView;
+  metric: string;
+  direction: "all" | TrendDirection;
+}): JSX.Element {
+  const [market, setMarket] = useState("");
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState<TrendSort>("direction");
+  const markets = [...new Set(view.allTrends.map((s) => s.marketId))].sort();
+  const rows = useMemo(
+    () => sortSeries(filterSeries(view.allTrends, { metric, direction, market, page: q }), sort),
+    [view.allTrends, metric, direction, market, q, sort],
+  );
+
   return (
     <>
       <div className="head">
         <p className="hint">
-          A direction needs six measured visits and has to clear both a 10% move and an absolute
-          floor. A hollow tick is a gap — never a zero. Click a series, then the visit.
+          One number, one city, over the visits we already have. Click a card to read what the
+          label means. A direction needs {MIN_POINTS_FOR_DIRECTION} measured visits — fewer than
+          that is not a trend.
         </p>
       </div>
 
       <div className="gauges">
-        <Gauge k="Worsening" v={String(counts.worsening)} sub="later median is worse" tone={counts.worsening > 0 ? "var(--fail)" : undefined} />
-        <Gauge k="Improving" v={String(counts.improving)} sub="later median is better" />
-        <Gauge k="Stable" v={String(counts.stable)} sub="moved, but inside the noise" />
-        <Gauge k="Not enough" v={String(counts["insufficient-data"])} sub="fewer than six measured points" />
+        <GaugeLink href={trendsHref("worsening")} k="Getting worse" v={String(view.allTrends.filter((s) => s.direction === "worsening").length)} sub="Later visits measured a worse number" on={direction === "worsening"} tone="var(--fail)" />
+        <GaugeLink href={trendsHref("improving")} k="Getting better" v={String(view.allTrends.filter((s) => s.direction === "improving").length)} sub="Later visits measured a better number" on={direction === "improving"} />
+        <GaugeLink href={trendsHref("stable")} k="No real change" v={String(view.allTrends.filter((s) => s.direction === "stable").length)} sub="Moved, but inside the noise" on={direction === "stable"} />
+        <GaugeLink href={trendsHref("insufficient-data")} k="Not enough visits yet" v={String(view.allTrends.filter((s) => s.direction === "insufficient-data").length)} sub={`Fewer than ${MIN_POINTS_FOR_DIRECTION} readings — we will not guess`} on={direction === "insufficient-data"} />
       </div>
+
+      {direction === "insufficient-data" ? (
+        <div className="note">
+          <strong>Not enough visits yet</strong> means this city has not produced {MIN_POINTS_FOR_DIRECTION}{" "}
+          readings of that number. Open a card: it says how many more visits it needs. It is not a
+          failure, and it is not a pass.
+        </div>
+      ) : null}
 
       <div className="filters">
         <div className="toolbar" role="tablist" aria-label="Metric">
           <a className={`tool-text${metric === "" ? " tool-accent" : ""}`} href="#/trends">
-            All
+            All numbers
           </a>
           {TREND_METRICS.map((id) => (
             <a key={id} className={`tool-text${metric === id ? " tool-accent" : ""}`} href={trendsHref(id)}>
@@ -83,16 +118,8 @@ export function Trends({ view, trendKey }: { view: DashboardView; trendKey?: str
             </a>
           ))}
         </div>
-        <select value={direction} onChange={(e) => setDirection(e.target.value as DirectionFilter)} aria-label="Direction">
-          <option value="">Changed direction</option>
-          <option value="all">Every series</option>
-          <option value="worsening">Worsening</option>
-          <option value="improving">Improving</option>
-          <option value="stable">Stable</option>
-          <option value="insufficient-data">Not enough data</option>
-        </select>
         <select value={market} onChange={(e) => setMarket(e.target.value)} aria-label="Market">
-          <option value="">Every market</option>
+          <option value="">Every city</option>
           {markets.map((id) => (
             <option key={id} value={id}>
               {id}
@@ -100,10 +127,10 @@ export function Trends({ view, trendKey }: { view: DashboardView; trendKey?: str
           ))}
         </select>
         <select value={sort} onChange={(e) => setSort(e.target.value as TrendSort)} aria-label="Sort">
-          <option value="direction">Worsening first</option>
+          <option value="direction">Worse first</option>
           <option value="delta">Largest move</option>
           <option value="page">Page</option>
-          <option value="market">Market</option>
+          <option value="market">City</option>
         </select>
         <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter pages" aria-label="Filter pages" />
         <span className="spacer">
@@ -115,102 +142,141 @@ export function Trends({ view, trendKey }: { view: DashboardView; trendKey?: str
         <div className="empty">
           <strong>Nothing in this cut.</strong>
           {view.allTrends.length === 0
-            ? "Run the same page from the same city several times."
-            : "Widen the direction filter — most series are quiet on purpose."}
+            ? "The same page has to be visited from the same city several times."
+            : "Clear the city filter, or open Not enough visits yet."}
         </div>
       ) : (
         <div className="trend-grid">
           {rows.map((row) => (
-            <TrendCard key={seriesKey(row)} row={row} selected={selected !== null && seriesKey(row) === seriesKey(selected)} />
+            <TrendCard key={seriesKey(row)} row={row} />
           ))}
         </div>
       )}
-
-      {selected !== null ? (
-        <TrendDetail
-          row={selected}
-          tickets={relatedTickets(selected.target, view.tickets)}
-          copied={copied}
-          onCopy={() => {
-            const text = driftBrief(selected);
-            if (typeof navigator.clipboard?.writeText !== "function") return;
-            void navigator.clipboard.writeText(text).then(() => setCopied(true));
-          }}
-        />
-      ) : null}
     </>
   );
 }
 
-function TrendCard({ row, selected }: { row: TrendSeries; selected: boolean }): JSX.Element {
+function TrendCard({ row }: { row: TrendSeries }): JSX.Element {
   const delta = trendDelta(row);
+  const short =
+    row.direction === "insufficient-data"
+      ? `${row.measuredPoints} of ${MIN_POINTS_FOR_DIRECTION} readings`
+      : delta.measured
+        ? delta.text
+        : DIRECTION_LABEL[row.direction];
   return (
-    <article className={`trend-card${selected ? " on" : ""}`}>
-      <a className="trend-card-hit pressable" href={trendsHref(seriesKey(row))}>
-        <div className="trend-card-k">
-          {METRIC_LABEL[row.metric]} · {row.marketId}
-        </div>
-        <div className="trend-card-v">
-          <span className={`pill ${TONE[row.direction] ?? "unknown"}`}>{row.direction}</span>
-          {delta.measured ? <span className="trend-delta">{delta.text}</span> : null}
-        </div>
-        <div className="trend-card-sub">{pageLabel(row.target)}</div>
-      </a>
-      <Trace series={row} />
-    </article>
+    <a className="trend-card trend-card-hit pressable" href={trendsHref(seriesKey(row))}>
+      <div className="trend-card-k">
+        {METRIC_LABEL[row.metric]} · {row.marketId}
+      </div>
+      <div className="trend-card-v">
+        <span className={`pill ${TONE[row.direction] ?? "unknown"}`}>{DIRECTION_LABEL[row.direction]}</span>
+        <span className="trend-delta">{short}</span>
+      </div>
+      <div className="trend-card-sub">{pageLabel(row.target)} · Open to see why</div>
+    </a>
   );
 }
 
-function TrendDetail({
-  row,
-  tickets,
-  copied,
-  onCopy,
-}: {
-  row: TrendSeries;
-  tickets: ReturnType<typeof relatedTickets>;
-  copied: boolean;
-  onCopy: () => void;
-}): JSX.Element {
+function TrendDetail({ view, row }: { view: DashboardView; row: TrendSeries }): JSX.Element {
+  const [copied, setCopied] = useState(false);
   const latest = latestMeasured(row);
-  const candidate = isFilingCandidate(row);
+  const needed = pointsNeeded(row);
+  const tickets = relatedTickets(row.target, view.tickets);
+  const visits = visitRows(row);
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <div>
-          <h3>
-            {METRIC_LABEL[row.metric]} · {row.marketId}
-          </h3>
-          <p className="hint">{row.reason}</p>
+    <>
+      <div className="head">
+        <p className="hint">
+          <a className="tag" href="#/trends">
+            ← Over time
+          </a>{" "}
+          {METRIC_LABEL[row.metric]} · {row.marketId} · {pageLabel(row.target)}
+        </p>
+      </div>
+
+      <div className="gauges">
+        <Gauge k="Verdict" v={DIRECTION_LABEL[row.direction]} sub={row.reason} />
+        <Gauge
+          k="Readings"
+          v={`${row.measuredPoints} / ${row.points.length}`}
+          sub={needed > 0 ? `${needed} more before a direction` : "enough to name a direction"}
+        />
+        <Gauge k="Earlier → later" v={<><MeasuredValue value={row.earlier} /> → <MeasuredValue value={row.later} /></>} sub="median of each half" />
+        <Gauge k="City" v={row.marketId} sub={pageLabel(row.target)} />
+      </div>
+
+      {explainSeries(row).map((section) => (
+        <div className="panel" key={section.heading}>
+          <div className="panel-head">
+            <h3>{section.heading}</h3>
+          </div>
+          <div className="panel-body brief-prose">
+            <p>{section.text}</p>
+          </div>
+        </div>
+      ))}
+
+      <div className="panel">
+        <div className="panel-head">
+          <h3>Each visit</h3>
+          <p className="hint">A gap is a visit that did not measure this number. Click a row.</p>
+        </div>
+        <div className="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Reading</th>
+                <th>Visit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visits.map((visit) => (
+                <tr key={visit.runId}>
+                  <td className="dim">{visit.at.replace("T", " ").slice(0, 16)}</td>
+                  <td>{visit.gap ? <span className="unmeasured">not measured</span> : visit.reading}</td>
+                  <td>
+                    <a className="tag" href={`#/run/${visit.runId}`}>
+                      Open
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
-      <div className="panel-body trend-detail">
-        <p>
-          Earlier <MeasuredValue value={row.earlier} /> → later <MeasuredValue value={row.later} /> ·{" "}
-          {row.measuredPoints} measured of {row.points.length}
-        </p>
-        <div className="toolbar">
-          {latest !== null ? (
-            <a className="tool-text tool-accent" href={`#/run/${latest.runId}`}>
-              Open latest visit
-            </a>
-          ) : null}
-          <a className="tool-text" href={geographyHref(row.target)}>
-            Same page, every city
+
+      <div className="filters">
+        {latest !== null ? (
+          <a className="tool-text tool-accent" href={`#/run/${latest.runId}`}>
+            Latest visit
           </a>
-          {candidate ? (
-            <button className="tool-text" type="button" onClick={onCopy}>
-              {copied ? "Brief copied" : "Copy a drift brief"}
-            </button>
-          ) : null}
-        </div>
-        <p className="hint">
-          A trend is not a failed check. GitHub issues come from To fix when a journey assert
-          failed. {tickets.length === 0
-            ? "No ticket is open on this host yet."
-            : "Tickets already filed on this host:"}
-        </p>
-        {tickets.length > 0 ? (
+        ) : null}
+        <a className="tool-text" href={geographyHref(row.target)}>
+          Same page, every city
+        </a>
+        {isFilingCandidate(row) ? (
+          <button
+            className="tool-text"
+            type="button"
+            onClick={() => {
+              if (typeof navigator.clipboard?.writeText !== "function") return;
+              void navigator.clipboard.writeText(driftBrief(row)).then(() => setCopied(true));
+            }}
+          >
+            {copied ? "Brief copied" : "Copy a drift brief"}
+          </button>
+        ) : null}
+      </div>
+
+      {tickets.length > 0 ? (
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Already on To fix</h3>
+            <p className="hint">Failed checks on this host — those are the GitHub issues.</p>
+          </div>
           <ul className="trend-tickets">
             {tickets.map((ticket) => (
               <li key={ticket.key}>
@@ -219,44 +285,44 @@ function TrendDetail({
               </li>
             ))}
           </ul>
-        ) : null}
-      </div>
-    </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
-function Trace({ series }: { series: TrendSeries }): JSX.Element {
-  const values = series.points.map((p) => p.value).filter((v): v is number => v !== null);
-  const max = Math.max(...values, 1);
-  const lastIndex = series.points.map((p) => p.value !== null).lastIndexOf(true);
-  return (
-    <span className="trace" title={series.reason}>
-      {series.points.slice(-32).map((p, i, arr) => {
-        const absolute = series.points.length - arr.length + i;
-        if (p.value === null) return <i className="gap" key={p.runId} title={`${p.at.slice(0, 10)} — not measured`} />;
-        return (
-          <a
-            key={p.runId}
-            className={absolute === lastIndex ? "last" : ""}
-            style={{ height: `${Math.max(8, (p.value / max) * 100)}%` }}
-            href={`#/run/${p.runId}`}
-            title={`${p.at.slice(0, 10)} — ${p.value}`}
-            onClick={(e) => e.stopPropagation()}
-          />
-        );
-      })}
-    </span>
-  );
-}
-
-function Gauge({ k, v, sub, tone }: { k: string; v: string; sub: string; tone?: string | undefined }): JSX.Element {
+function Gauge({ k, v, sub }: { k: string; v: JSX.Element | string; sub: string }): JSX.Element {
   return (
     <div className="gauge">
       <div className="gauge-k">{k}</div>
-      <div className="gauge-v" style={tone !== undefined ? { color: tone } : undefined}>
+      <div className="gauge-v brief-gauge">{v}</div>
+      <div className="gauge-sub">{sub}</div>
+    </div>
+  );
+}
+
+function GaugeLink({
+  href,
+  k,
+  v,
+  sub,
+  on,
+  tone,
+}: {
+  href: string;
+  k: string;
+  v: string;
+  sub: string;
+  on: boolean;
+  tone?: string;
+}): JSX.Element {
+  return (
+    <a className={`gauge pressable${on ? " on" : ""}`} href={href}>
+      <div className="gauge-k">{k}</div>
+      <div className="gauge-v" style={tone !== undefined && Number(v) > 0 ? { color: tone } : undefined}>
         {v}
       </div>
       <div className="gauge-sub">{sub}</div>
-    </div>
+    </a>
   );
 }
