@@ -48,6 +48,46 @@ export interface TenantQuota {
   runsPerDay: number;
 }
 
+/**
+ * A logical repo key from the growth fleet's config → a real repository.
+ *
+ * Separate from `TenantRepository` because `growth.agent_findings.target_repo`
+ * is a KEY (`marketing`, `app`, `platform`) and not a host: the fleet routes by
+ * which product a finding is about, and a host map cannot answer a row whose
+ * `site` column holds a site id rather than a hostname.
+ */
+export interface TenantGrowthRepoKey {
+  key: string;
+  repo: string;
+  base: string;
+}
+
+/** How this tenant's growth findings are read and routed. */
+export interface TenantGrowth {
+  repoKeys: TenantGrowthRepoKey[];
+  /**
+   * Agent slugs whose findings this tenant accepts. Empty means every agent.
+   *
+   * An allowlist rather than a denylist because the fleet gains agents on its
+   * own schedule, and a new agent silently gaining commit rights in somebody's
+   * production repo is the wrong default for a list nobody remembered to update.
+   */
+  agents: string[];
+}
+
+/**
+ * The fix agent's merge policy for this tenant.
+ *
+ * `false`, and it is a decision rather than a placeholder. `gh pr merge --auto`
+ * merges as soon as required checks pass, and a repository with NO required
+ * checks configured merges essentially immediately — so on an unprotected
+ * branch this flag is the only thing between a model's diff and production.
+ * A second model approving a first model's diff is a filter, not an approval.
+ */
+export interface TenantFix {
+  automerge: boolean;
+}
+
 export interface Tenant {
   /**
    * Slug, and it is security-relevant.
@@ -104,6 +144,10 @@ export interface Tenant {
    * Repo names, not tokens. The token is still GEOQA_GITHUB_TOKEN.
    */
   repositories?: TenantRepository[];
+  /** How growth-fleet findings reach a repository. Absent means the fix agent has no growth route. */
+  growth?: TenantGrowth;
+  /** Merge policy for the fix agent. Absent means the safe default: a human merges. */
+  fix?: TenantFix;
   quota: TenantQuota;
   /**
    * How long this tenant's evidence is kept, in days.

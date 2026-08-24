@@ -27,6 +27,7 @@
     "@temporalio/client": "^1.21.1",
     "@temporalio/worker": "^1.21.1",
     "@temporalio/workflow": "^1.21.1",
+    "pg": "^8.16.3",
     "playwright": "^1.62.1",
     "yaml": "^2.8.1",
     "zod": "^3.25.76"
@@ -34,6 +35,7 @@
   "devDependencies": {
     "@temporalio/testing": "^1.21.1",
     "@types/node": "^22.16.5",
+    "@types/pg": "^8.15.5",
     "@vitest/coverage-v8": "^2.1.9",
     "agent-browser": "0.34.0",
     "dependency-cruiser": "^18.2.0",

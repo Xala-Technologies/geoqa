@@ -1,0 +1,23 @@
+[Unit]
+Description=GeoQA fix agent at 11:00 Europe/Oslo
+
+# 09:00 UTC, and the hour is a constraint rather than a preference.
+#
+# The growth fleet's timers are 03:30 traffic, 04:20 seo, 05:10 trustops,
+# 05:30 blog, 06:30 audit, 06:45 opportunity, 07:00 confidence-graph,
+# 07:25 seo-digest, plus Monday 07:15 / 07:45 / 08:15. A COMPLETE night of
+# findings therefore exists only after 07:25 on weekdays and 08:15 on Mondays.
+# 09:00 clears both by 45 minutes and clears geoqa-digest (05:00) entirely.
+#
+# It must also not run INSIDE that window: a repair and an SEO crawl are both
+# LLM-heavy on the same Max subscription, and overlapping them turns a rate
+# limit into two failed agents instead of one slow one.
+#
+# 09:00 UTC lands pull requests at 11:00 Europe/Oslo — the middle of a working
+# morning, which matters precisely because the merge policy is "a human merges".
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

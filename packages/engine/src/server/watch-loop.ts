@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { controlRun, defaultDeps, findingsFile, findingsRepair, loginVarsFromEnv, matrixRun, renderFindingsFile, renderFindingsRepair, resolveDataPath, resolveProfileId } from "../cli/commands.js";
 import { liveDashboardUrl } from "../cli/events.js";
+import { describeThrown } from "../errors.js";
 import { loadJourney } from "../journeys/spec.js";
 import { acceptRun, type AcceptedRun } from "./accept-run.js";
 import type { Tenant } from "../tenant/types.js";
@@ -340,14 +341,23 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       lastFinishedMs = options.now();
       persistClock();
       live.prune(options.now(), KEEP_LIVE_MS);
-      void findingsFile(deps).then(async (filed) => {
-        options.log(renderFindingsFile(filed));
-        options.rebuild();
-        if (filed.filed.length === 0) return;
-        const repaired = await findingsRepair(deps, { onlyKeys: filed.filed.map((item) => item.key) });
-        options.log(renderFindingsRepair(repaired));
-        options.rebuild();
-      });
+      // The invariant is "a thrown repair must not fail a sweep". Detached with
+      // no `.catch`, that held by ACCIDENT rather than by handling: a throw here
+      // was an unhandled rejection on the server process, which node may take
+      // the process down for. Caught, logged, sweep unaffected — the same
+      // outcome, now for a reason.
+      void findingsFile(deps)
+        .then(async (filed) => {
+          options.log(renderFindingsFile(filed));
+          options.rebuild();
+          if (filed.filed.length === 0) return;
+          const repaired = await findingsRepair(deps, { onlyKeys: filed.filed.map((item) => item.key) });
+          options.log(renderFindingsRepair(repaired));
+          options.rebuild();
+        })
+        .catch((error: unknown) => {
+          options.log(`file/repair after sweep failed: ${describeThrown(error)}`);
+        });
     }
   };
 

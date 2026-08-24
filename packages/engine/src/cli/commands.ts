@@ -31,7 +31,7 @@ import {
 import { bindAssistComplete, type AssistOutcome } from "../assist/claude.js";
 import { nodeClaudeSpawn } from "../assist/claude-spawn.js";
 import { nodeRepairExec } from "../assist/repair-exec.js";
-import { defaultRepairClaude, jobsFromFiled, repairOne, type RepairExec, type RepairJob, type RepairOneResult } from "../assist/repair.js";
+import { defaultRepairClaude, jobsFromFiled, repairedStatus, repairOne, type RepairExec, type RepairJob, type RepairOneResult } from "../assist/repair.js";
 import { loadRepairedItems, saveRepairedItems } from "../assist/repair-store.js";
 import { buildExplainPrompt } from "../assist/prompt.js";
 import { loadEvidencePackage, type PackageFs } from "../evidence/package.js";
@@ -104,7 +104,27 @@ import {
 } from "../history/store.js";
 import { recordFromRunJson, type RunRecord } from "../history/records.js";
 import { draftsFromRuns, type TicketRun } from "../findings/tickets.js";
-import { fileTickets, loadFiledIssues, nodeFiledStore, parseGithubRepo, type FileTicketsResult, type FiledStore, type GitHubAddLabels, type GitHubCreate } from "../findings/github.js";
+import {
+  fileTickets,
+  githubAddLabels,
+  githubComment,
+  githubListIssues,
+  loadFiledIssues,
+  nodeFiledStore,
+  parseGithubRepo,
+  type FileTicketsResult,
+  type FiledStore,
+  type GitHubAddLabels,
+  type GitHubCreate,
+  type GithubIssueRef,
+} from "../findings/github.js";
+import { fixRun as runFixPipeline, type FixPorts, type FixRunOptions } from "../fix/run.js";
+import { growthDbConfig, type GrowthDb } from "../fix/growth-db.js";
+import { growthPortFor } from "../fix/growth-pg.js";
+import { makeReviewGate, DEFAULT_REVIEW_POLICY } from "../fix/review.js";
+import { nodeVerifyPlan } from "../fix/verify.js";
+import { GITHUB_INTAKE_LABELS } from "../fix/intake-github.js";
+import type { FixRunResult } from "../fix/types.js";
 import { assembleDigest, type Digest } from "../digest/assemble.js";
 import { parseDigestWindow, resolveDigestTo } from "../digest/window.js";
 import { renderDigestHtml, renderDigestText } from "../digest/html.js";
@@ -1968,14 +1988,15 @@ export async function findingsRepair(
   const kept = [...remembered.items];
   for (const job of jobs) {
     const result = await repairOne(job, { exec, claude, workRoot: path.join(deps.evidenceRoot, "repair"), token, env: deps.env });
-    if (result.status === "failed") {
+    const remembered = repairedStatus(result.status);
+    if (remembered === null) {
       failed.push(result);
       continue;
     }
     repaired.push(result);
     kept.push({
       key: job.key,
-      status: result.status,
+      status: remembered,
       at: new Date(deps.now()).toISOString(),
       ...(result.prUrl !== undefined ? { prUrl: result.prUrl } : {}),
     });
@@ -2008,6 +2029,203 @@ export function renderFindingsRepair(result: FindingsRepairResult): string {
   }
   for (const item of result.failed) lines.push(`  FAILED ${item.key}: ${item.detail ?? ""}`);
   return lines.join("\n");
+}
+
+
+/**
+ * The fix agent: two sources in, reviewed pull requests out.
+ *
+ * This is a COMPOSITION ROOT and nothing else — it resolves the tenant, binds
+ * every port, and hands them to `fix/run.ts`. Every judgement lives one layer
+ * down where it is covered against injected fakes, which is the same division
+ * `findingsRepair` and `findingsFile` already keep.
+ *
+ * Two claude bindings are created, not one. The repair model edits the
+ * checkout; the review model reads the diff and cannot. A single binding would
+ * make "the reviewer rejected the repairer's diff" untestable without matching
+ * on prompt text, which is a test that passes for the wrong reason.
+ */
+export interface FixRunCommandOptions {
+  dryRun?: boolean;
+  source?: "both" | "github" | "growth";
+  only?: string[];
+  merge?: boolean;
+  maxItems?: number;
+  budgetMin?: number;
+  triggeredBy?: "timer" | "manual";
+  /** Every port below is injectable for the same reason `probe` and `pruneFs` are. */
+  exec?: RepairExec;
+  claude?: { repair: (prompt: string, cwd: string) => Promise<AssistOutcome>; review: (prompt: string, cwd: string) => Promise<AssistOutcome> };
+  store?: FiledStore;
+  growth?: (() => Promise<GrowthDb>) | null;
+  listIssues?: FixPorts["listIssues"];
+  addLabels?: FixPorts["addLabels"];
+  comment?: FixPorts["comment"];
+  prOpen?: FixPorts["prOpen"];
+  rm?: (p: string) => void;
+  verify?: FixPorts["gate"] extends never ? never : Parameters<typeof makeReviewGate>[0]["verify"];
+}
+
+function loadTenantFix(deps: CommandDeps): { repoKeys: { key: string; repo: string; base: string }[]; agents: string[]; automerge: boolean } {
+  if (deps.tenantId === undefined || deps.tenantId === "") return { repoKeys: [], agents: [], automerge: false };
+  const loaded = loadTenant(tenantPath(deps, deps.tenantId));
+  if (!loaded.ok) return { repoKeys: [], agents: [], automerge: false };
+  return {
+    repoKeys: loaded.value.growth?.repoKeys ?? [],
+    agents: loaded.value.growth?.agents ?? [],
+    automerge: loaded.value.fix?.automerge ?? false,
+  };
+}
+
+/**
+ * Is a pull request already open on this branch?
+ *
+ * `--state all` on purpose: a PR a human CLOSED is still an answer, and
+ * reopening the same branch tomorrow is exactly the argument-with-a-human this
+ * agent must not have.
+ */
+const ghPrOpen: FixPorts["prOpen"] = async (input) => {
+  const result = await input.exec.run({
+    cwd: process.cwd(),
+    argv: ["gh", "pr", "list", "--repo", input.repo, "--head", input.branch, "--state", "all", "--json", "number"],
+    env: input.env,
+    timeoutMs: 30_000,
+  });
+  if (result.exitCode !== 0) throw new Error(result.error ?? (result.stderr.trim() || "gh pr list failed"));
+  const parsed: unknown = JSON.parse(result.stdout.trim() === "" ? "[]" : result.stdout);
+  return Array.isArray(parsed) && parsed.length > 0;
+};
+
+export async function fixRun(deps: CommandDeps, options: FixRunCommandOptions = {}): Promise<FixRunResult> {
+  const token = deps.env.GEOQA_GITHUB_TOKEN ?? "";
+  const fallback = parseGithubRepo(deps.env.GEOQA_GITHUB_REPO);
+  const fallbackRepo = fallback === null ? "" : `${fallback.owner}/${fallback.name}`;
+  const tenant = loadTenantFix(deps);
+  const store = options.store ?? nodeFiledStore;
+  const exec = options.exec ?? nodeRepairExec;
+  const claude = options.claude ?? {
+    repair: defaultRepairClaude(deps.env),
+    review: defaultRepairClaude(deps.env),
+  };
+  const growth = options.growth !== undefined ? options.growth : growthPortFor(growthDbConfig(deps.env), deps.log);
+
+  const ports: FixPorts = {
+    evidenceRoot: deps.evidenceRoot,
+    env: deps.env,
+    now: deps.now,
+    log: deps.log,
+    store,
+    exec,
+    claude,
+    gate: (record) =>
+      makeReviewGate({
+        claude: claude.review,
+        policy: DEFAULT_REVIEW_POLICY,
+        verify: options.verify ?? nodeVerifyPlan,
+        readFile: (workdir, rel) => {
+          const placed = containedPath(workdir, rel);
+          if (!placed.ok || !existsSync(placed.value)) return null;
+          return readFileSync(placed.value, "utf8");
+        },
+        exists: (workdir, rel) => {
+          const placed = containedPath(workdir, rel);
+          return placed.ok && existsSync(placed.value);
+        },
+        now: deps.now,
+        onReview: (key, verdict) => record.onReview(key, verdict),
+        onVerify: (key, report) => record.onVerify(key, report),
+      }),
+    token,
+    fallbackRepo,
+    sites: loadSiteRepos(deps),
+    repoKeys: tenant.repoKeys,
+    agents: tenant.agents,
+    growth,
+    drafts: () => {
+      const { records } = readHistory(deps.evidenceRoot, historyFsOf(deps));
+      return draftsFromRuns(records.map(toTicketRun), {
+        ...(deps.env.GEOQA_CONSOLE_URL ? { consoleBase: deps.env.GEOQA_CONSOLE_URL } : {}),
+      });
+    },
+    filed: () => {
+      const loaded = loadFiledIssues(deps.evidenceRoot, store);
+      return loaded.ok ? loaded.issues : null;
+    },
+    listIssues:
+      options.listIssues ??
+      ((input): Promise<GithubIssueRef[]> =>
+        githubListIssues({ repo: input.repo, token, labels: GITHUB_INTAKE_LABELS, limit: input.limit })),
+    addLabels: options.addLabels ?? ((input) => githubAddLabels({ ...input, token })),
+    comment: options.comment ?? ((input) => githubComment({ ...input, token })),
+    prOpen: options.prOpen ?? ghPrOpen,
+    rm: options.rm ?? ((p) => exec.rm(p)),
+    pid: process.pid,
+    ...(deps.env.GEOQA_GRAFANA_URL ? { grafanaUrl: deps.env.GEOQA_GRAFANA_URL } : {}),
+  };
+
+  const runOptions: FixRunOptions = {
+    ...(options.dryRun === true ? { dryRun: true } : {}),
+    ...(options.source !== undefined ? { source: options.source } : {}),
+    ...(options.only !== undefined ? { only: options.only } : {}),
+    // The flag can only turn auto-merge ON, and only where the tenant has
+    // already allowed it. A CLI flag that could override a tenant's kill switch
+    // would not be a kill switch.
+    merge: options.merge === true && tenant.automerge,
+    ...(options.triggeredBy !== undefined ? { triggeredBy: options.triggeredBy } : {}),
+    policy: {
+      ...(options.maxItems !== undefined ? { maxItems: options.maxItems } : {}),
+      ...(options.budgetMin !== undefined ? { budgetMs: options.budgetMin * 60_000 } : {}),
+    },
+  };
+  const result = await runFixPipeline(ports, runOptions);
+  if (options.dryRun !== true && result.outcomes.length > 0) dashboardBuild(deps);
+  return result;
+}
+
+export function renderFixRun(result: FixRunResult): string {
+  if (result.skipped === "unconfigured") {
+    return "fix run: GitHub is off (set GEOQA_GITHUB_TOKEN and GEOQA_GITHUB_REPO)";
+  }
+  if (result.skipped === "store-unreadable") {
+    return "fix run: a store is unreadable — not attempting anything, so we do not repeat work we cannot see";
+  }
+  if (result.skipped === "locked") {
+    return "fix run: another fix run holds the lock";
+  }
+  if (result.skipped === "no-sources") {
+    return "fix run: every source was unreachable — nothing was read, so nothing is known";
+  }
+  const sources = (["growth", "geoqa", "github"] as const).map((name) => {
+    const report = result.sources[name];
+    return `  ${name}: ${report.state}${report.state === "ok" ? ` (${report.rows})` : report.detail === undefined ? "" : ` — ${report.detail}`}`;
+  });
+  if (result.skipped === "dry-run") {
+    return [
+      `fix run: dry run — ${result.intake} item(s) after grouping, ${result.wouldFix.length} eligible`,
+      ...sources,
+      ...result.wouldFix.map((item) => `  would fix ${item.key} → ${item.route?.codeRepo ?? "?"} (${item.route?.base ?? "?"}) reach ${item.reach}`),
+      ...result.ineligible.map((entry) => `  skip ${entry.key}: ${entry.reason}`),
+    ].join("\n");
+  }
+  if (result.skipped === "nothing-eligible") {
+    return [`fix run: ${result.intake} item(s), none eligible`, ...sources, ...result.ineligible.map((entry) => `  skip ${entry.key}: ${entry.reason}`)].join("\n");
+  }
+  const opened = result.outcomes.filter((outcome) => outcome.status === "opened");
+  const rejected = result.outcomes.filter((outcome) => outcome.status === "rejected" || outcome.status === "verify-failed");
+  const failed = result.outcomes.filter((outcome) => outcome.status === "failed");
+  return [
+    `fix run: ${opened.length} PR(s), ${rejected.length} rejected, ${failed.length} failed, of ${result.intake} item(s)`,
+    ...sources,
+    ...result.outcomes.map((outcome) => {
+      const verify = outcome.verify === undefined ? "" : ` verify=${outcome.verify.state}`;
+      const review = outcome.reviewVerdict === undefined ? "" : ` review=${outcome.reviewVerdict}`;
+      return `  ${outcome.status} ${outcome.key}${outcome.prUrl === undefined ? "" : ` ${outcome.prUrl}`}${review}${verify}${outcome.detail === undefined ? "" : ` — ${outcome.detail}`}`;
+    }),
+    ...result.ineligible.map((entry) => `  skip ${entry.key}: ${entry.reason}`),
+    result.budget.stoppedOnBudget
+      ? `  stopped on budget after ${Math.round(result.budget.usedMs / 60_000)} min of ${Math.round(result.budget.budgetMs / 60_000)}`
+      : `  used ${Math.round(result.budget.usedMs / 60_000)} min of ${Math.round(result.budget.budgetMs / 60_000)}`,
+  ].join("\n");
 }
 
 export type DigestSendResult =

@@ -70,6 +70,36 @@ export const TenantRepositorySchema = z
   })
   .strict();
 
+export const TenantGrowthRepoKeySchema = z
+  .object({
+    key: z.string().min(1),
+    repo: z
+      .string()
+      .regex(REPO, "a repository is owner/name")
+      .refine((value) => {
+        const [owner, name] = value.split("/");
+        return owner !== "." && owner !== ".." && name !== "." && name !== "..";
+      }, "a repository owner or name cannot be . or .."),
+    base: z.string().regex(GIT_REF, "a git branch name").default("main"),
+  })
+  .strict();
+
+export const TenantGrowthSchema = z
+  .object({
+    repoKeys: z.array(TenantGrowthRepoKeySchema).default([]),
+    agents: z.array(z.string().min(1)).default([]),
+  })
+  .strict();
+
+/**
+ * Auto-merge is OFF and stays off until a human turns it on per tenant.
+ *
+ * `.default(false)` rather than a required field so every existing tenant file
+ * keeps parsing — and so the value somebody gets by not thinking about it is
+ * the one that cannot merge a model's diff into production unattended.
+ */
+export const TenantFixSchema = z.object({ automerge: z.boolean().default(false) }).strict();
+
 export const TenantSchema = z
   .object({
     id: TenantIdSchema,
@@ -84,6 +114,12 @@ export const TenantSchema = z
     quota: TenantQuotaSchema,
     retentionDays: z.number().int().positive(),
     repositories: z.array(TenantRepositorySchema).default([]),
+    // `.default({})` rather than `.optional()`, for the same reason
+    // `repositories` has one: an absent block should mean "the safe empty
+    // shape", and a field that can be `undefined` makes every reader write the
+    // same `?? []` — which is how two readers eventually pick two defaults.
+    growth: TenantGrowthSchema.default({}),
+    fix: TenantFixSchema.default({}),
   })
   // Unknown keys are an ERROR, matching the config loader's reasoning: a misspelled
   // `retentionDay` that silently became the default is a retention policy somebody

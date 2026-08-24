@@ -1,0 +1,16 @@
+[Unit]
+Description=GeoQA fix agent — reviews and PRs fixes for growth and geoqa findings
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/geoqa
+EnvironmentFile=/opt/geoqa/.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/root
+# Five hours against a four-hour budget. The digest unit needs no timeout
+# because it runs for seconds; a oneshot inheriting the 90s default would be
+# SIGTERMed mid-clone, leaving a pushed branch with no pull request.
+TimeoutStartSec=18000
+ExecStart=/usr/local/bin/pnpm geoqa fix run --tenant digilist --timer
