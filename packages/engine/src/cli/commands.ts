@@ -31,7 +31,7 @@ import {
 import { bindAssistComplete, type AssistOutcome } from "../assist/claude.js";
 import { nodeClaudeSpawn } from "../assist/claude-spawn.js";
 import { nodeRepairExec } from "../assist/repair-exec.js";
-import { defaultRepairClaude, jobsFromFiled, repairedStatus, repairOne, type RepairExec, type RepairJob, type RepairOneResult } from "../assist/repair.js";
+import { defaultRepairClaude, jobsFromFiled, repairedStatus, repairOne, type RepairExec, type RepairJob, type RepairOneResult, ghEnv} from "../assist/repair.js";
 import { loadRepairedItems, saveRepairedItems } from "../assist/repair-store.js";
 import { buildExplainPrompt } from "../assist/prompt.js";
 import { loadEvidencePackage, type PackageFs } from "../evidence/package.js";
@@ -2085,10 +2085,18 @@ function loadTenantFix(deps: CommandDeps): { repoKeys: { key: string; repo: stri
  * agent must not have.
  */
 const ghPrOpen: FixPorts["prOpen"] = async (input) => {
+  // GH_TOKEN explicitly, from the same variable findings/github.ts treats as
+  // canonical. Passing input.env raw let `gh` fall back to ~/.config/gh/hosts.yml
+  // — a credential nobody in this codebase chose. When that stored token failed
+  // the org's lifetime policy, every call here threw, and since a thrown
+  // "does a PR exist?" is read as YES, the run skipped all 54 items and opened
+  // nothing. It reported success. Auth must come from config, not from whatever
+  // the machine happens to remember.
+  const token = input.env.GEOQA_GITHUB_TOKEN ?? "";
   const result = await input.exec.run({
     cwd: process.cwd(),
     argv: ["gh", "pr", "list", "--repo", input.repo, "--head", input.branch, "--state", "all", "--json", "number"],
-    env: input.env,
+    env: ghEnv(token, input.env),
     timeoutMs: 30_000,
   });
   if (result.exitCode !== 0) throw new Error(result.error ?? (result.stderr.trim() || "gh pr list failed"));
