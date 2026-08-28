@@ -11,6 +11,8 @@
  */
 import path from "node:path";
 import { formatIssueBrief, issuesFromSteps, parseConsoleLog, type ConsoleLine, type EvidenceIssue } from "./issue.js";
+import type { Artifact, EvidenceManifest } from "./manifest.js";
+import { MANIFEST_FILE } from "./store.js";
 
 const RUN_ID = /^run_[A-Za-z0-9._-]+$/;
 const SHOT_LABEL = /^[A-Za-z0-9._-]+$/;
@@ -228,6 +230,150 @@ export function loadEvidenceShot(
   if (relative.startsWith("..") || path.isAbsolute(relative) || relative.includes("/")) return null;
   if (!fs.exists(full)) return null;
   return { body: fs.readBytes(full), type: "image/png" };
+}
+
+/** Artifact kinds agents fetch by manifest path — not screenshots (use `loadEvidenceShot`). */
+export const EVIDENCE_ARTIFACT_KINDS = ["snapshot", "trace", "har", "vitals", "console", "network", "a11y", "content"] as const;
+export type EvidenceArtifactKind = (typeof EVIDENCE_ARTIFACT_KINDS)[number];
+
+export type LoadedEvidenceArtifact =
+  | {
+      ok: true;
+      kind: EvidenceArtifactKind;
+      label: string;
+      path: string;
+      mime: string;
+      bytes: number;
+      encoding: "text";
+      text: string;
+    }
+  | {
+      ok: true;
+      kind: EvidenceArtifactKind;
+      label: string;
+      path: string;
+      mime: string;
+      bytes: number;
+      encoding: "json";
+      value: unknown;
+    }
+  | {
+      ok: true;
+      kind: EvidenceArtifactKind;
+      label: string;
+      path: string;
+      mime: string;
+      bytes: number;
+      encoding: "base64";
+      dataBase64: string;
+    }
+  | { ok: false; error: string };
+
+export type LoadedEvidenceScreenshots =
+  | { ok: true; runId: string; shots: Array<{ label: string; mime: string; dataBase64: string }> }
+  | { ok: false; error: string };
+
+function artifactPathSafe(dir: string, file: string): string | null {
+  const full = path.resolve(dir, file);
+  const relative = path.relative(dir, full);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return full;
+}
+
+function encodeArtifactBytes(
+  artifact: Artifact,
+  body: Buffer,
+):
+  | { encoding: "text"; text: string }
+  | { encoding: "json"; value: unknown }
+  | { encoding: "base64"; dataBase64: string } {
+  if (artifact.mime === "text/plain" || artifact.kind === "snapshot") {
+    return { encoding: "text", text: body.toString("utf8") };
+  }
+  if (artifact.mime === "application/json" || artifact.path.endsWith(".json") || artifact.path.endsWith(".har")) {
+    try {
+      return { encoding: "json", value: JSON.parse(body.toString("utf8")) as unknown };
+    } catch {
+      return { encoding: "text", text: body.toString("utf8") };
+    }
+  }
+  return { encoding: "base64", dataBase64: body.toString("base64") };
+}
+
+/** Load one retained artifact listed in manifest.json (trace, HAR, snapshot, vitals, …). */
+export function loadEvidenceArtifact(
+  root: string,
+  runId: string,
+  kind: EvidenceArtifactKind,
+  fs: PackageFs,
+  label?: string,
+): LoadedEvidenceArtifact {
+  const dir = evidenceRunDir(root, runId);
+  if (dir === null) return { ok: false, error: "that is not a run id" };
+  const manifestFile = path.join(dir, MANIFEST_FILE);
+  if (!fs.exists(manifestFile)) return { ok: false, error: "no evidence manifest for this run" };
+  let manifest: EvidenceManifest;
+  try {
+    manifest = JSON.parse(fs.readText(manifestFile)) as EvidenceManifest;
+  } catch {
+    return { ok: false, error: "no evidence manifest for this run" };
+  }
+
+  const matches = manifest.artifacts.filter((a) => a.kind === kind && a.bytes > 0);
+  if (matches.length === 0) return { ok: false, error: `no ${kind} artifact for this run` };
+
+  let artifact: Artifact;
+  if (label !== undefined) {
+    const found = matches.find((a) => a.label === label);
+    if (found === undefined) return { ok: false, error: `no ${kind} artifact with label "${label}"` };
+    artifact = found;
+  } else if (matches.length === 1) {
+    artifact = matches[0]!;
+  } else {
+    return {
+      ok: false,
+      error: `multiple ${kind} artifacts — pass label (${matches.map((m) => m.label).join(", ")})`,
+    };
+  }
+
+  const full = artifactPathSafe(dir, artifact.path);
+  if (full === null) return { ok: false, error: "artifact path escapes the run directory" };
+  if (!fs.exists(full)) return { ok: false, error: "artifact file is missing on disk" };
+
+  const body = fs.readBytes(full);
+  const encoded = encodeArtifactBytes(artifact, body);
+  const base = {
+    ok: true as const,
+    kind: artifact.kind,
+    label: artifact.label,
+    path: artifact.path,
+    mime: artifact.mime,
+    bytes: body.length,
+  };
+  if (encoded.encoding === "text") return { ...base, encoding: "text", text: encoded.text };
+  if (encoded.encoding === "json") return { ...base, encoding: "json", value: encoded.value };
+  return { ...base, encoding: "base64", dataBase64: encoded.dataBase64 };
+}
+
+/** All present screenshots for a run as base64 (optional label filter). */
+export function loadEvidenceScreenshots(
+  root: string,
+  runId: string,
+  fs: PackageFs,
+  labels?: string[],
+): LoadedEvidenceScreenshots {
+  const loaded = loadEvidencePackage(root, runId, fs);
+  if (!loaded.ok) return loaded;
+  const wanted = labels !== undefined ? new Set(labels) : null;
+  const shots: Array<{ label: string; mime: string; dataBase64: string }> = [];
+  for (const shot of loaded.value.screenshots) {
+    if (!shot.present) continue;
+    if (wanted !== null && !wanted.has(shot.label)) continue;
+    const bytes = loadEvidenceShot(root, runId, shot.label, fs);
+    if (bytes === null) continue;
+    shots.push({ label: shot.label, mime: bytes.type, dataBase64: bytes.body.toString("base64") });
+  }
+  return { ok: true, runId, shots };
 }
 
 function parseStep(raw: unknown): EvidenceStep | null {

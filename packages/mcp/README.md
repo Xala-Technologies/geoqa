@@ -72,7 +72,9 @@ Set the same `GEOQA_API_TOKEN` on the VPS in `/opt/geoqa/.env`, then
 | `content_analyse` | content analysis |
 | `evidence_manifest` | `geoqa evidence inspect` |
 | `evidence_get` | evidence package |
-| `evidence_screenshot` | screenshot base64 |
+| `evidence_screenshot` | One screenshot as base64 PNG |
+| `evidence_screenshots` | All present screenshots as base64 PNGs |
+| `evidence_artifact` | Trace, HAR, snapshot, vitals, console, network, a11y, content |
 | `evidence_prune` | `geoqa evidence prune` |
 | `assist_explain` | `geoqa assist explain` |
 | `digest_send` | `geoqa digest send` |
@@ -110,6 +112,8 @@ Set the same `GEOQA_API_TOKEN` on the VPS in `/opt/geoqa/.env`, then
 | `server_findings_repair_start` | `POST /api/findings/repair` |
 | `server_evidence_get` | `GET /api/evidence/:runId` |
 | `server_evidence_screenshot` | `GET /api/evidence/:runId/shot/:label` |
+| `server_evidence_screenshots` | `GET /api/evidence/:runId/screenshots` |
+| `server_evidence_artifact` | `GET /api/evidence/:runId/artifact/:kind` |
 
 ## Resources
 

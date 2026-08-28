@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   evidenceRunDir,
+  loadEvidenceArtifact,
   loadEvidencePackage,
+  loadEvidenceScreenshots,
   loadEvidenceShot,
   parseEvidencePackage,
   readJourneyFromRunJson,
   type PackageFs,
 } from "../package.js";
+import { buildManifest } from "../manifest.js";
 
 const runJson = {
   runId: "run_1786798894551_bergen-mobile",
@@ -400,5 +403,144 @@ describe("loadEvidenceShot", () => {
     expect(loadEvidenceShot(root, id, "network", fs)).toBeNull();
     expect(loadEvidenceShot(root, id, "../landing", fs)).toBeNull();
     expect(loadEvidenceShot(root, id, "after-scroll", fs)).toBeNull();
+  });
+});
+
+describe("loadEvidenceArtifact", () => {
+  const root = "/e";
+  const id = "run_1786798894551_bergen-mobile";
+  const dir = `${root}/${id}`;
+
+  const manifest = buildManifest({
+    evidenceId: "ev_1",
+    runId: id,
+    createdAt: "2026-01-01T00:00:00Z",
+    verdict: "FAIL",
+    artifacts: [
+      { kind: "metadata", label: "run", path: "run.json", bytes: 100, mime: "application/json" },
+      { kind: "snapshot", label: "tree", path: "snapshot.txt", bytes: 12, mime: "text/plain" },
+      { kind: "vitals", label: "vitals", path: "vitals.json", bytes: 20, mime: "application/json" },
+      { kind: "trace", label: "trace", path: "trace.zip", bytes: 4, mime: "application/zip" },
+    ],
+  });
+
+  it("loads text, json, and base64 artifacts listed in the manifest", () => {
+    const fs = fsFor({
+      [`${dir}/run.json`]: JSON.stringify(runJson),
+      [`${dir}/manifest.json`]: JSON.stringify(manifest),
+      [`${dir}/snapshot.txt`]: "hello tree",
+      [`${dir}/vitals.json`]: JSON.stringify({ lcp: 1200 }),
+      [`${dir}/trace.zip`]: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+    });
+    expect(loadEvidenceArtifact(root, id, "snapshot", fs)).toMatchObject({
+      ok: true,
+      encoding: "text",
+      text: "hello tree",
+    });
+    expect(loadEvidenceArtifact(root, id, "vitals", fs)).toMatchObject({
+      ok: true,
+      encoding: "json",
+      value: { lcp: 1200 },
+    });
+    expect(loadEvidenceArtifact(root, id, "trace", fs)).toMatchObject({
+      ok: true,
+      encoding: "base64",
+      dataBase64: Buffer.from([0x50, 0x4b, 0x03, 0x04]).toString("base64"),
+    });
+    expect(loadEvidenceArtifact(root, id, "snapshot", fs, "tree")).toMatchObject({
+      ok: true,
+      encoding: "text",
+      text: "hello tree",
+    });
+  });
+
+  it("falls back to text when a json artifact cannot be parsed", () => {
+    const fs = fsFor({
+      [`${dir}/manifest.json`]: JSON.stringify({
+        ...manifest,
+        artifacts: [{ kind: "vitals", label: "vitals", path: "vitals.json", bytes: 8, mime: "application/json" }],
+      }),
+      [`${dir}/vitals.json`]: "not-json",
+    });
+    expect(loadEvidenceArtifact(root, id, "vitals", fs)).toMatchObject({
+      ok: true,
+      encoding: "text",
+      text: "not-json",
+    });
+  });
+
+  it("refuses missing manifests, zero-byte entries, and path escapes", () => {
+    const fs = fsFor({
+      [`${dir}/run.json`]: JSON.stringify(runJson),
+      [`${dir}/manifest.json`]: JSON.stringify({
+        ...manifest,
+        artifacts: [{ kind: "snapshot", label: "tree", path: "snapshot.txt", bytes: 0, mime: "text/plain" }],
+      }),
+    });
+    expect(loadEvidenceArtifact(root, id, "snapshot", fs)).toEqual({ ok: false, error: "no snapshot artifact for this run" });
+    expect(loadEvidenceArtifact(root, "../etc", "snapshot", fs)).toEqual({ ok: false, error: "that is not a run id" });
+
+    const escaped = fsFor({
+      [`${dir}/manifest.json`]: JSON.stringify({
+        ...manifest,
+        artifacts: [{ kind: "snapshot", label: "tree", path: "../secret.txt", bytes: 5, mime: "text/plain" }],
+      }),
+    });
+    expect(loadEvidenceArtifact(root, id, "snapshot", escaped)).toEqual({
+      ok: false,
+      error: "artifact path escapes the run directory",
+    });
+
+    const corrupt = fsFor({ [`${dir}/manifest.json`]: "{ bad json" });
+    expect(loadEvidenceArtifact(root, id, "snapshot", corrupt)).toEqual({
+      ok: false,
+      error: "no evidence manifest for this run",
+    });
+
+    const multi = fsFor({
+      [`${dir}/manifest.json`]: JSON.stringify({
+        ...manifest,
+        artifacts: [
+          { kind: "content", label: "a", path: "a.json", bytes: 1, mime: "application/json" },
+          { kind: "content", label: "b", path: "b.json", bytes: 1, mime: "application/json" },
+        ],
+      }),
+    });
+    expect(loadEvidenceArtifact(root, id, "content", multi).error).toContain("multiple content artifacts");
+
+    const missingFile = fsFor({
+      [`${dir}/manifest.json`]: JSON.stringify(manifest),
+    });
+    expect(loadEvidenceArtifact(root, id, "snapshot", missingFile)).toEqual({
+      ok: false,
+      error: "artifact file is missing on disk",
+    });
+
+    const labeled = fsFor({
+      [`${dir}/manifest.json`]: JSON.stringify(manifest),
+      [`${dir}/snapshot.txt`]: "hello tree",
+    });
+    expect(loadEvidenceArtifact(root, id, "snapshot", labeled, "missing-label").error).toContain(
+      'no snapshot artifact with label "missing-label"',
+    );
+  });
+});
+
+describe("loadEvidenceScreenshots", () => {
+  it("returns every present screenshot as base64", () => {
+    const root = "/e";
+    const id = "run_1786798894551_bergen-mobile";
+    const dir = `${root}/${id}`;
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const fs = fsFor({
+      [`${dir}/run.json`]: JSON.stringify(runJson),
+      [`${dir}/landing.png`]: png,
+    });
+    const loaded = loadEvidenceScreenshots(root, id, fs);
+    expect(loaded).toEqual({
+      ok: true,
+      runId: id,
+      shots: [{ label: "landing", mime: "image/png", dataBase64: png.toString("base64") }],
+    });
   });
 });

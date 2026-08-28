@@ -44,7 +44,17 @@ export {
   type DigestSendOptions,
   type FixRunCommandOptions,
 } from "../cli/commands.js";
-export { loadEvidencePackage, loadEvidenceShot, type EvidencePackage } from "../evidence/package.js";
+export {
+  loadEvidencePackage,
+  loadEvidenceShot,
+  loadEvidenceArtifact,
+  loadEvidenceScreenshots,
+  EVIDENCE_ARTIFACT_KINDS,
+  type EvidencePackage,
+  type EvidenceArtifactKind,
+  type LoadedEvidenceArtifact,
+  type LoadedEvidenceScreenshots,
+} from "../evidence/package.js";
 export { readManifest } from "../evidence/store.js";
 export { GEOQA_SCHEMA_VERSION } from "../evidence/manifest.js";
 export { findRepoRoot, defaultEvidenceRoot, profilesRoot, tenantsRoot } from "../repo.js";

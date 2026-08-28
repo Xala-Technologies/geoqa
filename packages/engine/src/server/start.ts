@@ -22,7 +22,7 @@ import { createRepairGate } from "./repair-control.js";
 import { nodeHistoryFs } from "../history/store.js";
 import { attachWatch } from "./watch-loop.js";
 import { watchableMarkets } from "../watch/store.js";
-import { loadEvidencePackage, loadEvidenceShot, type PackageFs } from "../evidence/package.js";
+import { loadEvidencePackage, loadEvidenceShot, loadEvidenceArtifact, loadEvidenceScreenshots, type PackageFs } from "../evidence/package.js";
 
 export interface StartOptions {
   repoRoot: string;
@@ -102,6 +102,8 @@ export function startServer(options: StartOptions): { ok: true; close: () => voi
     },
     evidence: (runId) => loadEvidencePackage(evidenceRoot, runId, nodePackageFs),
     evidenceShot: (runId, label) => loadEvidenceShot(evidenceRoot, runId, label, nodePackageFs),
+    evidenceArtifact: (runId, kind, label) => loadEvidenceArtifact(evidenceRoot, runId, kind, nodePackageFs, label),
+    evidenceScreenshots: (runId, labels) => loadEvidenceScreenshots(evidenceRoot, runId, nodePackageFs, labels),
     ...(watch !== null ? { control: watch.control } : {}),
     repair: {
       start: (keys) => {

@@ -83,6 +83,8 @@ export default defineConfig({
         "src/temporal/workflows.ts",
         // Pure type declarations.
         "**/types.ts",
+        // Re-export surface for @geoqa/mcp; judgement lives in the modules it re-exports.
+        "src/mcp/api.ts",
       ],
       /**
        * Lines, statements and functions at 100 — and BRANCHES ratcheted.

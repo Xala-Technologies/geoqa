@@ -1,9 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+  EVIDENCE_ARTIFACT_KINDS,
   evidenceInspect,
   evidencePrune,
+  loadEvidenceArtifact,
   loadEvidencePackage,
+  loadEvidenceScreenshots,
   loadEvidenceShot,
   nodePackageFs,
   parsePrunePolicy,
@@ -11,6 +14,8 @@ import {
 } from "@geoqa/engine/mcp.js";
 import { jsonError, jsonText, runTool } from "../json.js";
 import { runIdSchema } from "../schemas.js";
+
+const artifactKindSchema = z.enum(EVIDENCE_ARTIFACT_KINDS);
 
 export function registerEvidenceTools(server: McpServer, deps: CommandDeps): void {
   server.registerTool(
@@ -31,12 +36,45 @@ export function registerEvidenceTools(server: McpServer, deps: CommandDeps): voi
   server.registerTool(
     "evidence_screenshot",
     {
-      description: "Screenshot from a run as base64",
+      description: "One screenshot from a run as base64 PNG",
       inputSchema: z.object({ runId: runIdSchema, label: z.string().regex(/^[A-Za-z0-9._-]+$/) }),
     },
     async ({ runId, label }) => {
       const shot = loadEvidenceShot(deps.evidenceRoot, runId, label, nodePackageFs);
-      return shot === null ? jsonError(`no screenshot "${label}" for run "${runId}"`) : jsonText({ runId, label, mime: shot.type, dataBase64: shot.body.toString("base64") });
+      return shot === null
+        ? jsonError(`no screenshot "${label}" for run "${runId}"`)
+        : jsonText({ runId, label, mime: shot.type, dataBase64: shot.body.toString("base64") });
+    },
+  );
+
+  server.registerTool(
+    "evidence_screenshots",
+    {
+      description: "All present screenshots for a run as base64 PNGs (optional label filter)",
+      inputSchema: z.object({
+        runId: runIdSchema,
+        labels: z.array(z.string().regex(/^[A-Za-z0-9._-]+$/)).optional(),
+      }),
+    },
+    async ({ runId, labels }) => {
+      const loaded = loadEvidenceScreenshots(deps.evidenceRoot, runId, nodePackageFs, labels);
+      return loaded.ok ? jsonText(loaded) : jsonError(loaded.error);
+    },
+  );
+
+  server.registerTool(
+    "evidence_artifact",
+    {
+      description: "One retained artifact from manifest.json: trace, HAR, snapshot, vitals, console, network, a11y, content",
+      inputSchema: z.object({
+        runId: runIdSchema,
+        kind: artifactKindSchema,
+        label: z.string().regex(/^[A-Za-z0-9._-]+$/).optional().describe("Required when the run has multiple artifacts of this kind"),
+      }),
+    },
+    async ({ runId, kind, label }) => {
+      const loaded = loadEvidenceArtifact(deps.evidenceRoot, runId, kind, nodePackageFs, label);
+      return loaded.ok ? jsonText(loaded) : jsonError(loaded.error);
     },
   );
 

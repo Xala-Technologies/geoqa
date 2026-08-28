@@ -32,6 +32,11 @@
 import { clearedCookie, cookieValue, readBearer, readSession, sessionCookie, signSession, verifyApiToken, verifyPassword, SESSION_MS, type AuthConfig } from "./auth.js";
 import { routeControl, type ControlDeps } from "./control.js";
 import { keysFromBody, type RepairProgress, type RepairStart } from "./repair-control.js";
+import type {
+  EvidenceArtifactKind,
+  LoadedEvidenceArtifact,
+  LoadedEvidenceScreenshots,
+} from "../evidence/package.js";
 
 export interface ServerRequest {
   method: string;
@@ -103,6 +108,10 @@ export interface RouterDeps {
   evidence?: (runId: string) => { ok: true; value: unknown } | { ok: false; error: string };
   /** One screenshot from that package, as bytes. Null when the journey never took it. */
   evidenceShot?: (runId: string, label: string) => { body: Buffer; type: string } | null;
+  /** One manifest-listed artifact (trace, HAR, snapshot, …). */
+  evidenceArtifact?: (runId: string, kind: EvidenceArtifactKind, label?: string) => LoadedEvidenceArtifact;
+  /** All present screenshots as base64 JSON. */
+  evidenceScreenshots?: (runId: string, labels?: string[]) => LoadedEvidenceScreenshots;
 }
 
 const json = (status: number, value: unknown, headers: Record<string, string> = {}): ServerResponse => ({
@@ -237,25 +246,47 @@ function routeRepair(request: ServerRequest, deps: RouterDeps): ServerResponse {
   return json(200, deps.repair.start(parsed.keys));
 }
 
-const EVIDENCE = /^\/api\/evidence\/(run_[A-Za-z0-9._-]+)(?:\/shot\/([A-Za-z0-9._-]+))?$/;
+const EVIDENCE = /^\/api\/evidence\/(run_[A-Za-z0-9._-]+)(?:\/(shot)\/([A-Za-z0-9._-]+)|\/(artifact)\/(snapshot|trace|har|vitals|console|network|a11y|content)(?:\/([A-Za-z0-9._-]+))?|\/(screenshots))?$/;
 
 function routeEvidence(request: ServerRequest, deps: RouterDeps): ServerResponse {
   if (request.method !== "GET") return json(404, { error: `no such endpoint: ${request.method} ${request.path}` });
   const match = EVIDENCE.exec(request.path);
   if (match === null) return json(404, { error: `no such endpoint: ${request.method} ${request.path}` });
   const runId = match[1] ?? "";
-  const label = match[2];
-  if (label !== undefined) {
+  const shotLabel = match[2] === "shot" ? match[3] : undefined;
+  const artifactKind = match[4] === "artifact" ? (match[5] as EvidenceArtifactKind | undefined) : undefined;
+  const artifactLabel = match[4] === "artifact" ? match[6] : undefined;
+  const screenshots = match[7] === "screenshots";
+
+  if (shotLabel !== undefined) {
     if (deps.evidenceShot === undefined) {
       return json(404, { error: "evidence is not available on this console — run `geoqa server`" });
     }
-    const shot = deps.evidenceShot(runId, label);
+    const shot = deps.evidenceShot(runId, shotLabel);
     if (shot === null) return json(404, { error: "no screenshot with that label" });
-    // JSON like a live frame, not raw bytes: an <img src> to this URL drops the
-    // session cookie in some loads and the picture never appears. The console
-    // already fetches JSON with credentials; a data URL is the same path.
     return json(200, { mime: shot.type, data: shot.body.toString("base64") });
   }
+
+  if (artifactKind !== undefined) {
+    if (deps.evidenceArtifact === undefined) {
+      return json(404, { error: "evidence is not available on this console — run `geoqa server`" });
+    }
+    const loaded = deps.evidenceArtifact(
+      runId,
+      artifactKind,
+      ...(artifactLabel !== undefined ? [artifactLabel] : []),
+    );
+    return loaded.ok ? json(200, loaded) : json(404, { error: loaded.error });
+  }
+
+  if (screenshots) {
+    if (deps.evidenceScreenshots === undefined) {
+      return json(404, { error: "evidence is not available on this console — run `geoqa server`" });
+    }
+    const loaded = deps.evidenceScreenshots(runId);
+    return loaded.ok ? json(200, loaded) : json(404, { error: loaded.error });
+  }
+
   if (deps.evidence === undefined) {
     return json(404, { error: "evidence is not available on this console — run `geoqa server`" });
   }

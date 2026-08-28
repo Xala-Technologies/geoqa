@@ -120,4 +120,31 @@ export function registerServerTools(server: McpServer, config: McpConfig): void 
     },
     async ({ runId, label }) => proxyRequest(config, "GET", `/api/evidence/${runId}/shot/${label}`),
   );
+
+  server.registerTool(
+    "server_evidence_artifact",
+    {
+      description: "GET /api/evidence/:runId/artifact/:kind — trace, HAR, snapshot, vitals, …",
+      inputSchema: z.object({
+        runId: runIdSchema,
+        kind: z.enum(["snapshot", "trace", "har", "vitals", "console", "network", "a11y", "content"]),
+        label: z.string().regex(/^[A-Za-z0-9._-]+$/).optional(),
+      }),
+    },
+    async ({ runId, kind, label }) =>
+      proxyRequest(
+        config,
+        "GET",
+        label !== undefined ? `/api/evidence/${runId}/artifact/${kind}/${label}` : `/api/evidence/${runId}/artifact/${kind}`,
+      ),
+  );
+
+  server.registerTool(
+    "server_evidence_screenshots",
+    {
+      description: "GET /api/evidence/:runId/screenshots — all present screenshots as base64 JSON",
+      inputSchema: z.object({ runId: runIdSchema }),
+    },
+    async ({ runId }) => proxyRequest(config, "GET", `/api/evidence/${runId}/screenshots`),
+  );
 }

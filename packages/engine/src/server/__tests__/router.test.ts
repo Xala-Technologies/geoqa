@@ -360,6 +360,36 @@ describe("evidence for one run", () => {
     expect(noShot.status).toBe(404);
   });
 
+  it("serves manifest artifacts and bulk screenshots", () => {
+    const d = deps({
+      evidenceArtifact: (runId, kind) =>
+        runId === "run_1_bergen-mobile" && kind === "snapshot"
+          ? { ok: true, kind, label: "tree", path: "snapshot.txt", mime: "text/plain", bytes: 4, encoding: "text", text: "tree" }
+          : { ok: false, error: "no snapshot artifact for this run" },
+      evidenceScreenshots: (runId) =>
+        runId === "run_1_bergen-mobile"
+          ? { ok: true, runId, shots: [{ label: "landing", mime: "image/png", dataBase64: "abc" }] }
+          : { ok: false, error: "no evidence package for this run" },
+    });
+    const snap = route(req({ path: "/api/evidence/run_1_bergen-mobile/artifact/snapshot", headers: withSession(d) }), d);
+    expect(snap.status).toBe(200);
+    expect(JSON.parse(asText(snap.body)).text).toBe("tree");
+
+    const shots = route(req({ path: "/api/evidence/run_1_bergen-mobile/screenshots", headers: withSession(d) }), d);
+    expect(shots.status).toBe(200);
+    expect(JSON.parse(asText(shots.body)).shots).toHaveLength(1);
+  });
+
+  it("404s artifact and screenshot bulk routes when evidence is not wired", () => {
+    const d = deps();
+    const artifact = route(req({ path: "/api/evidence/run_1_bergen-mobile/artifact/snapshot", headers: withSession(d) }), d);
+    expect(artifact.status).toBe(404);
+    expect(JSON.parse(asText(artifact.body)).error).toContain("not available on this console");
+
+    const shots = route(req({ path: "/api/evidence/run_1_bergen-mobile/screenshots", headers: withSession(d) }), d);
+    expect(shots.status).toBe(404);
+  });
+
   it("404s a WRITE to the evidence route, and a run id that is not one", () => {
     // Evidence is read-only over HTTP by design: there is no endpoint that
     // writes into a package, so a POST is not a method error to fix — it is a
