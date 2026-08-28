@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "geoqa": {
+      "command": "pnpm",
+      "args": ["--filter", "@geoqa/mcp", "start"],
+      "env": {
+        "GEOQA_REPO_ROOT": "/Users/ibrahim/Projects/Experimental/geoqa"
+      }
+    }
+  }
+}

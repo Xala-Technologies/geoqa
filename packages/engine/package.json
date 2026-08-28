@@ -8,7 +8,8 @@
   },
   "exports": {
     "./server/auth.js": "./src/server/auth.ts",
-    "./repo.js": "./src/repo.ts"
+    "./repo.js": "./src/repo.ts",
+    "./mcp.js": "./src/mcp/api.ts"
   },
   "scripts": {
     "geoqa": "tsx src/cli/index.ts",

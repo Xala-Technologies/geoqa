@@ -21,7 +21,9 @@
     "ui:dev": "pnpm --filter geoqa-ui dev",
     "ui:build": "pnpm --filter geoqa-ui build",
     "test:ui": "pnpm --filter geoqa-ui test:coverage",
-    "test:console": "pnpm --filter @geoqa/console test"
+    "test:console": "pnpm --filter @geoqa/console test",
+    "mcp": "pnpm --filter @geoqa/mcp start",
+    "test:mcp": "pnpm --filter @geoqa/mcp test"
   },
   "devDependencies": {
     "@temporalio/testing": "^1.21.1",

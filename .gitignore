@@ -51,3 +51,6 @@ secrets/
 # Coverage output from the console package, same reason the engine ignores its own.
 ui/coverage/
 apps/ui/coverage/
+
+# Local Cursor MCP config (machine paths). Copy .cursor/mcp.json.example to activate.
+.cursor/mcp.json
