@@ -1,0 +1,12 @@
+[Unit]
+Description=Forward Docker bridge 4181 to GeoQA MCP on localhost
+After=network.target docker.service geoqa-mcp.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/socat TCP-LISTEN:4181,bind=172.16.1.1,reuseaddr,fork TCP:127.0.0.1:4181
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

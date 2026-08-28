@@ -1,0 +1,21 @@
+[Unit]
+Description=GeoQA MCP (Streamable HTTP)
+After=network.target geoqa.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/geoqa
+EnvironmentFile=/opt/geoqa/.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/root
+Environment=GEOQA_REPO_ROOT=/opt/geoqa
+Environment=GEOQA_MCP_HOST=127.0.0.1
+Environment=GEOQA_MCP_PORT=4181
+Environment=GEOQA_SERVER_URL=https://geoqa.xala.no
+Environment=GEOQA_MCP_ALLOWED_HOSTS=geoqa.xala.no,geoqa.srv1212925.hstgr.cloud,127.0.0.1,localhost
+ExecStart=/usr/local/bin/pnpm --filter @geoqa/mcp start:http
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

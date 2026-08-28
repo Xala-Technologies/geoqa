@@ -1,14 +1,51 @@
 # @geoqa/mcp
 
-stdio MCP server — agents read and drive geoqa over Model Context Protocol.
+MCP server for geoqa — **stdio** (local Cursor) or **Streamable HTTP** (remote URL).
 
-## Setup
+## Setup (local stdio)
 
 ```bash
 cp .cursor/mcp.json.example .cursor/mcp.json
 # set GEOQA_REPO_ROOT, GEOQA_SERVER_URL, GEOQA_API_TOKEN
 pnpm mcp   # smoke-test (Ctrl+C)
 ```
+
+## Remote URL (production)
+
+On the VPS, `geoqa-mcp.service` listens on `127.0.0.1:4181`. Caddy forwards
+`https://geoqa.xala.no/mcp` to that port (see `infra/caddy-geoqa.snippet`).
+
+Requires the same `GEOQA_API_TOKEN` as the console API:
+
+```bash
+curl -fsS https://geoqa.xala.no/mcp/health
+curl -fsS http://127.0.0.1:4181/health       # on the box
+```
+
+Cursor config (remote — no local repo needed):
+
+```json
+{
+  "mcpServers": {
+    "geoqa": {
+      "url": "https://geoqa.xala.no/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:GEOQA_API_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Env vars for the HTTP server:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GEOQA_API_TOKEN` | — | **Required** for HTTP mode |
+| `GEOQA_MCP_HOST` | `127.0.0.1` | Bind address |
+| `GEOQA_MCP_PORT` | `4181` | Listen port |
+| `GEOQA_MCP_ALLOWED_HOSTS` | from `GEOQA_SERVER_URL` | Host headers behind Caddy |
+| `GEOQA_REPO_ROOT` | cwd walk | Evidence and inputs root |
 
 Generate credentials:
 
@@ -17,7 +54,8 @@ pnpm geoqa server hash '<your-password>'
 # exports GEOQA_ADMIN_PASSWORD_HASH, GEOQA_SESSION_SECRET, GEOQA_API_TOKEN
 ```
 
-Set the same `GEOQA_API_TOKEN` on the VPS in `/opt/geoqa/.env`, then `systemctl restart geoqa`.
+Set the same `GEOQA_API_TOKEN` on the VPS in `/opt/geoqa/.env`, then
+`systemctl restart geoqa geoqa-mcp`.
 
 ## Local tools (evidence on disk)
 

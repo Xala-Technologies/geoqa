@@ -1,0 +1,14 @@
+# Merge into the Docker Caddyfile for geoqa (Buzz/Coolify host).
+# UI + API on 4180; MCP Streamable HTTP on 4181 (see geoqa-mcp-bridge.service).
+
+geoqa.xala.no, geoqa.srv1212925.hstgr.cloud {
+	encode gzip
+
+	handle /mcp* {
+		reverse_proxy 172.16.1.1:4181
+	}
+
+	handle {
+		reverse_proxy 172.16.1.1:4180
+	}
+}

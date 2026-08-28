@@ -55,3 +55,4 @@ export { loadTenant } from "../tenant/registry.js";
 export { SAMPLERS } from "../cli/samplers.js";
 export { findExperiment } from "../experiments/definitions.js";
 export { settingsView } from "./settings.js";
+export { readBearer, verifyApiToken } from "../server/auth.js";

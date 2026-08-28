@@ -1,12 +1,18 @@
 {
   "mcpServers": {
-    "geoqa": {
+    "geoqa-local": {
       "command": "pnpm",
       "args": ["--filter", "@geoqa/mcp", "start"],
       "env": {
         "GEOQA_REPO_ROOT": "/Users/ibrahim/Projects/Experimental/geoqa",
-        "GEOQA_SERVER_URL": "https://geoqa.srv1212925.hstgr.cloud",
+        "GEOQA_SERVER_URL": "https://geoqa.xala.no",
         "GEOQA_API_TOKEN": "${env:GEOQA_API_TOKEN}"
+      }
+    },
+    "geoqa-remote": {
+      "url": "https://geoqa.xala.no/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:GEOQA_API_TOKEN}"
       }
     }
   }

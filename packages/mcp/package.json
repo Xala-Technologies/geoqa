@@ -3,21 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "MCP server — agents read geoqa runs, evidence, and catalog data over stdio",
+  "description": "MCP server — agents read geoqa runs, evidence, and catalog data over stdio or HTTP",
   "bin": {
-    "geoqa-mcp": "./bin/geoqa-mcp.mjs"
+    "geoqa-mcp": "./bin/geoqa-mcp.mjs",
+    "geoqa-mcp-http": "./bin/geoqa-mcp-http.mjs"
   },
   "scripts": {
     "start": "tsx src/index.ts",
+    "start:http": "tsx src/http.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
     "@geoqa/engine": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "express": "^5.2.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/express": "^5.0.0",
     "@types/node": "^22.16.5",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",

@@ -23,6 +23,7 @@
     "test:ui": "pnpm --filter geoqa-ui test:coverage",
     "test:console": "pnpm --filter @geoqa/console test",
     "mcp": "pnpm --filter @geoqa/mcp start",
+    "mcp:http": "pnpm --filter @geoqa/mcp start:http",
     "test:mcp": "pnpm --filter @geoqa/mcp test"
   },
   "devDependencies": {
