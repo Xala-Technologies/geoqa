@@ -1,54 +1,82 @@
 # @geoqa/mcp
 
-stdio MCP server so agents (Cursor, Claude Desktop, etc.) can read geoqa runs, evidence, and catalog data without parsing CLI output.
+stdio MCP server — agents read and drive geoqa over Model Context Protocol.
 
-## Tools
+## Setup
 
-| Tool | What it returns |
-|------|-----------------|
-| `profiles_list` | Geographic profiles (market × device) |
-| `journeys_list` | Visitor journey definitions |
-| `tenants_list` | Tenant registry summary |
-| `runs_list` | Run index with filters, summary, regressions |
-| `runs_rebuild` | Rebuild `runs.jsonl` from disk |
-| `dashboard_get` | Operator dashboard JSON |
-| `site_analyse` | Cross-market site analysis |
-| `evidence_manifest` | Artifact manifest for one run |
-| `evidence_get` | Full package: steps, issues, console, brief |
-| `evidence_screenshot` | Screenshot as base64 |
+```bash
+cp .cursor/mcp.json.example .cursor/mcp.json
+# set GEOQA_REPO_ROOT, GEOQA_SERVER_URL, GEOQA_API_TOKEN
+pnpm mcp   # smoke-test (Ctrl+C)
+```
 
-When `GEOQA_SERVER_URL` is set (and optionally `GEOQA_API_TOKEN`):
+Generate credentials:
 
-| Tool | What it returns |
-|------|-----------------|
-| `server_health` | `/health` from `geoqa server` |
-| `server_settings` | `/api/settings` |
-| `server_watch_status` | `/api/watch` |
+```bash
+pnpm geoqa server hash '<your-password>'
+# exports GEOQA_ADMIN_PASSWORD_HASH, GEOQA_SESSION_SECRET, GEOQA_API_TOKEN
+```
+
+Set the same `GEOQA_API_TOKEN` on the VPS in `/opt/geoqa/.env`, then `systemctl restart geoqa`.
+
+## Local tools (evidence on disk)
+
+| Tool | CLI equivalent |
+|------|----------------|
+| `profiles_list` | `geoqa profile list` |
+| `journeys_list` | `geoqa journey list` |
+| `tenants_list` | `geoqa tenant list` |
+| `settings_get` | `GET /api/settings` |
+| `runs_list` | `geoqa runs list` |
+| `runs_rebuild` | `geoqa runs rebuild` |
+| `dashboard_get` | `geoqa dashboard build` |
+| `site_analyse` | site analysis |
+| `content_analyse` | content analysis |
+| `evidence_manifest` | `geoqa evidence inspect` |
+| `evidence_get` | evidence package |
+| `evidence_screenshot` | screenshot base64 |
+| `evidence_prune` | `geoqa evidence prune` |
+| `assist_explain` | `geoqa assist explain` |
+| `digest_send` | `geoqa digest send` |
+| `findings_file` | `geoqa findings file` |
+| `findings_repair` | `geoqa findings repair` |
+| `fix_run` | `geoqa fix run` |
+| `keywords_research` | `geoqa keywords research` |
+| `browser_verify` | `geoqa browser verify` |
+| `proxy_verify` | `geoqa proxy verify` |
+| `journey_run` | `geoqa journey run` |
+| `gate_check` | `geoqa gate check` |
+| `matrix_run` | `geoqa matrix run` |
+| `experiment_run` | `geoqa experiment run` |
+
+## Remote tools (`GEOQA_SERVER_URL` + `GEOQA_API_TOKEN`)
+
+| Tool | HTTP |
+|------|------|
+| `server_health` | `GET /health` |
+| `server_whoami` | `GET /api/whoami` |
+| `server_settings` | `GET /api/settings` |
+| `server_dashboard_rebuild` | `POST /api/dashboard/rebuild` |
+| `server_watch_get` | `GET /api/watch` |
+| `server_watch_update` | `PUT /api/watch` |
+| `server_watch_log` | `GET /api/watch/log` |
+| `server_watch_start` | `POST /api/watch/start` |
+| `server_watch_target_add` | `POST /api/watch/targets` |
+| `server_watch_target_remove` | `DELETE /api/watch/targets` |
+| `server_live_board` | `GET /api/live` |
+| `server_live_session` | `GET /api/live/:id` |
+| `server_live_frame` | `GET /api/live/:id/frame` |
+| `server_run_status` | `GET /api/run` |
+| `server_run_start` | `POST /api/run` |
+| `server_findings_repair_status` | `GET /api/findings/repair` |
+| `server_findings_repair_start` | `POST /api/findings/repair` |
+| `server_evidence_get` | `GET /api/evidence/:runId` |
+| `server_evidence_screenshot` | `GET /api/evidence/:runId/shot/:label` |
 
 ## Resources
 
-- `geoqa://dashboard` — dashboard view (rebuilt on read)
-- `geoqa://runs/recent` — last 20 runs
-- `geoqa://runs/{runId}` — full evidence package
+- `geoqa://dashboard`
+- `geoqa://runs/recent`
+- `geoqa://runs/{runId}`
 
-## Environment
-
-| Variable | Purpose |
-|----------|---------|
-| `GEOQA_REPO_ROOT` | Git root (auto-detected if omitted) |
-| `GEOQA_EVIDENCE_ROOT` | Override evidence directory |
-| `GEOQA_TENANT` | Scope to one tenant |
-| `GEOQA_SERVER_URL` | e.g. `http://127.0.0.1:4180` for live server proxy |
-| `GEOQA_API_TOKEN` | Bearer token (`GEOQA_API_TOKEN` from `geoqa server hash`) |
-| `GEOQA_MCP_VERBOSE=1` | Log tool activity to stderr |
-
-## Cursor
-
-Copy `.cursor/mcp.json.example` to `.cursor/mcp.json` and adjust `GEOQA_REPO_ROOT`.
-
-```bash
-pnpm mcp   # smoke-test: server starts on stdio (Ctrl+C to exit)
-pnpm test:mcp
-```
-
-All tool responses include `schemaVersion` from the engine wire contract.
+Execution tools launch real browsers and spend proxy traffic — MCP marks them with `destructiveHint`.
