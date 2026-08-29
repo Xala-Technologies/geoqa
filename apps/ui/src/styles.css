@@ -1406,6 +1406,80 @@ tr.geo-split td {
   line-height: 1.6;
 }
 
+.fatal-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: var(--bg-canvas);
+}
+
+.fatal-card {
+  width: 100%;
+  max-width: 28rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--fg-fail) 35%, transparent);
+  border-radius: var(--radius-card);
+  background: var(--bg-elevated);
+  box-shadow: var(--elev-lift);
+  padding: 2rem;
+  animation: rise var(--motion-rise) ease-out;
+}
+
+.fatal-brand {
+  color: var(--fg-primary);
+}
+
+.fatal-kicker {
+  margin: 0;
+  font-size: var(--text-caption);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--fg-fail);
+}
+
+.fatal-title {
+  margin: 0;
+  font-size: var(--text-headline);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-primary);
+}
+
+.fatal-message {
+  margin: 0;
+  color: var(--fg-body);
+  font-size: var(--text-kicker);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.fatal-detail {
+  margin: 0;
+  max-height: 8rem;
+  overflow: auto;
+  border-radius: calc(var(--radius-card) - 0.25rem);
+  background: var(--bg-surface);
+  padding: 0.65rem 0.75rem;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.fatal-detail code {
+  font-family: inherit;
+  white-space: pre-wrap;
+}
+
+.fatal-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 0.35rem;
+}
+
 /* ── Sign-in ────────────────────────────────────────────────────────────── */
 
 .signin {
