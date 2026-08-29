@@ -15,9 +15,109 @@
       rel="stylesheet"
     />
     <script src="/theme-boot.js"></script>
+    <style>
+      /* Visible before the JS bundle — production often sits on this screen while dashboard.json loads. */
+      .boot-screen {
+        box-sizing: border-box;
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        background: #0c0c0e;
+        color: #f4f4f5;
+        font-family: "Familjen Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+      }
+      html[data-theme="light"] .boot-screen {
+        background: #efe8dc;
+        color: #1c1914;
+      }
+      .boot-screen-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.15rem;
+        max-width: 22rem;
+        text-align: center;
+      }
+      .boot-spinner {
+        position: relative;
+        width: 4.75rem;
+        height: 4.75rem;
+      }
+      .boot-spinner-orbit {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 2px solid color-mix(in srgb, #d0b07e 16%, transparent);
+        border-top-color: #d0b07e;
+        animation: boot-orbit 0.85s linear infinite;
+      }
+      html[data-theme="light"] .boot-spinner-orbit {
+        border-color: color-mix(in srgb, #8a6a32 16%, transparent);
+        border-top-color: #8a6a32;
+      }
+      .boot-spinner-mark {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        animation: boot-breathe 2.2s ease-in-out infinite;
+      }
+      .boot-screen-msg {
+        margin: 0;
+        font-size: 1.125rem;
+        letter-spacing: -0.03em;
+      }
+      .boot-screen-detail {
+        margin: 0;
+        font-size: 0.875rem;
+        opacity: 0.62;
+        line-height: 1.55;
+      }
+      @keyframes boot-orbit {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes boot-breathe {
+        0%,
+        100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+        50% {
+          transform: scale(1.06);
+          opacity: 0.88;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-spinner-orbit,
+        .boot-spinner-mark {
+          animation: none !important;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-screen" role="status" aria-live="polite" aria-busy="true">
+        <div class="boot-screen-inner">
+          <div class="boot-spinner" aria-hidden="true">
+            <span class="boot-spinner-orbit"></span>
+            <span class="boot-spinner-mark">
+              <svg width="28" height="28" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="19" height="19" stroke="currentColor" stroke-width="1.25" opacity="0.5" />
+                <path d="M11 1.5v19M1.5 11h19" stroke="currentColor" stroke-width="1" opacity="0.3" />
+                <rect x="7.5" y="7.5" width="7" height="7" stroke="currentColor" stroke-width="1.25" opacity="0.7" />
+                <rect x="9.5" y="9.5" width="3" height="3" fill="currentColor" />
+              </svg>
+            </span>
+          </div>
+          <p class="boot-screen-msg">Reading dashboard.json…</p>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
