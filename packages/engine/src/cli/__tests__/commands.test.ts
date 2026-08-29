@@ -2808,6 +2808,33 @@ describe("matrix values that only some invocations carry", () => {
     return { get runs() { return state.runs; }, get opts() { return state.opts; }, deps: make };
   };
 
+  it("resolves tenant-scoped journeys when deps carry tenantId", async () => {
+    const cap = capture();
+    const result = await matrixRun(cap.deps({ tenantId: "digilist" }), {
+      url: "https://dashboard.digilist.no/login",
+      markets: ["oslo"],
+      journeys: ["login-reachable"],
+      devices: ["desktop"],
+      pick: [{ market: "oslo", device: "desktop", journey: "login-reachable", target: "https://dashboard.digilist.no/login" }],
+      dryRun: true,
+    });
+    expect(result.scenarios).toHaveLength(1);
+    expect(result.scenarios[0]?.journey).toBe("login-reachable");
+  });
+
+  it("refuses a tenant journey when tenantId is absent from deps", async () => {
+    await expect(
+      matrixRun(deps(), {
+        url: "https://dashboard.digilist.no/login",
+        markets: ["oslo"],
+        journeys: ["login-reachable"],
+        devices: ["desktop"],
+        pick: [{ market: "oslo", device: "desktop", journey: "login-reachable", target: "https://dashboard.digilist.no/login" }],
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/login-reachable/);
+  });
+
   it("gives each page on the URL axis its OWN run id, not one id repeated", async () => {
     // The defect this guards: the axis expanded, every scenario got its own key and seed,
     // and all of them visited `--url` — a sweep reporting clean pages having loaded one of

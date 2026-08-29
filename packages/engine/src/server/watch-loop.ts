@@ -232,6 +232,7 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       env: options.env,
       now: options.now,
       log: options.log,
+      tenantId: options.tenant.id,
       cooldownPath: cooldownStorePath(options.evidenceRoot),
       cooldownMs: options.config.network.cooldownMs,
     });
@@ -408,6 +409,7 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       env: options.env,
       now: options.now,
       log: options.log,
+      tenantId: options.tenant.id,
       cooldownPath: cooldownStorePath(options.evidenceRoot),
       cooldownMs: options.config.network.cooldownMs,
     });
