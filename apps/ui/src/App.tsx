@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState, type JSX } from "react";
 import type { DashboardView } from "./types.ts";
 import { getJson, postJson, signOut } from "./api.ts";
+import { LoadingScreen } from "./LoadingScreen.tsx";
 import { Login } from "./Login.tsx";
 import { Overview } from "./views/Overview.tsx";
 import { Runs } from "./views/Runs.tsx";
@@ -54,6 +55,8 @@ export function App(): JSX.Element {
   const [servedWithSession, setServedWithSession] = useState(false);
   /** Null when idle; a message while a rebuild is in flight or has just finished. */
   const [rebuilding, setRebuilding] = useState<string | null>(null);
+  /** Subtitle on the boot spinner — e.g. while the index is being built the first time. */
+  const [bootDetail, setBootDetail] = useState<string | null>(null);
   const [route, setRoute] = useState(() => routeFromHash(window.location.hash));
   /** Sessions currently on the live board — the badge that says something is on screen. */
   const [liveCount, setLiveCount] = useState(0);
@@ -96,6 +99,7 @@ export function App(): JSX.Element {
       setView(value);
       setNeedsSignIn(false);
       setError(null);
+      setBootDetail(null);
       void getJson<{ user: string }>("/api/whoami").then((who) => setServedWithSession(who.ok));
     };
 
@@ -111,6 +115,7 @@ export function App(): JSX.Element {
       // A 404 here is not a failed password. Sign-in already succeeded; the index
       // simply has not been written yet. Build it and read again, once.
       if (result.error.includes("no dashboard has been built")) {
+        setBootDetail("Building index from evidence…");
         void postJson<{ total: number; warnings: string[] }>("/api/dashboard/rebuild").then((rebuilt) => {
           if (!rebuilt.ok) {
             if (rebuilt.signedOut) setNeedsSignIn(true);
@@ -192,7 +197,9 @@ export function App(): JSX.Element {
       </div>
     );
   }
-  if (view === null) return <div className="load">reading dashboard.json…</div>;
+  if (view === null) {
+    return <LoadingScreen message="Reading dashboard.json…" detail={bootDetail} />;
+  }
 
   // Counts that mean "somebody has to look at this". Coverage gaps are included because a page
   // never measured in a market is not a page that works there, and the count is the only thing
