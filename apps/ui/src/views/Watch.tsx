@@ -180,6 +180,17 @@ export function Watch(): JSX.Element {
                 onChange={(e) => patch({ everyMinutes: Number(e.target.value) })}
               />
               <span className="dim">min</span>
+              <span className="dim">
+                {spec.everyMinutes >= 720
+                  ? `≈ ${Math.max(1, Math.round((24 * 60) / spec.everyMinutes))}×/day`
+                  : `${Math.round((24 * 60) / spec.everyMinutes)}×/day`}
+              </span>
+              <button className="btn btn-ghost btn-sm" type="button" onClick={() => patch({ everyMinutes: 720 })}>
+                2×/day
+              </button>
+              <button className="btn btn-ghost btn-sm" type="button" onClick={() => patch({ everyMinutes: 1440 })}>
+                1×/day
+              </button>
               {data.nextPulseDueAt != null ? <span className="dim">next {data.nextPulseDueAt.slice(11, 16)} UTC</span> : null}
             </label>
           ) : (

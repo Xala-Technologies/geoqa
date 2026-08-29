@@ -58,7 +58,8 @@ import type { GeoProfile } from "../geo/types.js";
 import { verifyGeo, withCorroboration } from "../geo/verify.js";
 import { loadJourney, requiredVarsFromSource } from "../journeys/spec.js";
 import { seedFrom } from "../journeys/random.js";
-import { redactProxyUrl, selectProvider, type TcpProbe } from "../network/provider.js";
+import { authProbe, redactProxyUrl, selectProvider, type ProviderName, type TcpProbe } from "../network/provider.js";
+import type { AuthProbe } from "../network/types.js";
 import type { DurableMatrixResult } from "../temporal/client.js";
 import type { GeoQaRunInput } from "../temporal/workflows.js";
 import { buildRuntime, newRunId, type RunEngine, type RunSpec } from "../run/context.js";
@@ -235,6 +236,11 @@ export interface CommandDeps {
    * probe.
    */
   probe?: TcpProbe;
+  /**
+   * Injectable so tests never open a CONNECT to a real proxy gateway. Same seam
+   * as `probe`: `health()` must prove credentials, not just TCP reachability.
+   */
+  auth?: AuthProbe;
   /**
    * Injectable so `evidence prune` is covered against a fixture tree and can
    * never be pointed at the repo's real `evidence/`. Same reason `probe` exists.
@@ -538,6 +544,72 @@ export async function enforceQuota(
   const subUsers = apiKey === null || subUser === null ? null : await probe(apiKey);
   const runs = runsStartedToday(existingRunIds(deps.evidenceRoot), deps.now());
   return checkQuota(tenant, usageFor(tenant, subUsers, subUser, runs), estimate);
+}
+
+export type PreflightDecision =
+  | { ok: true; warnings: string[]; provider: ProviderName }
+  | { ok: false; error: string };
+
+const DIRECT_FALLBACK_WARNING =
+  "proxy unavailable — falling back to DIRECT egress from this host. Every market in this sweep shares one exit; geographic claims are UNPROVEN.";
+
+/**
+ * Refuse a sweep before Chrome opens when quota or the proxy vendor would fail it anyway.
+ *
+ * The CLI calls `enforceQuota` for matrix runs; the watch loop did not, which is how
+ * ~1600 ERROR runs accumulated against a dead Decodo account. Auth probing closes
+ * the other hole: quota can pass while the parent subscription is exhausted.
+ *
+ * When `directFallback` is true, a proxy that is out of credit or otherwise unusable
+ * yields direct egress instead of a refusal — loudly, never silently (invariant 6).
+ */
+export async function preflightSweep(
+  deps: CommandDeps,
+  tenant: Tenant,
+  pageLoads: number,
+  providerName: string,
+  options: { directFallback?: boolean } = {},
+): Promise<PreflightDecision> {
+  const name = providerName ?? DEFAULT_PROVIDER;
+  if (name !== "http-proxy") {
+    return { ok: true, warnings: [], provider: name };
+  }
+
+  const quota = await enforceQuota(deps, tenant, pageLoads);
+  for (const w of quota.warnings) deps.log(`warning: ${w}`);
+
+  const { provider } = selectProvider(name, {
+    env: deps.env,
+    ...(deps.probe ? { probe: deps.probe } : {}),
+    auth: deps.auth ?? authProbe,
+    ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),
+    ...(deps.cooldownMs !== undefined ? { cooldownMs: deps.cooldownMs } : {}),
+  });
+  const health = await provider.health(deps.now());
+  const proxyUnusable = health.state !== "usable";
+  const trafficRefused =
+    quota.state === "refused" && quota.errors.some((error) => error.includes("MB"));
+
+  if (proxyUnusable || trafficRefused) {
+    if (options.directFallback === true) {
+      const detail = proxyUnusable ? (health.detail ?? health.state) : quota.errors.join("; ");
+      return {
+        ok: true,
+        provider: "direct",
+        warnings: [`${DIRECT_FALLBACK_WARNING} (${detail})`, ...quota.warnings],
+      };
+    }
+    if (quota.state === "refused") {
+      return { ok: false, error: quota.errors.join("\n") };
+    }
+    return {
+      ok: false,
+      error: `provider "${provider.name}" is ${health.state}: ${health.detail ?? "no detail"}`,
+    };
+  }
+
+  const warnings = quota.state === "unknown" ? [...quota.errors] : [...quota.warnings];
+  return { ok: true, warnings, provider: name };
 }
 
 /**
@@ -946,6 +1018,7 @@ export async function proxyVerify(deps: CommandDeps, options: GeoVerifyOptions):
   const { provider, warning } = selectProvider(options.providerName ?? DEFAULT_PROVIDER, {
     env: deps.env,
     ...(deps.probe ? { probe: deps.probe } : {}),
+    auth: deps.auth ?? authProbe,
     // The READ half of the cooldown. Without it `httpProxyProvider` returns null from
     // `cooldownUntil` and a vendor that failed a minute ago is tried again immediately.
     ...(deps.cooldownPath ? { cooldownPath: deps.cooldownPath } : {}),

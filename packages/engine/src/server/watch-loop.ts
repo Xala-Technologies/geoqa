@@ -8,7 +8,8 @@
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { controlRun, defaultDeps, findingsFile, findingsRepair, loginVarsFromEnv, matrixRun, renderFindingsFile, renderFindingsRepair, resolveDataPath, resolveProfileId } from "../cli/commands.js";
+import { controlRun, defaultDeps, findingsFile, findingsRepair, loginVarsFromEnv, matrixRun, preflightSweep, renderFindingsFile, renderFindingsRepair, resolveDataPath, resolveProfileId } from "../cli/commands.js";
+import { cooldownStorePath } from "../network/cooldown.js";
 import { liveDashboardUrl } from "../cli/events.js";
 import { describeThrown } from "../errors.js";
 import { loadJourney } from "../journeys/spec.js";
@@ -150,7 +151,8 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
 
   const refuse = (error: string): void => {
     options.log(`watch: refused ${error}`);
-    lastSweepError = error;
+    // A quota or proxy refusal is expected operator state, not a defect. Setting
+    // lastSweepError here made assessWatch report "failed" and looked like geoqa broke.
     record({
       at: new Date(options.now()).toISOString(),
       level: "warning",
@@ -184,9 +186,71 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       }
       return;
     }
+    const startedMs = options.now();
+    const asPick = (s: { market: string; device: string; journey: string; target: string | null }): {
+      market: string;
+      device: string;
+      journey: string;
+      target: string;
+    } => ({ market: s.market, device: s.device, journey: s.journey, target: s.target ?? "" });
+    const e2eCells = decision.e2e ? e2ePlan.cells : [];
+    const e2eWrites = decision.e2e ? e2ePlan.writes : false;
+    const journeysByTarget = spec.targetJourneys;
+    const hasTargetPools = Object.keys(journeysByTarget).length > 0;
+    let nextCursor = cursor;
+    const pick =
+      decision.pulse && planned !== null && planned.ok
+        ? spec.mode === "continuous"
+          ? (() => {
+              const watchAxes = { ...planned.axes, journeysByTarget };
+              const stepped = nextSlice(
+                hasTargetPools ? expandWatchCells(watchAxes) : expandMatrix(planned.axes).map(asPick),
+                cursor,
+                spec.maxConcurrent,
+              );
+              nextCursor = stepped.nextCursor;
+              return [...stepped.slice, ...e2eCells];
+            })()
+          : spec.journeyPick === "seeded"
+            ? [...pickSeededCells({ ...planned.axes, atMs: startedMs, journeysByTarget }), ...e2eCells]
+            : hasTargetPools || e2eCells.length > 0
+              ? [...(hasTargetPools ? expandWatchCells({ ...planned.axes, journeysByTarget }) : expandMatrix(planned.axes).map(asPick)), ...e2eCells]
+              : undefined
+        : e2eCells;
+    if (pick !== undefined && pick.length === 0) {
+      options.log("watch: continuous slice is empty");
+      return;
+    }
+    const pageLoads =
+      pick !== undefined
+        ? pick.length
+        : planned !== null && planned.ok
+          ? expandMatrix(planned.axes).length + e2eCells.length
+          : e2eCells.length;
+    const deps = defaultDeps(options.repoRoot, {
+      evidenceRoot: options.evidenceRoot,
+      env: options.env,
+      now: options.now,
+      log: options.log,
+      cooldownPath: cooldownStorePath(options.evidenceRoot),
+      cooldownMs: options.config.network.cooldownMs,
+    });
+    const preflight = await preflightSweep(deps, options.tenant, pageLoads, options.config.network.provider, {
+      directFallback: options.config.network.directFallback,
+    });
+    if (!preflight.ok) {
+      refuse(preflight.error);
+      if (decision.pulse) {
+        lastStartedMs = startedMs;
+        persistClock();
+      }
+      return;
+    }
+    for (const w of preflight.warnings) options.log(`warning: ${w}`);
+    const sweepProvider = preflight.provider;
+    cursor = nextCursor;
     inFlight += 1;
     lastSweepError = null;
-    const startedMs = options.now();
     if (decision.pulse) lastStartedMs = startedMs;
     if (decision.e2e) lastE2eStartedMs = startedMs;
     persistClock();
@@ -200,14 +264,6 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       level: "info",
       kind: "sweep-started",
       message: `starting sweep (${decision.reason}) — ${scope}`,
-    });
-    const deps = defaultDeps(options.repoRoot, {
-      evidenceRoot: options.evidenceRoot,
-      env: options.env,
-      now: options.now,
-      log: options.log,
-      tenantId: options.tenant.id,
-      cooldownMs: options.config.network.cooldownMs,
     });
     const inner = deps.runOnce;
     deps.runOnce = async (runOptions) => {
@@ -262,40 +318,6 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       }
     };
     try {
-      const asPick = (s: { market: string; device: string; journey: string; target: string | null }): {
-        market: string;
-        device: string;
-        journey: string;
-        target: string;
-      } => ({ market: s.market, device: s.device, journey: s.journey, target: s.target ?? "" });
-      const e2eCells = decision.e2e ? e2ePlan.cells : [];
-      const e2eWrites = decision.e2e ? e2ePlan.writes : false;
-      const journeysByTarget = spec.targetJourneys;
-      const hasTargetPools = Object.keys(journeysByTarget).length > 0;
-      const pick =
-        decision.pulse && planned !== null && planned.ok
-          ? spec.mode === "continuous"
-            ? (() => {
-                const watchAxes = { ...planned.axes, journeysByTarget };
-                const stepped = nextSlice(
-                  hasTargetPools ? expandWatchCells(watchAxes) : expandMatrix(planned.axes).map(asPick),
-                  cursor,
-                  spec.maxConcurrent,
-                );
-                cursor = stepped.nextCursor;
-                persistClock();
-                return [...stepped.slice, ...e2eCells];
-              })()
-            : spec.journeyPick === "seeded"
-              ? [...pickSeededCells({ ...planned.axes, atMs: startedMs, journeysByTarget }), ...e2eCells]
-              : hasTargetPools || e2eCells.length > 0
-                ? [...(hasTargetPools ? expandWatchCells({ ...planned.axes, journeysByTarget }) : expandMatrix(planned.axes).map(asPick)), ...e2eCells]
-                : undefined
-          : e2eCells;
-      if (pick !== undefined && pick.length === 0) {
-        options.log("watch: continuous slice is empty");
-        return;
-      }
       const axes =
         decision.pulse && planned !== null && planned.ok
           ? planned.axes
@@ -311,7 +333,7 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
         devices: axes.devices,
         journeys: axes.journeys,
         targets: axes.targets,
-        providerName: options.config.network.provider,
+        providerName: sweepProvider,
         allowWrites: spec.allowWrites || e2eWrites,
         concurrency: spec.maxConcurrent,
         engine: WATCH_ENGINE,
@@ -386,15 +408,25 @@ export function attachWatch(options: WatchLoopOptions): WatchLoop {
       env: options.env,
       now: options.now,
       log: options.log,
-      tenantId: options.tenant.id,
+      cooldownPath: cooldownStorePath(options.evidenceRoot),
       cooldownMs: options.config.network.cooldownMs,
     });
+    const preflight = await preflightSweep(deps, options.tenant, 1, options.config.network.provider, {
+      directFallback: options.config.network.directFallback,
+    });
+    if (!preflight.ok) {
+      live.finish(id, "ERROR");
+      inFlight = Math.max(0, inFlight - 1);
+      refuse(preflight.error);
+      return;
+    }
+    for (const w of preflight.warnings) options.log(`warning: ${w}`);
     try {
       const { result } = await controlRun(deps, {
         url: accepted.request.url,
         profileId: accepted.profileId,
         journeyId: accepted.request.journey,
-        providerName: options.config.network.provider,
+        providerName: preflight.provider,
         engine: WATCH_ENGINE,
         ...(accepted.request.locale ? { locale: accepted.request.locale } : {}),
         ...(accepted.request.timezone ? { timezone: accepted.request.timezone } : {}),

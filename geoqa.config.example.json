@@ -7,8 +7,9 @@
   ],
 
   "network": {
-    "$comment": "provider: direct | http-proxy. `direct` egresses from wherever this machine is — honest, and the only option until a vendor is procured; a direct run always carries a warning that its geographic claims are unproven. http-proxy reads GEOQA_PROXY_<MARKET> from the environment, never from this file. cooldownMs: how long a provider is skipped after a run proves its egress WRONG — a verified-right run clears it immediately, because a store that only ever adds freezes a vendor that recovered. Kept in <evidence-root>/cooldowns.json, so --tenant scopes it: a tenant with its own proxy account neither inherits nor causes another tenant's freeze. 0 is refused — it writes a cooldown that has already expired, which the store cannot tell from a provider that never failed; 'do not pause after a failure' is a different design, not a number.",
+    "$comment": "provider: direct | http-proxy. `direct` egresses from wherever this machine is — honest, and the only option until a vendor is procured; a direct run always carries a warning that its geographic claims are unproven. http-proxy reads GEOQA_PROXY_<MARKET> from the environment, never from this file. directFallback: when http-proxy is out of credit or otherwise unusable, run from this host's direct egress instead of refusing — every market shares one exit and geographic claims are unproven, never silent. cooldownMs: how long a provider is skipped after a run proves its egress WRONG — a verified-right run clears it immediately, because a store that only ever adds freezes a vendor that recovered. Kept in <evidence-root>/cooldowns.json, so --tenant scopes it: a tenant with its own proxy account neither inherits nor causes another tenant's freeze. 0 is refused — it writes a cooldown that has already expired, which the store cannot tell from a provider that never failed; 'do not pause after a failure' is a different design, not a number.",
     "provider": "direct",
+    "directFallback": false,
     "verifyEndpoint": "https://ipinfo.io/json",
     "cooldownMs": 3600000
   },

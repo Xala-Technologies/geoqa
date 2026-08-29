@@ -42,6 +42,7 @@ import {
   contentAnalyse,
   dashboardBuild,
   enforceQuota,
+  preflightSweep,
   gateCheck,
   keywordsResearch,
   renderContentAnalysis,
@@ -412,6 +413,13 @@ describe("browserVerify", () => {
 });
 
 describe("proxyVerify", () => {
+  const proxyDeps = (over: Partial<CommandDeps> = {}): CommandDeps =>
+    deps({
+      probe: () => Promise.resolve(true),
+      auth: () => Promise.resolve({ ok: true, status: 200, detail: null }),
+      ...over,
+    });
+
   it("reports both axes and warns that direct egress is not geographic", async () => {
     const result = await proxyVerify(deps(), { profileId: "oslo-mobile" });
     expect(result.provider).toBe("direct");
@@ -423,7 +431,7 @@ describe("proxyVerify", () => {
 
   it("REDACTS the proxy URL it reports", async () => {
     const result = await proxyVerify(
-      deps({ env: { GEOQA_PROXY_NO: "http://user:s3cret@gw.io:7777" } }),
+      proxyDeps({ env: { GEOQA_PROXY_NO: "http://user:s3cret@gw.io:7777" } }),
       { profileId: "oslo-mobile", providerName: "http-proxy" },
     );
     expect(result.proxy).not.toContain("s3cret");
@@ -437,7 +445,7 @@ describe("proxyVerify", () => {
 
   it("refuses when the provider cannot serve the market", async () => {
     await expect(
-      proxyVerify(deps({ env: { GEOQA_PROXY_SE: "http://gw:1" } }), {
+      proxyVerify(proxyDeps({ env: { GEOQA_PROXY_SE: "http://gw:1" } }), {
         profileId: "oslo-mobile",
         providerName: "http-proxy",
       }),
@@ -1912,7 +1920,85 @@ describe("enforceQuota", () => {
     const decision = await enforceQuota(withUsage({ evidenceRoot: path.join(evidenceRoot, "never-written") }, 10), budgeted(), 1);
     expect(decision.state).toBe("within");
   });
-})
+});
+
+describe("preflightSweep", () => {
+  const tenant: Tenant = {
+    id: "digilist",
+    name: "Digilist",
+    markets: ["oslo"],
+    targets: ["https://digilist.no"],
+    proxyCredentials: null,
+    proxySubUser: "GEOQA_SUBUSER_DIGILIST",
+    quota: { trafficMb: 50_000, runsPerDay: 200 },
+    retentionDays: 14,
+  };
+
+  it("refuses when quota is exceeded", async () => {
+    const decision = await preflightSweep(
+      deps({
+        env: { DECODO_API_KEY: "key", GEOQA_SUBUSER_DIGILIST: "sub-1" },
+        usageProbe: () => Promise.resolve([{ username: "sub-1", trafficMb: 51_000, trafficLimitMb: null, status: "active" }]),
+        probe: () => Promise.resolve(true),
+        auth: () => Promise.resolve({ ok: true, status: 200, detail: null }),
+      }),
+      tenant,
+      10,
+      "http-proxy",
+    );
+    expect(decision.ok).toBe(false);
+    if (!decision.ok) expect(decision.error).toContain("MB");
+  });
+  it("refuses when the vendor rejects auth even though quota fits", async () => {
+    const decision = await preflightSweep(
+      deps({
+        env: { GEOQA_PROXY_TEMPLATE: "http://u-{countryLower}:pw@gate.vendor.net:7000", DECODO_API_KEY: "key", GEOQA_SUBUSER_DIGILIST: "sub-1" },
+        probe: () => Promise.resolve(true),
+        auth: () => Promise.resolve({ ok: false, status: 407, detail: "Access denied. You've reached your current traffic limit." }),
+        usageProbe: () => Promise.resolve([{ username: "sub-1", trafficMb: 100, trafficLimitMb: null, status: "active" }]),
+      }),
+      tenant,
+      1,
+      "http-proxy",
+    );
+    expect(decision.ok).toBe(false);
+    if (!decision.ok) expect(decision.error).toContain("traffic limit");
+  });
+
+  it("allows direct egress without a proxy health probe", async () => {
+    const decision = await preflightSweep(
+      deps({
+        usageProbe: () => Promise.resolve([{ username: "sub-1", trafficMb: 100, trafficLimitMb: null, status: "active" }]),
+        env: { DECODO_API_KEY: "key", GEOQA_SUBUSER_DIGILIST: "sub-1" },
+      }),
+      tenant,
+      1,
+      "direct",
+    );
+    expect(decision.ok).toBe(true);
+    if (decision.ok) expect(decision.provider).toBe("direct");
+  });
+
+  it("falls back to direct when proxy traffic is exhausted and directFallback is on", async () => {
+    const decision = await preflightSweep(
+      deps({
+        env: { DECODO_API_KEY: "key", GEOQA_SUBUSER_DIGILIST: "sub-1", GEOQA_PROXY_TEMPLATE: "http://u:pw@gate:7000" },
+        usageProbe: () => Promise.resolve([{ username: "sub-1", trafficMb: 51_000, trafficLimitMb: null, status: "active" }]),
+        probe: () => Promise.resolve(true),
+        auth: () => Promise.resolve({ ok: false, status: 407, detail: "traffic limit" }),
+      }),
+      tenant,
+      10,
+      "http-proxy",
+      { directFallback: true },
+    );
+    expect(decision.ok).toBe(true);
+    if (decision.ok) {
+      expect(decision.provider).toBe("direct");
+      expect(decision.warnings.join(" ")).toContain("UNPROVEN");
+    }
+  });
+});
 
 describe("tenant-scoped profiles and journeys", () => {
   it("REFUSES an id that is a path — a traversal that predates multi-tenancy", () => {

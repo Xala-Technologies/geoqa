@@ -101,6 +101,8 @@ const RetentionSchema = z
   })
   .strict();
 
+export const DEFAULT_DIRECT_FALLBACK = false;
+
 export const ConfigFileSchema = z
   .object({
     $comment: CommentSchema,
@@ -126,6 +128,12 @@ export const ConfigFileSchema = z
         // failed. "Do not pause after a failure" is a different design, not a
         // number.
         cooldownMs: z.number().int().positive().optional(),
+        /**
+         * When the configured provider is http-proxy and it is out of credit or
+         * otherwise unusable, run from this host's direct egress instead of
+         * refusing. Geographic claims are unproven — never silent (invariant 6).
+         */
+        directFallback: z.boolean().optional(),
       })
       .strict()
       .optional(),
@@ -160,6 +168,7 @@ export interface GeoQaConfig {
     provider: ProviderName;
     verifyEndpoint: string;
     cooldownMs: number;
+    directFallback: boolean;
   };
   /**
    * Absent keys mean "let `browser/exec.ts` apply its own default".
@@ -210,6 +219,7 @@ export function defaultConfig(): GeoQaConfig {
       provider: DEFAULT_PROVIDER,
       verifyEndpoint: DEFAULT_VERIFY_ENDPOINT,
       cooldownMs: DEFAULT_COOLDOWN_MS,
+      directFallback: DEFAULT_DIRECT_FALLBACK,
     },
     browser: {},
     evidence: { root: DEFAULT_EVIDENCE_DIRNAME, retention: cloneRetention(RETENTION) },
@@ -242,6 +252,7 @@ function resolveConfig(file: ConfigFile): GeoQaConfig {
       provider: file.network?.provider ?? defaults.network.provider,
       verifyEndpoint: file.network?.verifyEndpoint ?? defaults.network.verifyEndpoint,
       cooldownMs: file.network?.cooldownMs ?? defaults.network.cooldownMs,
+      directFallback: file.network?.directFallback ?? defaults.network.directFallback,
     },
     browser: {
       ...(file.browser?.commandTimeoutMs !== undefined ? { commandTimeoutMs: file.browser.commandTimeoutMs } : {}),

@@ -52,6 +52,7 @@ describe("honouring what the file says", () => {
       provider: "http-proxy",
       verifyEndpoint: "http://127.0.0.1:8181/ipinfo",
       cooldownMs: 1_000,
+      directFallback: false,
     });
     expect(parsed.ok && parsed.value.browser).toEqual({ commandTimeoutMs: 5_000, idleTimeoutMs: 2_500 });
     expect(parsed.ok && parsed.value.evidence.root).toBe("artifacts");
